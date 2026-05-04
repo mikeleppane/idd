@@ -383,6 +383,111 @@ def validate_negative_requirements(path: Path) -> list[Finding]:
     return findings
 
 
+def _read_capability_from_spec(spec_path: Path) -> str | None:
+    text = _read_text(spec_path)
+    if text is None:
+        return None
+    parsed = _parse_frontmatter(text)
+    if parsed is None:
+        return None
+    fm, _body = parsed
+    capability = fm.get("capability")
+    if isinstance(capability, str) and capability:
+        return capability
+    return None
+
+
+def _iter_archived_feature_specs(features_root: Path) -> list[Path]:
+    """Return SPEC.md paths under `features/archive/...`, any depth."""
+    archive_root = features_root / "archive"
+    if not archive_root.is_dir():
+        return []
+    return sorted(p for p in archive_root.rglob("SPEC.md") if p.is_file())
+
+
+def _collect_canonical_capabilities(idd_root: Path) -> dict[str, list[Path]]:
+    """Return {capability: [SPEC.md, ...]} for all canonical specs under .idd/specs/."""
+    result: dict[str, list[Path]] = {}
+    specs_root = idd_root / "specs"
+    if not specs_root.is_dir():
+        return result
+    for entry in sorted(specs_root.iterdir()):
+        if not entry.is_dir():
+            continue
+        cap = _read_capability_from_spec(entry / "SPEC.md")
+        if cap is not None:
+            result.setdefault(cap, []).append(entry / "SPEC.md")
+    return result
+
+
+def _collect_feature_capabilities(
+    idd_root: Path,
+) -> tuple[dict[str, list[Path]], dict[str, list[Path]]]:
+    """Return ({active cap: paths}, {archived cap: paths}) under .idd/features/."""
+    active: dict[str, list[Path]] = {}
+    archived: dict[str, list[Path]] = {}
+    features_root = idd_root / "features"
+    if not features_root.is_dir():
+        return active, archived
+    for entry in sorted(features_root.iterdir()):
+        if not entry.is_dir() or entry.name == "archive":
+            continue
+        cap = _read_capability_from_spec(entry / "SPEC.md")
+        if cap is not None:
+            active.setdefault(cap, []).append(entry / "SPEC.md")
+    for spec in _iter_archived_feature_specs(features_root):
+        cap = _read_capability_from_spec(spec)
+        if cap is not None:
+            archived.setdefault(cap, []).append(spec)
+    return active, archived
+
+
+def validate_capability_uniqueness(repo_root: Path) -> list[Finding]:
+    """Detect capability slug collisions per M3 spec §5.3.6 D-HEALTH.
+
+    See locked semantics in the implementation plan. Severity HIGH (matches the
+    spec's HIGH classification for collision; non-zero exit per `EXIT_NONZERO_SEVERITIES`).
+
+    Args:
+        repo_root: Repository root containing the .idd/ tree.
+
+    Returns:
+        List of Finding records. Empty list means no collisions on the active
+        surface.
+    """
+    findings: list[Finding] = []
+    idd_root = repo_root / ".idd"
+    if not idd_root.is_dir():
+        return findings
+
+    canonical = _collect_canonical_capabilities(idd_root)
+    active, archived = _collect_feature_capabilities(idd_root)
+
+    def _emit(cap: str, paths: list[Path]) -> None:
+        joined = ", ".join(str(p.relative_to(repo_root)) for p in paths)
+        findings.append(
+            Finding(
+                "HIGH",
+                "capability-uniqueness",
+                repo_root,
+                f"capability slug {cap!r} declared by multiple sources: {joined}",
+            ),
+        )
+
+    for cap, paths in canonical.items():
+        if len(paths) > 1:
+            _emit(cap, paths)
+
+    for cap, paths in active.items():
+        sources = list(paths)
+        sources.extend(canonical.get(cap, []))
+        sources.extend(archived.get(cap, []))
+        if len(sources) > 1:
+            _emit(cap, sources)
+
+    return findings
+
+
 def _load_schema(filename: str) -> dict[str, Any]:
     result: dict[str, Any] = json.loads((_SCHEMAS_DIR / filename).read_text(encoding="utf-8"))
     return result
