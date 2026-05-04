@@ -128,25 +128,20 @@ def test_state_machine_accepts_full_standard_tier_flow_with_dual_review(tmp_path
 
     # Walk the flow: spec is already in_progress; everything else needs start_phase
     # before complete_phase. The review phase is gated on both targets
-    # (plan, code) being done. The first review pass (pre-execute) sets+completes
-    # the `plan` target but does NOT complete the phase. After execute, the
-    # second review pass restarts review (start_phase resets targets_done),
-    # then sets+completes BOTH targets before complete_phase satisfies the gate.
+    # (plan, code) being done; start_phase('review') preserves targets_done across
+    # the two passes, so each pass records exactly one target — no manual replay.
     review_seen = 0
     for index, phase in enumerate(STANDARD_TIER_FLOW):
         if not (index == 0 and phase == "spec"):
             state.start_phase(state_path, phase, schema_path=schema)
         if phase == "review":
             review_seen += 1
+            target = "plan" if review_seen == 1 else "code"
+            state.set_review_target(state_path, review_target=target, schema_path=schema)
+            state.complete_review_target(state_path, review_target=target, schema_path=schema)
             if review_seen == 1:
-                # First pass: only the plan target is reviewed; gate not yet satisfied.
-                state.set_review_target(state_path, review_target="plan", schema_path=schema)
-                state.complete_review_target(state_path, review_target="plan", schema_path=schema)
+                # Plan-pass leaves review in_progress; gate clears only on second pass.
                 continue
-            # Second pass: re-cover both targets so the gate clears.
-            for target in ("plan", "code"):
-                state.set_review_target(state_path, review_target=target, schema_path=schema)
-                state.complete_review_target(state_path, review_target=target, schema_path=schema)
         state.complete_phase(state_path, phase, schema_path=schema)
 
     state.finish_feature(state_path, schema_path=schema)
