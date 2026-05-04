@@ -488,6 +488,60 @@ def validate_capability_uniqueness(repo_root: Path) -> list[Finding]:
     return findings
 
 
+_FRONTMATTER_SCHEMA_BY_KIND: dict[str, str] = {
+    "spec": "spec-frontmatter.schema.json",
+    "plan": "plan-frontmatter.schema.json",
+    "understanding": "understanding-frontmatter.schema.json",
+    "review": "review-frontmatter.schema.json",
+    "capability-spec": "capability-spec-frontmatter.schema.json",
+    "constitution": "constitution-frontmatter.schema.json",
+    "delta": "delta-proposal-frontmatter.schema.json",
+}
+
+
+def validate_frontmatter(path: Path, *, kind: str) -> list[Finding]:
+    """Validate a markdown file's frontmatter against the schema for `kind`.
+
+    Args:
+        path: Path to the markdown file.
+        kind: One of `spec`, `plan`, `understanding`, `review`, `capability-spec`,
+            `constitution`, `delta`.
+
+    Returns:
+        List of Finding records. Empty list means valid frontmatter.
+
+    Raises:
+        ValidationError: when `kind` is not recognized.
+    """
+    schema_filename = _FRONTMATTER_SCHEMA_BY_KIND.get(kind)
+    if schema_filename is None:
+        raise ValidationError(
+            f"unknown kind {kind!r}; must be one of {tuple(_FRONTMATTER_SCHEMA_BY_KIND)}"
+        )
+
+    findings: list[Finding] = []
+    text = _read_text(path)
+    if text is None:
+        findings.append(Finding("BLOCK", kind, path, f"file not found: {path}"))
+        return findings
+
+    parsed = _parse_frontmatter(text)
+    if parsed is None:
+        findings.append(
+            Finding("BLOCK", kind, path, "missing or malformed frontmatter"),
+        )
+        return findings
+    fm, _body = parsed
+
+    schema = _load_schema(schema_filename)
+    for err in sorted(_build_validator(schema).iter_errors(fm), key=lambda e: list(e.path)):
+        field = f".{err.path[-1]}" if err.path else ""
+        findings.append(
+            Finding("BLOCK", kind, path, f"frontmatter{field}: {err.message}"),
+        )
+    return findings
+
+
 def _load_schema(filename: str) -> dict[str, Any]:
     result: dict[str, Any] = json.loads((_SCHEMAS_DIR / filename).read_text(encoding="utf-8"))
     return result
