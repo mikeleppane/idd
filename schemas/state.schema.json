@@ -45,7 +45,10 @@
         "type": "object",
         "required": ["phase", "reason"],
         "properties": {
-          "phase": { "type": "string" },
+          "phase": {
+            "type": "string",
+            "enum": ["refine", "research", "spec", "domain", "scenarios", "plan", "crucible", "review", "execute", "verify", "ship"]
+          },
           "reason": { "type": "string" }
         },
         "additionalProperties": false
@@ -57,7 +60,10 @@
         "type": "object",
         "required": ["phase", "cause", "resolution"],
         "properties": {
-          "phase":      { "type": "string" },
+          "phase": {
+            "type": "string",
+            "enum": ["refine", "research", "spec", "domain", "scenarios", "plan", "crucible", "review", "execute", "verify", "ship"]
+          },
           "cause":      { "type": "string" },
           "resolution": { "type": "string" },
           "logged_at":  { "type": "string", "format": "date-time" }
@@ -72,7 +78,10 @@
         "required": ["sha", "phase", "subject"],
         "properties": {
           "sha":     { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
-          "phase":   { "type": "string" },
+          "phase": {
+            "type": "string",
+            "enum": ["refine", "research", "spec", "domain", "scenarios", "plan", "crucible", "review", "execute", "verify", "ship"]
+          },
           "subject": { "type": "string", "minLength": 1 },
           "logged_at": { "type": "string", "format": "date-time" }
         },

@@ -104,7 +104,10 @@ def validate_file(path: Path, schema_path: Path) -> list[str]:
         return [f"{path}: missing frontmatter block"]
 
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    validator = jsonschema.Draft202012Validator(schema)
+    validator = jsonschema.Draft202012Validator(
+        schema,
+        format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER,
+    )
     errors = [
         f"{path}: {err.message}"
         for err in sorted(validator.iter_errors(fm), key=lambda e: list(e.path))
