@@ -67,6 +67,95 @@ def test_evaluate_allows_well_formed_block() -> None:
     assert reason == "ok"
 
 
+def test_evaluate_blocks_bare_scalar_unbounded() -> None:
+    prompt = (
+        "context_budget:\n"
+        "  spec_sections: [Intent]\n"
+        "  files_in_scope: all\n"
+        "  forbidden:\n"
+        "    - read entire repo\n"
+    )
+    allow, reason = check_budget.evaluate(prompt)
+    assert not allow
+    assert "files_in_scope" in reason
+
+
+def test_evaluate_blocks_quoted_scalar_unbounded() -> None:
+    prompt = (
+        "context_budget:\n"
+        '  files_in_scope: "**"\n'
+        "  forbidden:\n"
+        "    - read entire repo\n"
+    )
+    allow, reason = check_budget.evaluate(prompt)
+    assert not allow
+    assert "files_in_scope" in reason
+
+
+def test_evaluate_blocks_yaml_block_list_unbounded() -> None:
+    prompt = (
+        "context_budget:\n"
+        "  files_in_scope:\n"
+        '    - "**"\n'
+        "  forbidden:\n"
+        "    - read entire repo\n"
+    )
+    allow, reason = check_budget.evaluate(prompt)
+    assert not allow
+    assert "unbounded" in reason
+
+
+def test_evaluate_blocks_when_only_budget_is_inside_fenced_block() -> None:
+    prompt = (
+        "Here is an example budget:\n\n"
+        "```yaml\n"
+        "context_budget:\n"
+        "  files_in_scope: ['src/foo.py']\n"
+        "  forbidden:\n"
+        "    - read entire repo\n"
+        "```\n\n"
+        "Now scan the whole repo for instances of foo.\n"
+    )
+    allow, reason = check_budget.evaluate(prompt)
+    assert not allow
+    assert "missing required" in reason
+
+
+def test_evaluate_blocks_bare_extension_glob_repo_wide() -> None:
+    prompt = (
+        "context_budget:\n"
+        "  files_in_scope: ['*.py']\n"
+        "  forbidden:\n"
+        "    - read entire repo\n"
+    )
+    allow, reason = check_budget.evaluate(prompt)
+    assert not allow
+    assert "unbounded" in reason
+
+
+def test_evaluate_allows_directory_glob() -> None:
+    prompt = (
+        "context_budget:\n"
+        "  files_in_scope: ['src/**/*.py']\n"
+        "  forbidden:\n"
+        "    - read entire repo\n"
+    )
+    allow, reason = check_budget.evaluate(prompt)
+    assert allow, reason
+    assert reason == "ok"
+
+
+def test_evaluate_blocks_empty_forbidden_list() -> None:
+    prompt = (
+        "context_budget:\n"
+        "  files_in_scope: ['src/foo.py']\n"
+        "  forbidden: []\n"
+    )
+    allow, reason = check_budget.evaluate(prompt)
+    assert not allow
+    assert "forbidden" in reason
+
+
 def test_main_denies_agent_payload_with_modern_pretooluse_shape() -> None:
     payload = {
         "hook_event_name": "PreToolUse",

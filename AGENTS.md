@@ -36,7 +36,7 @@ This file lets non-Claude tools (Cursor, Aider, Codex) discover the same IDD ski
 
 ## Hooks
 
-The `hooks/` directory contains a `PreToolUse` hook that enforces the IDD subagent context-budget contract. In Claude Code it is wired automatically via `.claude-plugin/plugin.json`. In other tools, run `python hooks/check_budget.py` manually before each subagent dispatch.
+The `hooks/` directory contains a `PreToolUse` hook that enforces the IDD subagent context-budget contract. In Claude Code it is wired automatically via `.claude-plugin/plugin.json`. In other tools, run `python3 hooks/check_budget.py` manually before each subagent dispatch.
 
 ## Tool Mapping
 
