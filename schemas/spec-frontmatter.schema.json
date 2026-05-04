@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://idd.dev/schemas/spec-frontmatter.schema.json",
+  "title": "IDD SPEC.md Frontmatter",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "status", "tier", "created", "capability"],
+  "properties": {
+    "id":      { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}-[a-z0-9-]+$" },
+    "status":  { "type": "string", "enum": ["draft", "scenarios", "planning", "crucible", "executing", "verified", "shipped"] },
+    "tier":    { "type": "string", "enum": ["focused", "standard", "full"] },
+    "created": { "type": "string", "format": "date" },
+    "capability": { "type": "string", "minLength": 3, "description": "Stable capability handle, e.g. 'csv-import' or 'auth-session'." }
+  }
+}
