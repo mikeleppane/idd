@@ -213,6 +213,51 @@ def finish_feature(
     return payload
 
 
+def record_routing_decision(
+    path: Path,
+    *,
+    idea: str,
+    final_tier: str,
+    proposed_tier: str | None = None,
+    rationale: str | None = None,
+    constitution_present: bool = False,
+    schema_path: Path | None = None,
+    now: str | None = None,
+) -> dict[str, Any]:
+    """Record a routing decision in state.json.routing. Idempotent overwrite.
+
+    Args:
+        path: state.json path.
+        idea: User-supplied idea text.
+        final_tier: Tier the user confirmed (focused/standard/full).
+        proposed_tier: Tier the router proposed before user override.
+        rationale: One-sentence reason from the router or user.
+        constitution_present: True when .idd/CONSTITUTION.md was loaded at routing time.
+        schema_path: Optional schema for read+write validation.
+        now: Optional ISO 8601 timestamp; defaults to UTC now.
+
+    Returns:
+        Updated state payload.
+
+    Raises:
+        StateError: schema validation failure on read or write.
+    """
+    payload = read_state(path, schema_path=schema_path)
+    block: dict[str, Any] = {
+        "idea": idea,
+        "final_tier": final_tier,
+        "decided_at": now or _utc_now_iso(),
+        "constitution_present": constitution_present,
+    }
+    if proposed_tier is not None:
+        block["proposed_tier"] = proposed_tier
+    if rationale is not None:
+        block["rationale"] = rationale
+    payload["routing"] = block
+    write_state(path, payload, schema_path=schema_path)
+    return payload
+
+
 def feature_folder_exists(repo_root: Path, feature_id: str) -> bool:
     """Return True when .idd/features/<feature_id>/ exists under repo_root."""
     return (repo_root / ".idd" / "features" / feature_id).is_dir()

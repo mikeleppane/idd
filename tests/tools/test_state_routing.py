@@ -71,3 +71,55 @@ def test_state_schema_rejects_non_string_refined_idea(tmp_path: Path, schemas_di
         state.write_state(target, payload, schema_path=schemas_dir / "state.schema.json")
 
     assert not target.exists()
+
+
+def test_record_routing_decision_writes_block(tmp_path: Path, schemas_dir: Path) -> None:
+    target = tmp_path / "state.json"
+    state.write_state(target, _base_payload(), schema_path=schemas_dir / "state.schema.json")
+
+    result = state.record_routing_decision(
+        target,
+        idea="Add coupon redemption",
+        proposed_tier="standard",
+        final_tier="standard",
+        rationale="Cross-cutting checkout change",
+        constitution_present=False,
+        schema_path=schemas_dir / "state.schema.json",
+        now="2026-05-04T09:55:00Z",
+    )
+
+    assert result["routing"]["idea"] == "Add coupon redemption"
+    assert result["routing"]["final_tier"] == "standard"
+    assert result["routing"]["decided_at"] == "2026-05-04T09:55:00Z"
+    assert result["routing"]["constitution_present"] is False
+
+
+def test_record_routing_decision_overwrites_existing_block(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    target = tmp_path / "state.json"
+    initial = _base_payload()
+    initial["routing"] = {
+        "idea": "old idea",
+        "proposed_tier": "focused",
+        "final_tier": "focused",
+        "rationale": "stale",
+        "constitution_present": False,
+        "decided_at": "2026-05-04T08:00:00Z",
+    }
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+
+    result = state.record_routing_decision(
+        target,
+        idea="new idea",
+        proposed_tier="standard",
+        final_tier="full",
+        rationale="user override to full",
+        constitution_present=True,
+        schema_path=schemas_dir / "state.schema.json",
+        now="2026-05-04T09:55:00Z",
+    )
+
+    assert result["routing"]["idea"] == "new idea"
+    assert result["routing"]["final_tier"] == "full"
+    assert result["routing"]["constitution_present"] is True
