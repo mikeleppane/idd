@@ -87,6 +87,20 @@
         },
         "additionalProperties": false
       }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idea", "final_tier", "decided_at"],
+      "properties": {
+        "idea": { "type": "string" },
+        "proposed_tier": { "type": "string", "enum": ["focused", "standard", "full"] },
+        "final_tier": { "type": "string", "enum": ["focused", "standard", "full"] },
+        "rationale": { "type": "string" },
+        "constitution_present": { "type": "boolean" },
+        "decided_at": { "type": "string", "format": "date-time" },
+        "refine_attempts": { "type": "integer", "minimum": 0 }
+      }
     }
   }
 }
