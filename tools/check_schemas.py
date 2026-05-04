@@ -1,9 +1,14 @@
 """Validate that every shipped JSON Schema is itself a valid Draft 2020-12 schema.
 
-Also validates the state.json template against state.schema.json (after substituting
-its placeholder feature_id) and the SPEC.md template's frontmatter against
-spec-frontmatter.schema.json.
+Also validates each shipped template's frontmatter against its matching schema:
+- templates/feature/state.json   → state.schema.json
+- templates/feature/SPEC.md      → spec-frontmatter.schema.json
+- templates/feature/PLAN.md      → plan-frontmatter.schema.json
+- templates/feature/UNDERSTANDING.md → understanding-frontmatter.schema.json
+- templates/feature/REVIEW.md    → review-frontmatter.schema.json
+- templates/capability/SPEC.md   → capability-spec-frontmatter.schema.json
 """
+
 from __future__ import annotations
 
 import json
@@ -18,6 +23,18 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS_DIR = REPO_ROOT / "schemas"
 TEMPLATES_DIR = REPO_ROOT / "templates"
+
+# Each entry: (template path relative to TEMPLATES_DIR, schema filename).
+# Templates ship with bogus-but-valid placeholder values that pass their schema
+# without further substitution; if a template needs runtime fill-in (the
+# state.json template's feature_id), do it here.
+_TEMPLATE_FRONTMATTER_BINDINGS: tuple[tuple[str, str], ...] = (
+    ("feature/SPEC.md", "spec-frontmatter.schema.json"),
+    ("feature/PLAN.md", "plan-frontmatter.schema.json"),
+    ("feature/UNDERSTANDING.md", "understanding-frontmatter.schema.json"),
+    ("feature/REVIEW.md", "review-frontmatter.schema.json"),
+    ("capability/SPEC.md", "capability-spec-frontmatter.schema.json"),
+)
 
 
 def _check_schema(path: Path) -> None:
@@ -37,27 +54,37 @@ def _check_state_template() -> None:
     jsonschema.Draft202012Validator(
         schema, format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER
     ).validate(template)
-    print("OK template state.json")
+    print("OK template feature/state.json")
 
 
-def _check_spec_template_frontmatter() -> None:
-    """Validate templates/feature/SPEC.md frontmatter against spec-frontmatter.schema.json."""
-    schema = json.loads(
-        (SCHEMAS_DIR / "spec-frontmatter.schema.json").read_text(encoding="utf-8")
-    )
-    body = (TEMPLATES_DIR / "feature" / "SPEC.md").read_text(encoding="utf-8")
+def _extract_frontmatter(template_path: Path) -> dict[str, Any]:
+    body = template_path.read_text(encoding="utf-8")
     match = re.match(r"^---\n(.*?)\n---\n", body, flags=re.DOTALL)
     if not match:
-        raise SystemExit("SPEC.md template missing frontmatter block")
-    fm: dict[str, Any] = yaml.safe_load(match.group(1))
-    fm["id"] = "2026-05-03-template-check"
-    fm["tier"] = "focused"
-    fm["created"] = "2026-05-03"
-    fm["capability"] = "template-check"
+        raise SystemExit(f"{template_path} missing frontmatter block")
+    parsed: dict[str, Any] = yaml.safe_load(match.group(1))
+    return parsed
+
+
+def _check_template_frontmatter(template_rel: str, schema_filename: str) -> None:
+    """Validate one template's YAML frontmatter against its schema."""
+    template_path = TEMPLATES_DIR / template_rel
+    schema = json.loads((SCHEMAS_DIR / schema_filename).read_text(encoding="utf-8"))
+    fm = _extract_frontmatter(template_path)
+
+    # SPEC.md template still uses placeholder strings for non-frontmatter-schema
+    # fields the validator checks (id/tier/created/capability) — fill them so
+    # the format-checker is happy, mirroring the historic behavior.
+    if template_rel == "feature/SPEC.md":
+        fm["id"] = "2026-05-03-template-check"
+        fm["tier"] = "focused"
+        fm["created"] = "2026-05-03"
+        fm["capability"] = "template-check"
+
     jsonschema.Draft202012Validator(
         schema, format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER
     ).validate(fm)
-    print("OK template SPEC.md frontmatter")
+    print(f"OK template {template_rel}")
 
 
 def main() -> int:
@@ -66,7 +93,8 @@ def main() -> int:
         for path in sorted(SCHEMAS_DIR.glob("*.schema.json")):
             _check_schema(path)
         _check_state_template()
-        _check_spec_template_frontmatter()
+        for template_rel, schema_filename in _TEMPLATE_FRONTMATTER_BINDINGS:
+            _check_template_frontmatter(template_rel, schema_filename)
     except (jsonschema.SchemaError, jsonschema.ValidationError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
