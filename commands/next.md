@@ -12,7 +12,7 @@ Print the next slash command for the active feature based on `state.json`. Optio
 1. Parse args: optional `--feature <id>`, optional `--run`.
 2. Invoke the `idd-next` skill (see `skills/idd-next/SKILL.md`).
 3. Skill resolves the active feature, reads state, computes the next command, prints it.
-4. If `--run` was passed and a next command exists, the skill dispatches it via the slash-command runner.
+4. If `--run` was passed and a next command exists, the skill dispatches it via the slash-command runner. The dispatched command always carries `--feature <resolved-id>` so the downstream command runs against the same feature `/idd:next` printed — guarantees correctness in multi-feature repos.
 
 ## Failure modes
 
