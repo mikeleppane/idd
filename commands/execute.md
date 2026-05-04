@@ -9,11 +9,11 @@ Run the IDD execute phase against the active feature.
 
 ## Behavior
 
-1. Determine active feature: `--feature <id>` flag, otherwise the most recently modified `.idd/features/*/state.json`.
+1. Determine active feature using the D-S6 rule (`tools.state.find_active_feature(repo_root, feature_id)`): `--feature <id>` wins; else single-active feature; else error listing the candidates.
 2. Read `state.json`.
    - If `tier == "focused"` and `phases.spec.status == "done"` → invoke `idd-execute` skill (focused branch — M1 behavior).
    - If `tier in ("standard", "full")`:
-     - Require `phases.review.status == "done"` AND `.idd/features/<id>/REVIEW.plan.md` exists with frontmatter `target: plan`, `status: resolved`.
+     - Require `"plan"` in `phases.review.targets_done` AND `.idd/features/<id>/REVIEW.plan.md` exists with frontmatter `target: plan`, `status: resolved`. The review phase stays `status: in_progress` between the two target passes; `complete_phase('review')` only fires once `target: code` is also resolved.
      - Require `PLAN.md` exists with frontmatter `status: ready`.
      - Invoke `idd-execute` skill (standard branch).
    - Otherwise → abort with reason.

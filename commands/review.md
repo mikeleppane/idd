@@ -15,7 +15,7 @@ Run the IDD review phase against the active feature.
    - `--target code` (default after execute) — review the diff plus PLAN.md mapping. Output: `.idd/features/<id>/REVIEW.code.md`.
    - `--cross-ai` — print "M4 territory; not implemented in M2" and exit non-zero.
 3. Read `state.json`. For target=plan: require `phases.crucible.status == "done"`. For target=code: require `phases.execute.status == "done"`.
-4. Call `tools.state.start_phase(path, "review")`.
+4. **Enter or resume the review phase.** If `phases.review.status != "in_progress"`, call `tools.state.start_phase(path, "review")`. If review is already `in_progress` (typical for the second pass — `target=code` after the first `target=plan` pass left review open), skip `start_phase` so `phases.review.targets_done` from the first pass survives. `start_phase` itself preserves `targets_done` and `current_target` across review restarts as a safety net.
 5. Invoke the `idd-review` skill with the resolved target. The skill writes `REVIEW.<target>.md` (never plain `REVIEW.md`); the dual-pass standard-tier flow keeps two separate audit trails.
 6. On completion, print: `REVIEW.<target>.md` path, findings by severity, convergence cycles run, final status (resolved | escalated).
 

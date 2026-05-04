@@ -178,3 +178,31 @@ def test_validate_passes_for_unquoted_yaml_date_in_spec_frontmatter(
     errors = lint.validate_file(md, schemas_dir / "spec-frontmatter.schema.json")
 
     assert errors == [], errors
+
+
+def test_idd_next_skill_passes_lint(repo_root: Path) -> None:
+    skill = repo_root / "skills" / "idd-next" / "SKILL.md"
+    schema = repo_root / "schemas" / "frontmatter.schema.json"
+    errors = lint.validate_file(skill, schema)
+    assert errors == [], errors
+
+
+def test_idd_next_command_passes_lint(repo_root: Path) -> None:
+    cmd = repo_root / "commands" / "next.md"
+    schema = repo_root / "schemas" / "frontmatter.schema.json"
+    errors = lint.validate_file(cmd, schema)
+    assert errors == [], errors
+
+
+def test_idd_status_skill_passes_lint(repo_root: Path) -> None:
+    skill = repo_root / "skills" / "idd-status" / "SKILL.md"
+    schema = repo_root / "schemas" / "frontmatter.schema.json"
+    errors = lint.validate_file(skill, schema)
+    assert errors == [], errors
+
+
+def test_idd_status_command_passes_lint(repo_root: Path) -> None:
+    cmd = repo_root / "commands" / "status.md"
+    schema = repo_root / "schemas" / "frontmatter.schema.json"
+    errors = lint.validate_file(cmd, schema)
+    assert errors == [], errors

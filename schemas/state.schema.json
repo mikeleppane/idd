@@ -24,6 +24,30 @@
       "propertyNames": {
         "enum": ["refine", "research", "spec", "domain", "scenarios", "plan", "crucible", "review", "execute", "verify", "ship"]
       },
+      "properties": {
+        "review": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["pending", "in_progress", "done", "skipped"]
+            },
+            "started_at":   { "type": "string", "format": "date-time" },
+            "completed_at": { "type": "string", "format": "date-time" },
+            "current_target": {
+              "type": "string",
+              "enum": ["plan", "code"]
+            },
+            "targets_done": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["plan", "code"] },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        }
+      },
       "additionalProperties": {
         "type": "object",
         "required": ["status"],
@@ -87,6 +111,23 @@
         },
         "additionalProperties": false
       }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idea", "final_tier", "decided_at"],
+      "properties": {
+        "idea": { "type": "string" },
+        "proposed_tier": { "type": "string", "enum": ["focused", "standard", "full"] },
+        "final_tier": { "type": "string", "enum": ["focused", "standard", "full"] },
+        "rationale": { "type": "string" },
+        "constitution_present": { "type": "boolean" },
+        "decided_at": { "type": "string", "format": "date-time" },
+        "refine_attempts": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "refined_idea": {
+      "type": "string"
     }
   }
 }
