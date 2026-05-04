@@ -255,3 +255,50 @@ def test_complete_phase_non_review_unchanged_by_target_gate(
     )
 
     assert result["phases"]["spec"]["status"] == "done"
+
+
+def test_state_schema_rejects_review_target_fields_on_non_review_phase(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    """Review-target sub-state belongs only to phases.review."""
+    payload = {
+        "feature_id": "2026-05-04-demo",
+        "tier": "standard",
+        "current_phase": "spec",
+        "phases": {
+            "spec": {
+                "status": "in_progress",
+                "current_target": "plan",
+            },
+        },
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+    target = tmp_path / "state.json"
+
+    with pytest.raises(state.StateError, match="schema"):
+        state.write_state(target, payload, schema_path=schemas_dir / "state.schema.json")
+
+
+def test_state_schema_rejects_targets_done_on_non_review_phase(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    payload = {
+        "feature_id": "2026-05-04-demo",
+        "tier": "standard",
+        "current_phase": "execute",
+        "phases": {
+            "execute": {
+                "status": "in_progress",
+                "targets_done": ["plan"],
+            },
+        },
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+    target = tmp_path / "state.json"
+
+    with pytest.raises(state.StateError, match="schema"):
+        state.write_state(target, payload, schema_path=schemas_dir / "state.schema.json")
