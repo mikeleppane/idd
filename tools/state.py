@@ -75,6 +75,9 @@ VALID_LIFECYCLE_PHASES = (
 )
 
 
+VALID_REVIEW_TARGETS = ("plan", "code")
+
+
 def write_state(
     path: Path,
     payload: dict[str, Any],
@@ -281,6 +284,79 @@ def record_refined_idea(
         raise StateError("refined_idea must be non-empty")
     payload = read_state(path, schema_path=schema_path)
     payload["refined_idea"] = refined
+    write_state(path, payload, schema_path=schema_path)
+    return payload
+
+
+def set_review_target(
+    path: Path,
+    *,
+    review_target: str,
+    schema_path: Path | None = None,
+) -> dict[str, Any]:
+    """Set phases.review.current_target and ensure targets_done is initialized.
+
+    Args:
+        path: state.json path.
+        review_target: One of VALID_REVIEW_TARGETS.
+        schema_path: Optional schema for read+write validation.
+
+    Returns:
+        Updated state payload.
+
+    Raises:
+        StateError: invalid review_target, missing review entry, or schema failure.
+    """
+    if review_target not in VALID_REVIEW_TARGETS:
+        raise StateError(
+            f"invalid review_target {review_target!r}; must be one of {VALID_REVIEW_TARGETS}"
+        )
+    payload = read_state(path, schema_path=schema_path)
+    review_block = payload.get("phases", {}).get("review")
+    if review_block is None:
+        raise StateError("cannot set review_target: phases.review entry missing")
+    review_block["current_target"] = review_target
+    review_block.setdefault("targets_done", [])
+    write_state(path, payload, schema_path=schema_path)
+    return payload
+
+
+def complete_review_target(
+    path: Path,
+    *,
+    review_target: str,
+    schema_path: Path | None = None,
+) -> dict[str, Any]:
+    """Append `review_target` to phases.review.targets_done. Idempotent.
+
+    Args:
+        path: state.json path.
+        review_target: Must equal phases.review.current_target.
+        schema_path: Optional schema for read+write validation.
+
+    Returns:
+        Updated state payload.
+
+    Raises:
+        StateError: invalid target, missing review entry, mismatched current_target,
+            or schema failure.
+    """
+    if review_target not in VALID_REVIEW_TARGETS:
+        raise StateError(
+            f"invalid review_target {review_target!r}; must be one of {VALID_REVIEW_TARGETS}"
+        )
+    payload = read_state(path, schema_path=schema_path)
+    review_block = payload.get("phases", {}).get("review")
+    if review_block is None:
+        raise StateError("cannot complete review_target: phases.review entry missing")
+    current = review_block.get("current_target")
+    if current != review_target:
+        raise StateError(
+            f"cannot complete review_target {review_target!r}: current_target is {current!r}"
+        )
+    targets_done = review_block.setdefault("targets_done", [])
+    if review_target not in targets_done:
+        targets_done.append(review_target)
     write_state(path, payload, schema_path=schema_path)
     return payload
 

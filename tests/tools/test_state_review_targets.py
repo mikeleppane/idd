@@ -68,3 +68,80 @@ def test_state_schema_rejects_unknown_review_target_value(
 
     with pytest.raises(state.StateError, match="schema"):
         state.write_state(target, payload, schema_path=schemas_dir / "state.schema.json")
+
+
+def test_set_review_target_initializes_target_fields(tmp_path: Path, schemas_dir: Path) -> None:
+    target = tmp_path / "state.json"
+    initial = _payload_with_review(targets_done=[], current_target=None)
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+
+    result = state.set_review_target(
+        target,
+        review_target="plan",
+        schema_path=schemas_dir / "state.schema.json",
+    )
+
+    assert result["phases"]["review"]["current_target"] == "plan"
+    assert result["phases"]["review"]["targets_done"] == []
+
+
+def test_set_review_target_rejects_unknown_target(tmp_path: Path, schemas_dir: Path) -> None:
+    target = tmp_path / "state.json"
+    state.write_state(
+        target,
+        _payload_with_review(targets_done=[], current_target=None),
+        schema_path=schemas_dir / "state.schema.json",
+    )
+
+    with pytest.raises(state.StateError, match="review_target"):
+        state.set_review_target(
+            target,
+            review_target="docs",
+            schema_path=schemas_dir / "state.schema.json",
+        )
+
+
+def test_complete_review_target_appends_and_returns(tmp_path: Path, schemas_dir: Path) -> None:
+    target = tmp_path / "state.json"
+    initial = _payload_with_review(targets_done=[], current_target="plan")
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+
+    result = state.complete_review_target(
+        target,
+        review_target="plan",
+        schema_path=schemas_dir / "state.schema.json",
+    )
+
+    assert result["phases"]["review"]["targets_done"] == ["plan"]
+
+
+def test_complete_review_target_rejects_when_not_current(tmp_path: Path, schemas_dir: Path) -> None:
+    target = tmp_path / "state.json"
+    state.write_state(
+        target,
+        _payload_with_review(targets_done=[], current_target="plan"),
+        schema_path=schemas_dir / "state.schema.json",
+    )
+
+    with pytest.raises(state.StateError, match="current_target is 'plan'"):
+        state.complete_review_target(
+            target,
+            review_target="code",
+            schema_path=schemas_dir / "state.schema.json",
+        )
+
+
+def test_complete_review_target_idempotent_within_same_target(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    target = tmp_path / "state.json"
+    initial = _payload_with_review(targets_done=["plan"], current_target="plan")
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+
+    result = state.complete_review_target(
+        target,
+        review_target="plan",
+        schema_path=schemas_dir / "state.schema.json",
+    )
+
+    assert result["phases"]["review"]["targets_done"] == ["plan"]
