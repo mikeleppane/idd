@@ -8,10 +8,9 @@ disable-model-invocation: true
 
 ## When this skill applies
 
-Active feature `state.json` has `current_phase == "execute"`. Branches on `tier`:
-
-- **Focused** (M1): no PLAN.md; drive from SPEC.md acceptance criteria with one dispatch.
-- **Standard / Full** (M2): PLAN.md exists with `REVIEW.plan.md` `status: resolved` for `target: plan`. Dispatch slice-by-slice, wave-by-wave.
+Either:
+- **Focused** (M1): `current_phase == "execute"` and no PLAN.md; drive from SPEC.md acceptance criteria with one dispatch.
+- **Standard / Full** (M2): `current_phase == "review"` with `phases.review.status == "in_progress"` and `"plan"` in `phases.review.targets_done` (the plan-review pass closed but the review phase remains open until target=code completes), OR `current_phase == "execute"` (re-entry on a partial execute). PLAN.md exists with `REVIEW.plan.md` `status: resolved` for `target: plan`. Dispatch slice-by-slice, wave-by-wave.
 
 ## Inputs
 
@@ -22,8 +21,8 @@ Active feature `state.json` has `current_phase == "execute"`. Branches on `tier`
 
 ## Steps
 
-1. **Validate tier and state.** Read `state.json`. For `tier in ("standard", "full")`, also require PLAN.md with `status: ready` and `REVIEW.plan.md` with `target: plan` and `status: resolved`.
-2. **Transition state.** Call `tools.state.start_phase(path, "execute")` (idempotent if already in_progress).
+1. **Validate tier and state.** Read `state.json`. For `tier in ("standard", "full")`, require PLAN.md with `status: ready`, `REVIEW.plan.md` with `target: plan` and `status: resolved`, and `"plan"` recorded in `phases.review.targets_done` (the gate's audit trail). The review phase will be `status: in_progress` at this point — that is expected; do not abort.
+2. **Transition state.** Call `tools.state.start_phase(path, "execute")` (idempotent if already in_progress). For standard/full, this changes `current_phase` from `review` to `execute` while leaving `phases.review` untouched so the plan-pass audit (`targets_done`, `current_target`) survives until the second review pass completes.
 3. **Branch on tier.**
 
 ### Focused branch (M1 behavior, unchanged)
@@ -57,7 +56,7 @@ Active feature `state.json` has `current_phase == "execute"`. Branches on `tier`
    - Every Negative Requirement passes a code-audit search (no MUST-NOT behavior present).
    - No deviations marked unresolved.
    - All tests in scope pass on the working tree.
-5. **Transition state.** Call `tools.state.complete_phase(path, "execute")`. Standard / full → `tools.state.start_phase(path, "review")` (target: code) per the standard-tier flow. Focused → `tools.state.start_phase(path, "verify")`.
+5. **Transition state.** Call `tools.state.complete_phase(path, "execute")`. Standard / full → leave further state changes to `/idd:review --target code`, which resumes the open review phase (carrying the `targets_done=["plan"]` audit through `start_phase`'s preservation, so the per-target gate is satisfied once the code pass closes). Focused → `tools.state.start_phase(path, "verify")`.
 6. **Surface to user:** slice summaries written, commit count, criteria-with-commit map, next phase.
 
 ## Done
