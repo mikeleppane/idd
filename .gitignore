@@ -20,6 +20,7 @@ build/
 .idea/
 .DS_Store
 *.swp
+*:Zone.Identifier
 
 # IDD runtime artifacts (per-project, never committed in plugin repo)
 .idd/
