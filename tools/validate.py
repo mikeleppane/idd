@@ -22,16 +22,6 @@ import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
 Severity = Literal["BLOCK", "HIGH", "MEDIUM", "LOW", "WARN", "INFO"]
-Target = Literal[
-    "spec",
-    "plan",
-    "delta",
-    "constitution",
-    "ship",
-    "health",
-    "all",
-    "capability-uniqueness",
-]
 EXIT_NONZERO_SEVERITIES: frozenset[Severity] = frozenset({"BLOCK", "HIGH"})
 
 
@@ -614,7 +604,20 @@ def _check_feature_payload(
     commits = payload.get("commits") or []
     refine_block = phases.get("refine") if isinstance(phases, dict) else None
     extra_files = [
-        p for p in entry.iterdir() if p.name not in {"state.json", "SPEC.md", "decisions.md"}
+        p
+        for p in entry.iterdir()
+        if p.name
+        not in {
+            "state.json",
+            "SPEC.md",
+            "PLAN.md",
+            "UNDERSTANDING.md",
+            "REVIEW.md",
+            "REVIEW.plan.md",
+            "REVIEW.code.md",
+            "VERIFICATION.md",
+            "decisions.md",
+        }
     ]
     if (
         current_phase == "refine"
@@ -774,6 +777,14 @@ def validate_health(repo_root: Path) -> list[Finding]:
 
     Returns:
         List of Finding records. Empty list means all checks clean.
+
+    Note:
+        Findings delegated from `validate_capability_uniqueness` and
+        `validate_constitution` carry their source validator's `target` field
+        (e.g. ``"capability-uniqueness"``, ``"constitution"``) rather than
+        ``"health"``. This preserves provenance so the user knows which
+        sub-validator produced each finding when ``/idd:validate --target
+        health`` aggregates results.
     """
     findings: list[Finding] = []
     idd_root = repo_root / ".idd"
