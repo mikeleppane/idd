@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "idd-marketplace",
+  "version": "0.1.0",
+  "description": "Single-plugin marketplace for the IDD (Intent-Driven Development) Claude Code plugin.",
+  "owner": {
+    "name": "Mikko Leppänen",
+    "email": "mleppan23@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "idd",
+      "description": "Lightweight-but-thorough spec-driven development lifecycle. Intent is the source. Spec is the contract. Verification reconciles reality.",
+      "version": "0.1.0",
+      "category": "development",
+      "author": {
+        "name": "Mikko Leppänen",
+        "email": "mleppan23@gmail.com"
+      },
+      "source": "./"
+    }
+  ]
+}
