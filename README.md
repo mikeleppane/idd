@@ -40,7 +40,7 @@ refine → research → spec → domain → scenarios → plan → crucible → 
 | **scenarios** | Gherkin scenarios in `SPEC.md` | BDD acceptance criteria; auto-escalates to `.feature` files when project supports it |
 | **plan** | `PLAN.md` | Vertical slices and waves of parallelizable tasks; file-bound |
 | **crucible** | `UNDERSTANDING.md` | Adversarial ritual: assumptions inversion → adversarial Q&A → pre-mortem |
-| **review** | `REVIEW.md` | Layered self + heavy + cross-AI reviews with convergence loops |
+| **review** | `REVIEW.plan.md` / `REVIEW.code.md` | Layered self + heavy + cross-AI reviews with convergence loops (per-target file) |
 | **execute** | code + tests | Slice-isolated, subagent-bounded, wave-parallel implementation |
 | **verify** | `VERIFICATION.md` | Three layers: code audit + scenario execution + conversational UAT |
 | **ship** | merged change + updated canonical spec or delta proposal | Reconcile feature spec with shipped capability spec |
@@ -99,7 +99,7 @@ Every IDD feature lives in `.idd/features/<id>/` with a small set of contracts:
 - `RESEARCH.md` — optional, for research tier and above
 - `UNDERSTANDING.md` — output of the crucible
 - `PLAN.md` — file-bound vertical slices and waves
-- `REVIEW.md` — review findings and convergence cycles
+- `REVIEW.plan.md` / `REVIEW.code.md` — per-target review findings and convergence cycles (the standard-tier flow runs review twice; each pass writes its own file)
 - `VERIFICATION.md` — three-layer verification record
 - `decisions.md` — running log of decisions and rationale
 - `state.json` — phase/slice/wave state for `/idd-resume`
