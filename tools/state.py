@@ -373,3 +373,59 @@ def complete_review_target(
 def feature_folder_exists(repo_root: Path, feature_id: str) -> bool:
     """Return True when .idd/features/<feature_id>/ exists under repo_root."""
     return (repo_root / ".idd" / "features" / feature_id).is_dir()
+
+
+def find_active_feature(
+    repo_root: Path,
+    feature_id: str | None = None,
+) -> Path:
+    """Resolve which .idd/features/<id>/ to act on. Read-only.
+
+    Precedence (D-S6 in M3 spec):
+        1. Explicit `feature_id` arg wins.
+        2. Else single active feature (state.json.current_phase != 'done').
+        3. Else: zero active -> StateError; multiple active -> StateError listing them.
+
+    Excludes any folder under `.idd/features/archive/`.
+
+    Args:
+        repo_root: Repository root containing the .idd/ tree.
+        feature_id: Optional explicit feature id (matches folder name).
+
+    Returns:
+        Path to the resolved feature folder.
+
+    Raises:
+        StateError: when no feature matches, multiple active without explicit id,
+            or the explicit id has no matching folder/state.json.
+    """
+    features_root = repo_root / ".idd" / "features"
+    if feature_id is not None:
+        candidate = features_root / feature_id
+        if not candidate.is_dir() or not (candidate / "state.json").exists():
+            raise StateError(f"feature {feature_id!r} not found at {candidate}")
+        return candidate
+
+    if not features_root.is_dir():
+        raise StateError("no active feature: .idd/features/ does not exist")
+
+    active: list[Path] = []
+    for entry in sorted(features_root.iterdir()):
+        if not entry.is_dir() or entry.name == "archive":
+            continue
+        state_path = entry / "state.json"
+        if not state_path.exists():
+            continue
+        try:
+            payload = read_state(state_path)
+        except StateError:
+            continue
+        if payload.get("current_phase") != "done":
+            active.append(entry)
+
+    if not active:
+        raise StateError("no active feature: every feature is at current_phase='done'")
+    if len(active) > 1:
+        ids = ", ".join(p.name for p in active)
+        raise StateError(f"multiple active features ({ids}); pass --feature <id> to disambiguate")
+    return active[0]
