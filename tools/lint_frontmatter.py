@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import json
 import re
 import sys
@@ -19,6 +20,26 @@ class FrontmatterError(RuntimeError):
 _FENCE = "---"
 
 
+def _coerce_dates_to_iso(value: Any) -> Any:
+    """Recursively replace `date`/`datetime` objects with ISO-8601 strings.
+
+    PyYAML auto-coerces unquoted ISO timestamps to `datetime.date` /
+    `datetime.datetime` objects. JSON Schema validators expect strings for the
+    `format: date` and `format: date-time` checks, so values must be coerced
+    back at the parser boundary. Datetimes serialize with a trailing `Z` for
+    UTC to match the `state.json` convention.
+    """
+    if isinstance(value, dict):
+        return {k: _coerce_dates_to_iso(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_coerce_dates_to_iso(v) for v in value]
+    if isinstance(value, _dt.datetime):
+        return value.isoformat().replace("+00:00", "Z")
+    if isinstance(value, _dt.date):
+        return value.isoformat()
+    return value
+
+
 def parse_frontmatter(path: Path) -> dict[str, Any] | None:
     """Parse the YAML frontmatter at the top of a markdown file.
 
@@ -26,7 +47,8 @@ def parse_frontmatter(path: Path) -> dict[str, Any] | None:
         path: Path to the markdown file.
 
     Returns:
-        Parsed frontmatter dict, or None if the file has no frontmatter block.
+        Parsed frontmatter dict (with any `date`/`datetime` values coerced to
+        ISO strings), or None if the file has no frontmatter block.
 
     Raises:
         FrontmatterError: Block opened but never closed, YAML invalid, or top-level
@@ -59,7 +81,8 @@ def parse_frontmatter(path: Path) -> dict[str, Any] | None:
             f"{path}: frontmatter must be a YAML mapping, got {type(parsed).__name__}"
         )
 
-    return parsed
+    coerced: dict[str, Any] = _coerce_dates_to_iso(parsed)
+    return coerced
 
 
 _IMPERATIVE_BLOCKLIST = frozenset({

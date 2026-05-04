@@ -132,3 +132,50 @@ def test_main_returns_nonzero_when_any_file_invalid(
     ])
 
     assert rc == 1
+
+
+def test_parse_coerces_unquoted_yaml_date_to_iso_string(tmp_path: Path) -> None:
+    """PyYAML auto-coerces ISO dates to datetime.date; parse_frontmatter must
+    coerce back to ISO string so JSON-Schema `format: date` validation works."""
+    md = tmp_path / "spec.md"
+    md.write_text(
+        "---\nid: 2026-05-04-demo\nstatus: draft\ntier: focused\ncreated: 2026-05-04\ncapability: demo\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+
+    result = lint.parse_frontmatter(md)
+
+    assert result is not None
+    assert result["created"] == "2026-05-04"
+    assert isinstance(result["created"], str)
+
+
+def test_parse_coerces_unquoted_yaml_datetime_to_iso_string(tmp_path: Path) -> None:
+    """ISO datetimes are coerced to string so JSON-Schema `format: date-time` works."""
+    md = tmp_path / "skill.md"
+    md.write_text(
+        "---\nname: idd-spec\ndescription: do things. Use when foo.\nlogged_at: 2026-05-04T10:00:00Z\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+
+    result = lint.parse_frontmatter(md)
+
+    assert result is not None
+    assert isinstance(result["logged_at"], str)
+    assert result["logged_at"] == "2026-05-04T10:00:00Z"
+
+
+def test_validate_passes_for_unquoted_yaml_date_in_spec_frontmatter(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    """Regression guard: SPEC frontmatter with an unquoted YAML date validates
+    against spec-frontmatter.schema.json (which requires `format: date`)."""
+    md = tmp_path / "SPEC.md"
+    md.write_text(
+        "---\nid: 2026-05-04-demo\nstatus: draft\ntier: focused\ncreated: 2026-05-04\ncapability: demo-cap\n---\n\n# Intent\n",
+        encoding="utf-8",
+    )
+
+    errors = lint.validate_file(md, schemas_dir / "spec-frontmatter.schema.json")
+
+    assert errors == [], errors

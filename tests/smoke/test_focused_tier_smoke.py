@@ -9,9 +9,7 @@ These do not run live skills or slash commands; live plugin dogfood is the Task 
 """
 from __future__ import annotations
 
-import datetime
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -19,7 +17,6 @@ from typing import Any
 
 import jsonschema
 import pytest
-import yaml
 
 from tools import lint_frontmatter as lint
 from tools import state
@@ -29,16 +26,13 @@ NEGATIVE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "_negative"
 
 
 def _read_frontmatter(path: Path) -> dict[str, Any]:
-    text = path.read_text(encoding="utf-8")
-    match = re.match(r"^---\n(.*?)\n---\n", text, flags=re.DOTALL)
-    assert match, f"no frontmatter found in {path}"
-    parsed: Any = yaml.safe_load(match.group(1))
-    assert isinstance(parsed, dict), f"frontmatter in {path} is not a mapping"
-    # YAML auto-coerces ISO dates to datetime.date; the JSON Schemas expect strings
-    # with format: date, so coerce back at the boundary.
-    for key, value in list(parsed.items()):
-        if isinstance(value, datetime.date):
-            parsed[key] = value.isoformat()
+    """Parse SPEC/VERIFICATION frontmatter via the production parser.
+
+    `lint.parse_frontmatter` already coerces YAML date/datetime values to ISO
+    strings, so smoke tests do not need their own coercion logic.
+    """
+    parsed = lint.parse_frontmatter(path)
+    assert parsed is not None, f"no frontmatter found in {path}"
     return parsed
 
 
