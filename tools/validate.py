@@ -71,6 +71,8 @@ _EXCEPTION_FIELD = re.compile(r"^\*\*Exception:\*\*", re.MULTILINE)
 _CONSTITUTION_ARTICLE_WARN_THRESHOLD = 12
 _CONSTITUTION_ARTICLE_BLOCK_THRESHOLD = 16
 
+_DELTA_OP_MARKER = re.compile(r"^[+\-~] (ADD|REMOVE|MODIFY):", re.MULTILINE)
+
 
 def _read_text(path: Path) -> str | None:
     if not path.exists():
@@ -224,6 +226,69 @@ def validate_constitution(path: Path) -> list[Finding]:
                 path,
                 f"article count {article_count} approaches cap "
                 f"({_CONSTITUTION_ARTICLE_BLOCK_THRESHOLD}); consider tightening",
+            ),
+        )
+
+    return findings
+
+
+def validate_delta(path: Path) -> list[Finding]:
+    """Validate `.idd/changes/<id>/proposal.md` structural shape per M3 spec §5.3.5.
+
+    Checks (in order):
+        1. File exists.
+        2. Frontmatter present and matches delta-proposal schema.
+        3. `## Affects` section present.
+        4. `## Delta` section present and contains at least one op marker
+           (`+ ADD:`, `- REMOVE:`, `~ MODIFY:`).
+
+    Args:
+        path: Path to the proposal.md file.
+
+    Returns:
+        List of Finding records. Empty list means structurally valid.
+    """
+    findings: list[Finding] = []
+    text = _read_text(path)
+    if text is None:
+        findings.append(
+            Finding("BLOCK", "delta", path, f"file not found: {path}"),
+        )
+        return findings
+
+    parsed = _parse_frontmatter(text)
+    if parsed is None:
+        findings.append(
+            Finding("BLOCK", "delta", path, "missing or malformed frontmatter"),
+        )
+        return findings
+    fm, body = parsed
+
+    schema = _load_schema("delta-proposal-frontmatter.schema.json")
+    for err in sorted(_build_validator(schema).iter_errors(fm), key=lambda e: list(e.path)):
+        field = f".{err.path[-1]}" if err.path else ""
+        findings.append(
+            Finding("BLOCK", "delta", path, f"frontmatter{field}: {err.message}"),
+        )
+
+    framed = "\n" + body
+    if "\n## Affects" not in framed:
+        findings.append(
+            Finding("BLOCK", "delta", path, "missing required '## Affects' section"),
+        )
+
+    if "\n## Delta" not in framed:
+        findings.append(
+            Finding("BLOCK", "delta", path, "missing required '## Delta' section"),
+        )
+    elif not _DELTA_OP_MARKER.search(body):
+        findings.append(
+            Finding(
+                "BLOCK",
+                "delta",
+                path,
+                "## Delta section has no operator markers; "
+                "expected '+ ADD:', '- REMOVE:', or '~ MODIFY:'",
             ),
         )
 
