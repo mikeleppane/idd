@@ -231,6 +231,69 @@ def test_start_phase_rejects_unknown_phase(tmp_path: Path, schemas_dir: Path) ->
         )
 
 
+def test_complete_phase_rejects_when_not_current_phase(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    target = tmp_path / "state.json"
+    initial = {
+        "feature_id": "2026-05-03-demo-feature",
+        "tier": "focused",
+        "current_phase": "execute",
+        "phases": {
+            "spec":    {"status": "done"},
+            "execute": {"status": "in_progress"},
+        },
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+
+    with pytest.raises(state.StateError, match="current_phase is 'execute'"):
+        state.complete_phase(target, phase="spec", schema_path=schemas_dir / "state.schema.json")
+
+
+def test_complete_phase_rejects_when_status_not_in_progress(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    target = tmp_path / "state.json"
+    initial = {
+        "feature_id": "2026-05-03-demo-feature",
+        "tier": "focused",
+        "current_phase": "spec",
+        "phases": {"spec": {"status": "pending"}},
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+
+    with pytest.raises(state.StateError, match="status is 'pending'"):
+        state.complete_phase(target, phase="spec", schema_path=schemas_dir / "state.schema.json")
+
+
+def test_complete_phase_raises_state_error_when_phases_missing(tmp_path: Path) -> None:
+    target = tmp_path / "state.json"
+    target.write_text(
+        json.dumps({"feature_id": "x", "current_phase": "spec"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(state.StateError, match="`phases` mapping"):
+        state.complete_phase(target, phase="spec")
+
+
+def test_start_phase_raises_state_error_when_phases_missing(tmp_path: Path) -> None:
+    target = tmp_path / "state.json"
+    target.write_text(
+        json.dumps({"feature_id": "x", "current_phase": "spec"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(state.StateError, match="`phases` mapping"):
+        state.start_phase(target, phase="spec")
+
+
 def test_finish_feature_sets_current_phase_done_without_phases_entry(
     tmp_path: Path, schemas_dir: Path
 ) -> None:

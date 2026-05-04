@@ -101,7 +101,9 @@ def complete_phase(
 ) -> dict[str, Any]:
     """Mark `phase` done with completed_at timestamp. Persist and return new state.
 
-    `current_phase` is NOT changed; call `start_phase` next to move forward.
+    Lifecycle ordering is enforced: ``phase`` must be the current phase and
+    its existing status must be ``in_progress``. ``current_phase`` is NOT
+    changed; call ``start_phase`` next to move forward.
 
     Args:
         path: state.json path.
@@ -113,7 +115,9 @@ def complete_phase(
         Updated state payload.
 
     Raises:
-        StateError: Unknown phase, missing entry, or schema failure.
+        StateError: Unknown phase, missing ``phases`` map, missing entry,
+            phase is not the current phase, status is not ``in_progress``,
+            or schema validation fails.
     """
     if phase not in VALID_LIFECYCLE_PHASES:
         raise StateError(f"unknown phase '{phase}'; must be one of {VALID_LIFECYCLE_PHASES}")
@@ -121,8 +125,22 @@ def complete_phase(
     payload = read_state(path, schema_path=schema_path)
     timestamp = now or _utc_now_iso()
 
+    if "phases" not in payload or not isinstance(payload["phases"], dict):
+        raise StateError("state.json is missing the required `phases` mapping")
     if phase not in payload["phases"]:
         raise StateError(f"cannot complete phase '{phase}': not present in phases")
+    if payload.get("current_phase") != phase:
+        raise StateError(
+            f"cannot complete phase '{phase}': current_phase is "
+            f"'{payload.get('current_phase')}'"
+        )
+    current_status = payload["phases"][phase].get("status")
+    if current_status != "in_progress":
+        raise StateError(
+            f"cannot complete phase '{phase}': status is '{current_status}', "
+            "expected 'in_progress'"
+        )
+
     payload["phases"][phase]["status"] = "done"
     payload["phases"][phase]["completed_at"] = timestamp
 
@@ -155,6 +173,9 @@ def start_phase(
 
     payload = read_state(path, schema_path=schema_path)
     timestamp = now or _utc_now_iso()
+
+    if "phases" not in payload or not isinstance(payload["phases"], dict):
+        raise StateError("state.json is missing the required `phases` mapping")
 
     payload["phases"][phase] = {"status": "in_progress", "started_at": timestamp}
     payload["current_phase"] = phase
