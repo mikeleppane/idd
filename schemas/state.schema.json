@@ -34,7 +34,16 @@
           },
           "started_at":   { "type": "string", "format": "date-time" },
           "completed_at": { "type": "string", "format": "date-time" },
-          "current_slice": { "type": "integer", "minimum": 1 }
+          "current_slice": { "type": "integer", "minimum": 1 },
+          "current_target": {
+            "type": "string",
+            "enum": ["plan", "code"]
+          },
+          "targets_done": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["plan", "code"] },
+            "uniqueItems": true
+          }
         },
         "additionalProperties": false
       }
