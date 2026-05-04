@@ -34,6 +34,7 @@ include = ["tools*"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["tests/fixtures"]
 
 [tool.ruff.lint]
 select = [
@@ -90,9 +91,11 @@ disallow_any_unimported = true
 namespace_packages = true
 explicit_package_bases = true
 files = ["tools", "tests"]
+exclude = ["tests/fixtures"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+norecursedirs = ["tests/fixtures"]
 addopts = "-ra --strict-markers --strict-config"
 markers = [
   "unit: fast, isolated",
