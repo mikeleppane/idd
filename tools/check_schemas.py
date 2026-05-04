@@ -34,6 +34,7 @@ _TEMPLATE_FRONTMATTER_BINDINGS: tuple[tuple[str, str], ...] = (
     ("feature/UNDERSTANDING.md", "understanding-frontmatter.schema.json"),
     ("feature/REVIEW.md", "review-frontmatter.schema.json"),
     ("capability/SPEC.md", "capability-spec-frontmatter.schema.json"),
+    ("constitution/CONSTITUTION.md", "constitution-frontmatter.schema.json"),
 )
 
 

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://idd.dev/schemas/constitution-frontmatter.schema.json",
+  "title": "IDD CONSTITUTION.md Frontmatter",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "created"],
+  "properties": {
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "created": { "type": "string", "format": "date" },
+    "updated": { "type": "string", "format": "date" }
+  }
+}
