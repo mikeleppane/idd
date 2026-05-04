@@ -57,3 +57,133 @@ def read_state(path: Path, schema_path: Path | None = None) -> dict[str, Any]:
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+VALID_LIFECYCLE_PHASES = (
+    "refine", "research", "spec", "domain", "scenarios", "plan",
+    "crucible", "review", "execute", "verify", "ship",
+)
+
+
+def write_state(
+    path: Path,
+    payload: dict[str, Any],
+    schema_path: Path | None = None,
+) -> None:
+    """Validate (when schema given) and write payload to disk pretty-printed.
+
+    On schema failure, no file is written.
+
+    Args:
+        path: Destination file.
+        payload: State payload.
+        schema_path: Optional schema for validation before write.
+
+    Raises:
+        StateError: Validation failed; file not written.
+    """
+    if schema_path is not None:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        validator = _validator_for(schema)
+        errors = sorted(validator.iter_errors(payload), key=lambda e: list(e.path))
+        if errors:
+            messages = "; ".join(e.message for e in errors)
+            raise StateError(f"refusing to write: payload fails schema: {messages}")
+
+    path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+
+
+def complete_phase(
+    path: Path,
+    phase: str,
+    schema_path: Path | None = None,
+    now: str | None = None,
+) -> dict[str, Any]:
+    """Mark `phase` done with completed_at timestamp. Persist and return new state.
+
+    `current_phase` is NOT changed; call `start_phase` next to move forward.
+
+    Args:
+        path: state.json path.
+        phase: Lifecycle phase name to complete.
+        schema_path: Optional schema for read+write validation.
+        now: Optional ISO 8601 timestamp; defaults to UTC now.
+
+    Returns:
+        Updated state payload.
+
+    Raises:
+        StateError: Unknown phase, missing entry, or schema failure.
+    """
+    if phase not in VALID_LIFECYCLE_PHASES:
+        raise StateError(f"unknown phase '{phase}'; must be one of {VALID_LIFECYCLE_PHASES}")
+
+    payload = read_state(path, schema_path=schema_path)
+    timestamp = now or _utc_now_iso()
+
+    if phase not in payload["phases"]:
+        raise StateError(f"cannot complete phase '{phase}': not present in phases")
+    payload["phases"][phase]["status"] = "done"
+    payload["phases"][phase]["completed_at"] = timestamp
+
+    write_state(path, payload, schema_path=schema_path)
+    return payload
+
+
+def start_phase(
+    path: Path,
+    phase: str,
+    schema_path: Path | None = None,
+    now: str | None = None,
+) -> dict[str, Any]:
+    """Set `current_phase = phase` and create/replace its phases entry as in_progress.
+
+    Args:
+        path: state.json path.
+        phase: Lifecycle phase name to start.
+        schema_path: Optional schema for read+write validation.
+        now: Optional ISO 8601 timestamp; defaults to UTC now.
+
+    Returns:
+        Updated state payload.
+
+    Raises:
+        StateError: Unknown phase or schema failure.
+    """
+    if phase not in VALID_LIFECYCLE_PHASES:
+        raise StateError(f"unknown phase '{phase}'; must be one of {VALID_LIFECYCLE_PHASES}")
+
+    payload = read_state(path, schema_path=schema_path)
+    timestamp = now or _utc_now_iso()
+
+    payload["phases"][phase] = {"status": "in_progress", "started_at": timestamp}
+    payload["current_phase"] = phase
+
+    write_state(path, payload, schema_path=schema_path)
+    return payload
+
+
+def finish_feature(
+    path: Path,
+    schema_path: Path | None = None,
+) -> dict[str, Any]:
+    """Mark the feature finished by setting current_phase = 'done'.
+
+    Does not add a 'done' entry under `phases` (schema's propertyNames forbids it).
+
+    Args:
+        path: state.json path.
+        schema_path: Optional schema for read+write validation.
+
+    Returns:
+        Updated state payload.
+    """
+    payload = read_state(path, schema_path=schema_path)
+    payload["current_phase"] = "done"
+    write_state(path, payload, schema_path=schema_path)
+    return payload
+
+
+def feature_folder_exists(repo_root: Path, feature_id: str) -> bool:
+    """Return True when .idd/features/<feature_id>/ exists under repo_root."""
+    return (repo_root / ".idd" / "features" / feature_id).is_dir()
