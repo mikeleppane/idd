@@ -1,0 +1,29 @@
+# IDD internal development docs (not tracked or shipped)
+docs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+dist/
+build/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# IDD runtime artifacts (per-project, never committed in plugin repo)
+.idd/
+
+# Local config
+.env
+*.local
