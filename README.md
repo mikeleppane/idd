@@ -1,5 +1,7 @@
 # IDD — Intent-Driven Development
 
+![IDD logo](images/idd-logo.png)
+
 > **Intent is the source. Spec is the contract. Verification reconciles reality.**
 
 A Claude Code plugin that encodes a lightweight-but-thorough Spec-Driven Development lifecycle for working with AI coding agents on real repositories.
