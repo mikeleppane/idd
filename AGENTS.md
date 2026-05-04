@@ -18,6 +18,7 @@ This file lets non-Claude tools (Cursor, Aider, Codex) discover the same IDD ski
 | `idd-ship`              | `skills/idd-ship/SKILL.md`              | explicit | Standard-tier ship: write the canonical capability SPEC.md and archive the feature folder. M2 supports first-ship only; delta proposals are M3+. |
 | `idd-next`              | `skills/idd-next/SKILL.md`              | explicit | Resolve and print or dispatch the next phase command from `state.json`. Read-only. |
 | `idd-status`            | `skills/idd-status/SKILL.md`            | explicit | One-line status of the active feature: phase, tier, last commit. Read-only. |
+| `idd-validate`          | `skills/idd-validate/SKILL.md`          | explicit | Run the structural validator over IDD artifacts (Constitution, delta, NR, capability uniqueness, repo health). Read-only. |
 | `idd-context-budget`    | `skills/idd-context-budget/SKILL.md`    | default | Refuse subagent dispatches that lack a context-budget block. |
 | `idd-subagent-dispatch` | `skills/idd-subagent-dispatch/SKILL.md` | default | Helper rules for dispatching context-bounded subagents. |
 
@@ -37,6 +38,7 @@ This file lets non-Claude tools (Cursor, Aider, Codex) discover the same IDD ski
 | `/idd:ship`      | `commands/ship.md`      | Run the ship phase: write the canonical capability SPEC.md and archive the feature. First-ship only in M2; delta proposals are M3+. |
 | `/idd:next`      | `commands/next.md`      | Show or run the next phase command for the active feature. Flags: `--feature <id>`, `--run`. |
 | `/idd:status`    | `commands/status.md`    | One-line feature status: phase, tier, last commit. Flags: `--feature <id>`, `--verbose`. |
+| `/idd:validate`  | `commands/validate.md`  | Run the structural validator. Flags: `--target <spec\|plan\|delta\|constitution\|ship\|health\|all>`, optional path, `--repo-root <path>`. Exit 0 / 1 (BLOCK\|HIGH) / 2 (usage). |
 
 ## Templates
 
