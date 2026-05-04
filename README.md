@@ -102,20 +102,6 @@ A feature ships only after all three layers pass.
 
 ---
 
-## Status
-
-M1 — **Foundation + Focused Tier** — under active development.
-
-| Milestone | Scope |
-|---|---|
-| **M1** | Foundation: plugin scaffolding, schemas, tooling, focused tier (`/idd:spec` `/idd:execute` `/idd:verify`), reference fixture, CI |
-| **M2** | Standard tier: `/idd-scenarios` `/idd-plan` `/idd-crucible` `/idd-review` `/idd-ship` |
-| **M3** | Full tier + adaptive routing: `/idd-refine` `/idd-research` `/idd-domain` `/idd-do` with tier estimation |
-| **M4** | Cross-AI review, `/idd-resume`, delta proposals, intel auto-refresh |
-| **M5** | Portability validation (Cursor / Aider / Codex), full fixture suite, recursive dogfood |
-
----
-
 ## Install (Claude Code)
 
 _Full plugin install is coming after M1 ships._ Until then:
