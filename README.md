@@ -57,6 +57,36 @@ Phases can be skipped via flags or selected automatically by `/idd-do`, which es
 | `--standard` | `spec → scenarios → plan → crucible → execute → verify → ship` | Most features; cross-file changes; non-trivial behavior |
 | `--full` | entire pipeline | New subsystems, cross-cutting refactors, anything requiring deep research and DDD |
 
+### Focused tier (M1)
+
+```
+/idd:spec --focused → /idd:execute → /idd:verify
+```
+
+The shortest path through IDD. Pick this for one-file fixes and surgical changes where scenarios, planning, and crucible would be overhead.
+
+### Standard tier (M2)
+
+```
+/idd:spec --standard
+  → /idd:scenarios
+  → /idd:plan
+  → /idd:crucible
+  → /idd:review                  # target plan (default after crucible)
+  → /idd:execute
+  → /idd:review --target code    # target code diff against PLAN.md
+  → /idd:verify
+  → /idd:ship
+```
+
+Each command refuses to run unless the previous phase is complete (state machine guard). The `idd-context-budget` and `idd-subagent-dispatch` skills enforce the per-subagent token budget at every dispatch.
+
+**M2 limitations (called out so you don't trip on them):**
+
+- **`/idd:ship` is first-ship only.** If `.idd/specs/<capability>/SPEC.md` already exists for the capability slug, ship aborts with a "delta proposal required" message. Delta proposals (`/idd:change`) land in M3+.
+- **`/idd:review --cross-ai` is not implemented.** Cross-AI review (Claude ↔ GPT second-opinion pass) is M4 territory; the flag errors out today.
+- **Refine, research, and domain phases are M3+.** The `--full` pipeline isn't ready yet — pick `--standard` for now even on broader features.
+
 ---
 
 ## Per-feature artifacts

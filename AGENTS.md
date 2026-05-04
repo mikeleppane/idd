@@ -9,8 +9,13 @@ This file lets non-Claude tools (Cursor, Aider, Codex) discover the same IDD ski
 | Name | Path | Auto-load | Purpose |
 |---|---|---|---|
 | `idd-spec`              | `skills/idd-spec/SKILL.md`              | default | Author a feature SPEC.md following the IDD template. |
+| `idd-scenarios`         | `skills/idd-scenarios/SKILL.md`         | explicit | Standard-tier scenarios: expand SPEC.md § Scenarios into rigorous Gherkin and emit `.feature` files when a BDD framework is detected. |
+| `idd-plan`              | `skills/idd-plan/SKILL.md`              | explicit | Standard-tier plan: file-bound, acceptance-mapped slice + wave PLAN.md with a Verified Dependencies section. |
+| `idd-crucible`          | `skills/idd-crucible/SKILL.md`          | explicit | Standard-tier crucible ritual: assumptions inversion → adversarial Q&A → pre-mortem, producing UNDERSTANDING.md. |
+| `idd-review`            | `skills/idd-review/SKILL.md`            | explicit | Standard-tier review: cheap self-review + optional heavy subagent pass + convergence loop on HIGH+ findings (max 3 cycles). Targets PLAN.md or code diff. |
 | `idd-execute`           | `skills/idd-execute/SKILL.md`           | explicit | Focused-tier execute: implement directly from SPEC.md acceptance criteria. |
 | `idd-verify`            | `skills/idd-verify/SKILL.md`            | explicit | Three-layer verification: code-audit + scenario execution + UAT. |
+| `idd-ship`              | `skills/idd-ship/SKILL.md`              | explicit | Standard-tier ship: write the canonical capability SPEC.md and archive the feature folder. M2 supports first-ship only; delta proposals are M3+. |
 | `idd-context-budget`    | `skills/idd-context-budget/SKILL.md`    | default | Refuse subagent dispatches that lack a context-budget block. |
 | `idd-subagent-dispatch` | `skills/idd-subagent-dispatch/SKILL.md` | default | Helper rules for dispatching context-bounded subagents. |
 
@@ -20,9 +25,14 @@ This file lets non-Claude tools (Cursor, Aider, Codex) discover the same IDD ski
 
 | Slash | Path | Purpose |
 |---|---|---|
-| `/idd:spec`    | `commands/spec.md`    | Run the spec phase: write `.idd/features/<id>/SPEC.md`. |
-| `/idd:execute` | `commands/execute.md` | Run the execute phase against the active feature. |
-| `/idd:verify`  | `commands/verify.md`  | Run the verify phase against the active feature. |
+| `/idd:spec`      | `commands/spec.md`      | Run the spec phase: write `.idd/features/<id>/SPEC.md`. |
+| `/idd:scenarios` | `commands/scenarios.md` | Run the scenarios phase: expand SPEC.md § Scenarios into Gherkin and (when supported) `.feature` files. Standard/full tier only. |
+| `/idd:plan`      | `commands/plan.md`      | Run the plan phase: author PLAN.md with vertical slices, waves, and Verified Dependencies. Standard/full tier only. |
+| `/idd:crucible`  | `commands/crucible.md`  | Run the crucible phase: three-step adversarial ritual producing UNDERSTANDING.md. Standard/full tier only. |
+| `/idd:review`    | `commands/review.md`    | Run the review phase against the active feature. `--target plan` (default after crucible) or `--target code` (default after execute). Cross-AI review is M4 territory. |
+| `/idd:execute`   | `commands/execute.md`   | Run the execute phase against the active feature. |
+| `/idd:verify`    | `commands/verify.md`    | Run the verify phase against the active feature. |
+| `/idd:ship`      | `commands/ship.md`      | Run the ship phase: write the canonical capability SPEC.md and archive the feature. First-ship only in M2; delta proposals are M3+. |
 
 ## Templates
 
