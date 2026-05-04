@@ -1,0 +1,9 @@
+{
+  "feature_id": "BAD ID with spaces",
+  "tier": "quick",
+  "current_phase": "spec",
+  "phases": { "not-a-phase": { "status": "in_progress" } },
+  "skipped": [],
+  "deviations": [],
+  "commits": []
+}
