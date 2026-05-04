@@ -1,4 +1,5 @@
 """Smoke-level assertion that all M2 templates ship with the plugin."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,7 +15,9 @@ M2_TEMPLATES = [
 ]
 
 
-@pytest.mark.parametrize("template", M2_TEMPLATES, ids=lambda p: p.relative_to(REPO_ROOT).as_posix())
+@pytest.mark.parametrize(
+    "template", M2_TEMPLATES, ids=lambda p: p.relative_to(REPO_ROOT).as_posix()
+)
 def test_template_exists_and_has_frontmatter(template: Path) -> None:
     assert template.is_file(), f"missing template: {template}"
     text = template.read_text(encoding="utf-8")

@@ -1,4 +1,5 @@
 """Lint markdown frontmatter for IDD skills and commands."""
+
 from __future__ import annotations
 
 import argparse
@@ -85,10 +86,22 @@ def parse_frontmatter(path: Path) -> dict[str, Any] | None:
     return coerced
 
 
-_IMPERATIVE_BLOCKLIST = frozenset({
-    "this", "the", "a", "an", "skill", "command", "it",
-    "helps", "allows", "enables", "lets", "permits",
-})
+_IMPERATIVE_BLOCKLIST = frozenset(
+    {
+        "this",
+        "the",
+        "a",
+        "an",
+        "skill",
+        "command",
+        "it",
+        "helps",
+        "allows",
+        "enables",
+        "lets",
+        "permits",
+    }
+)
 _USE_WHEN_PATTERN = re.compile(r"\bUse (when|after|whenever|before|during)\b", re.IGNORECASE)
 
 
@@ -154,11 +167,15 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(description="Lint IDD skill/command frontmatter.")
     parser.add_argument(
-        "--schema", required=True, type=Path,
+        "--schema",
+        required=True,
+        type=Path,
         help="Path to frontmatter.schema.json.",
     )
     parser.add_argument(
-        "paths", nargs="+", type=Path,
+        "paths",
+        nargs="+",
+        type=Path,
         help="Markdown files to lint.",
     )
     args = parser.parse_args(argv)

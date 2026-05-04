@@ -1,4 +1,5 @@
 """Tests for hooks.check_budget — pure-function evaluator."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -43,11 +44,7 @@ def test_evaluate_blocks_when_files_in_scope_unbounded() -> None:
 
 
 def test_evaluate_blocks_when_forbidden_missing() -> None:
-    prompt = (
-        "context_budget:\n"
-        "  spec_sections: [Intent]\n"
-        "  files_in_scope: ['src/import/csv.py']\n"
-    )
+    prompt = "context_budget:\n  spec_sections: [Intent]\n  files_in_scope: ['src/import/csv.py']\n"
     allow, reason = check_budget.evaluate(prompt)
     assert not allow
     assert "forbidden" in reason
@@ -81,12 +78,7 @@ def test_evaluate_blocks_bare_scalar_unbounded() -> None:
 
 
 def test_evaluate_blocks_quoted_scalar_unbounded() -> None:
-    prompt = (
-        "context_budget:\n"
-        '  files_in_scope: "**"\n'
-        "  forbidden:\n"
-        "    - read entire repo\n"
-    )
+    prompt = 'context_budget:\n  files_in_scope: "**"\n  forbidden:\n    - read entire repo\n'
     allow, reason = check_budget.evaluate(prompt)
     assert not allow
     assert "files_in_scope" in reason
@@ -94,11 +86,7 @@ def test_evaluate_blocks_quoted_scalar_unbounded() -> None:
 
 def test_evaluate_blocks_yaml_block_list_unbounded() -> None:
     prompt = (
-        "context_budget:\n"
-        "  files_in_scope:\n"
-        '    - "**"\n'
-        "  forbidden:\n"
-        "    - read entire repo\n"
+        'context_budget:\n  files_in_scope:\n    - "**"\n  forbidden:\n    - read entire repo\n'
     )
     allow, reason = check_budget.evaluate(prompt)
     assert not allow
@@ -122,12 +110,7 @@ def test_evaluate_blocks_when_only_budget_is_inside_fenced_block() -> None:
 
 
 def test_evaluate_blocks_bare_extension_glob_repo_wide() -> None:
-    prompt = (
-        "context_budget:\n"
-        "  files_in_scope: ['*.py']\n"
-        "  forbidden:\n"
-        "    - read entire repo\n"
-    )
+    prompt = "context_budget:\n  files_in_scope: ['*.py']\n  forbidden:\n    - read entire repo\n"
     allow, reason = check_budget.evaluate(prompt)
     assert not allow
     assert "unbounded" in reason
@@ -135,10 +118,7 @@ def test_evaluate_blocks_bare_extension_glob_repo_wide() -> None:
 
 def test_evaluate_allows_directory_glob() -> None:
     prompt = (
-        "context_budget:\n"
-        "  files_in_scope: ['src/**/*.py']\n"
-        "  forbidden:\n"
-        "    - read entire repo\n"
+        "context_budget:\n  files_in_scope: ['src/**/*.py']\n  forbidden:\n    - read entire repo\n"
     )
     allow, reason = check_budget.evaluate(prompt)
     assert allow, reason
@@ -146,11 +126,7 @@ def test_evaluate_allows_directory_glob() -> None:
 
 
 def test_evaluate_blocks_empty_forbidden_list() -> None:
-    prompt = (
-        "context_budget:\n"
-        "  files_in_scope: ['src/foo.py']\n"
-        "  forbidden: []\n"
-    )
+    prompt = "context_budget:\n  files_in_scope: ['src/foo.py']\n  forbidden: []\n"
     allow, reason = check_budget.evaluate(prompt)
     assert not allow
     assert "forbidden" in reason

@@ -1,4 +1,5 @@
 """Shared pytest fixtures for IDD tooling tests."""
+
 from __future__ import annotations
 
 from pathlib import Path

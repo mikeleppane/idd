@@ -18,6 +18,7 @@ Hook input shape (per Claude Code docs):
   ...
 }
 """
+
 from __future__ import annotations
 
 import json
@@ -80,7 +81,7 @@ def _extract_budget_block(prompt: str) -> str | None:
         return None
 
     body = [lines[start]]
-    for line in lines[start + 1:]:
+    for line in lines[start + 1 :]:
         if line.lstrip().startswith("```"):
             break
         if line == "" or line[0] in (" ", "\t"):
@@ -96,17 +97,13 @@ def _validate_files_in_scope(files: Any) -> str | None:
     if files is None:
         return "context_budget.files_in_scope is required"
     if not isinstance(files, list):
-        return (
-            "context_budget.files_in_scope must be a YAML list "
-            f"(got {type(files).__name__})"
-        )
+        return f"context_budget.files_in_scope must be a YAML list (got {type(files).__name__})"
     if len(files) == 0:
         return "context_budget.files_in_scope must be a non-empty list"
     for item in files:
         if not isinstance(item, str):
             return (
-                "context_budget.files_in_scope items must be strings "
-                f"(got {type(item).__name__})"
+                f"context_budget.files_in_scope items must be strings (got {type(item).__name__})"
             )
         if _is_unbounded_glob(item):
             return f"context_budget.files_in_scope item is unbounded: '{item}'"
@@ -118,10 +115,7 @@ def _validate_forbidden(forbidden: Any) -> str | None:
     if forbidden is None:
         return "context_budget.forbidden is required"
     if not isinstance(forbidden, list):
-        return (
-            "context_budget.forbidden must be a YAML list "
-            f"(got {type(forbidden).__name__})"
-        )
+        return f"context_budget.forbidden must be a YAML list (got {type(forbidden).__name__})"
     if len(forbidden) == 0:
         return "context_budget.forbidden must list at least one explicit prohibition"
     return None
@@ -130,9 +124,7 @@ def _validate_forbidden(forbidden: Any) -> str | None:
 def _validate_budget(budget: Any) -> tuple[bool, str]:
     """Validate the parsed ``context_budget`` mapping. Return (allow, reason)."""
     if not isinstance(budget, dict):
-        return False, (
-            f"context_budget must be a YAML mapping, got {type(budget).__name__}"
-        )
+        return False, (f"context_budget must be a YAML mapping, got {type(budget).__name__}")
 
     for reason in (
         _validate_files_in_scope(budget.get("files_in_scope")),
@@ -186,13 +178,17 @@ def main() -> int:
     if allow:
         print(json.dumps({}))
     else:
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": f"IDD context-budget hook: {reason}",
-            }
-        }))
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": f"IDD context-budget hook: {reason}",
+                    }
+                }
+            )
+        )
     return 0
 
 

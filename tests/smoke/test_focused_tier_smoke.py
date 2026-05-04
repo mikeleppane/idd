@@ -7,6 +7,7 @@ These do not run live skills or slash commands; live plugin dogfood is the Task 
   - the dummy target_repo's own unit tests pass (sanity-check the fixture);
   - state-machine transitions through the focused tier produce the expected JSON.
 """
+
 from __future__ import annotations
 
 import json
@@ -103,11 +104,11 @@ def test_state_machine_walks_focused_tier_to_done(tmp_path: Path, schemas_dir: P
     schema = schemas_dir / "state.schema.json"
     state.write_state(target, initial, schema_path=schema)
 
-    state.complete_phase(target, "spec",    schema_path=schema, now="2026-05-03T11:00:00Z")
-    state.start_phase(   target, "execute", schema_path=schema, now="2026-05-03T11:01:00Z")
+    state.complete_phase(target, "spec", schema_path=schema, now="2026-05-03T11:00:00Z")
+    state.start_phase(target, "execute", schema_path=schema, now="2026-05-03T11:01:00Z")
     state.complete_phase(target, "execute", schema_path=schema, now="2026-05-03T12:00:00Z")
-    state.start_phase(   target, "verify",  schema_path=schema, now="2026-05-03T12:01:00Z")
-    state.complete_phase(target, "verify",  schema_path=schema, now="2026-05-03T13:00:00Z")
+    state.start_phase(target, "verify", schema_path=schema, now="2026-05-03T12:01:00Z")
+    state.complete_phase(target, "verify", schema_path=schema, now="2026-05-03T13:00:00Z")
     final = state.finish_feature(target, schema_path=schema)
 
     assert final["current_phase"] == "done"
