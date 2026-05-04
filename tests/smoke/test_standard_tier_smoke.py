@@ -127,11 +127,26 @@ def test_state_machine_accepts_full_standard_tier_flow_with_dual_review(tmp_path
     schema = SCHEMAS_DIR / "state.schema.json"
 
     # Walk the flow: spec is already in_progress; everything else needs start_phase
-    # before complete_phase. The two `review` entries hit the same slot — the
-    # second call overwrites the first.
+    # before complete_phase. The review phase is gated on both targets
+    # (plan, code) being done. The first review pass (pre-execute) sets+completes
+    # the `plan` target but does NOT complete the phase. After execute, the
+    # second review pass restarts review (start_phase resets targets_done),
+    # then sets+completes BOTH targets before complete_phase satisfies the gate.
+    review_seen = 0
     for index, phase in enumerate(STANDARD_TIER_FLOW):
         if not (index == 0 and phase == "spec"):
             state.start_phase(state_path, phase, schema_path=schema)
+        if phase == "review":
+            review_seen += 1
+            if review_seen == 1:
+                # First pass: only the plan target is reviewed; gate not yet satisfied.
+                state.set_review_target(state_path, review_target="plan", schema_path=schema)
+                state.complete_review_target(state_path, review_target="plan", schema_path=schema)
+                continue
+            # Second pass: re-cover both targets so the gate clears.
+            for target in ("plan", "code"):
+                state.set_review_target(state_path, review_target=target, schema_path=schema)
+                state.complete_review_target(state_path, review_target=target, schema_path=schema)
         state.complete_phase(state_path, phase, schema_path=schema)
 
     state.finish_feature(state_path, schema_path=schema)

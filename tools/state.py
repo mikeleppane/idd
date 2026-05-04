@@ -152,6 +152,15 @@ def complete_phase(
             f"cannot complete phase '{phase}': status is '{current_status}', expected 'in_progress'"
         )
 
+    if phase == "review":
+        targets_done = sorted(payload["phases"][phase].get("targets_done", []))
+        required = sorted(VALID_REVIEW_TARGETS)
+        if targets_done != required:
+            raise StateError(
+                f"cannot complete phase 'review': both review targets must be done; "
+                f"targets_done={targets_done}, required={required}"
+            )
+
     payload["phases"][phase]["status"] = "done"
     payload["phases"][phase]["completed_at"] = timestamp
 

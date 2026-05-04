@@ -145,3 +145,63 @@ def test_complete_review_target_idempotent_within_same_target(
     )
 
     assert result["phases"]["review"]["targets_done"] == ["plan"]
+
+
+def test_complete_phase_review_blocks_when_only_plan_done(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    target = tmp_path / "state.json"
+    initial = _payload_with_review(targets_done=["plan"], current_target="plan")
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+
+    with pytest.raises(state.StateError, match="both review targets"):
+        state.complete_phase(
+            target,
+            phase="review",
+            schema_path=schemas_dir / "state.schema.json",
+            now="2026-05-04T12:00:00Z",
+        )
+
+
+def test_complete_phase_review_passes_when_both_targets_done(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    target = tmp_path / "state.json"
+    initial = _payload_with_review(targets_done=["plan", "code"], current_target="code")
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+
+    result = state.complete_phase(
+        target,
+        phase="review",
+        schema_path=schemas_dir / "state.schema.json",
+        now="2026-05-04T12:00:00Z",
+    )
+
+    assert result["phases"]["review"]["status"] == "done"
+    assert result["phases"]["review"]["completed_at"] == "2026-05-04T12:00:00Z"
+
+
+def test_complete_phase_non_review_unchanged_by_target_gate(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    """Gate must not affect other phases."""
+    target = tmp_path / "state.json"
+    initial = {
+        "feature_id": "2026-05-04-demo",
+        "tier": "focused",
+        "current_phase": "spec",
+        "phases": {"spec": {"status": "in_progress"}},
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+
+    result = state.complete_phase(
+        target,
+        phase="spec",
+        schema_path=schemas_dir / "state.schema.json",
+        now="2026-05-04T12:00:00Z",
+    )
+
+    assert result["phases"]["spec"]["status"] == "done"
