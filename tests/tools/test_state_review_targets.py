@@ -257,6 +257,54 @@ def test_complete_phase_non_review_unchanged_by_target_gate(
     assert result["phases"]["spec"]["status"] == "done"
 
 
+def test_dual_review_pass_completes_without_manual_target_replay(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    """End-to-end dual-review flow: target=plan, execute, target=code, complete.
+
+    Reproduces the real /idd:review consumer chain: the second invocation
+    must NOT manually re-record target=plan to clear the gate; preserved
+    targets_done plus the per-target helpers are sufficient.
+    """
+    target = tmp_path / "state.json"
+    schema = schemas_dir / "state.schema.json"
+
+    initial = {
+        "feature_id": "2026-05-04-demo",
+        "tier": "standard",
+        "current_phase": "crucible",
+        "phases": {
+            "spec": {"status": "done"},
+            "scenarios": {"status": "done"},
+            "plan": {"status": "done"},
+            "crucible": {"status": "in_progress"},
+        },
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+    state.write_state(target, initial, schema_path=schema)
+    state.complete_phase(target, phase="crucible", schema_path=schema)
+
+    state.start_phase(target, phase="review", schema_path=schema)
+    state.set_review_target(target, review_target="plan", schema_path=schema)
+    state.complete_review_target(target, review_target="plan", schema_path=schema)
+
+    state.start_phase(target, phase="execute", schema_path=schema)
+    state.complete_phase(target, phase="execute", schema_path=schema)
+
+    state.start_phase(target, phase="review", schema_path=schema)
+    after_restart = state.read_state(target, schema_path=schema)
+    assert after_restart["phases"]["review"]["targets_done"] == ["plan"]
+
+    state.set_review_target(target, review_target="code", schema_path=schema)
+    state.complete_review_target(target, review_target="code", schema_path=schema)
+
+    result = state.complete_phase(target, phase="review", schema_path=schema)
+    assert result["phases"]["review"]["status"] == "done"
+    assert sorted(result["phases"]["review"]["targets_done"]) == ["code", "plan"]
+
+
 def test_state_schema_rejects_review_target_fields_on_non_review_phase(
     tmp_path: Path, schemas_dir: Path
 ) -> None:

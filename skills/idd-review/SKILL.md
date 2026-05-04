@@ -28,25 +28,29 @@ The plain name `.idd/features/<id>/REVIEW.md` is reserved (do not write it). Dow
 ## Steps
 
 1. **Validate state.** Read `state.json`; abort if not in review phase.
-2. **Copy template** if `REVIEW.<target>.md` does not exist: write `.idd/features/<id>/REVIEW.<target>.md` from `templates/feature/REVIEW.md` with frontmatter: `spec: <feature-id>`, `target: <plan|code>`, `status: open`, `cycles: 1`.
-3. **Cycle N — Self-review pass.**
+2. **Mark active target.** Call `tools.state.set_review_target(path, review_target=<plan|code>)` so `phases.review.current_target` reflects which pass is in flight. Idempotent within an in-progress review — safe to call once per skill invocation.
+3. **Copy template** if `REVIEW.<target>.md` does not exist: write `.idd/features/<id>/REVIEW.<target>.md` from `templates/feature/REVIEW.md` with frontmatter: `spec: <feature-id>`, `target: <plan|code>`, `status: open`, `cycles: 1`.
+4. **Cycle N — Self-review pass.**
    - For target=plan: walk every slice. Check (a) every acceptance criterion mapped to exactly one slice; (b) every file in scope appears in exactly one slice unless shared; (c) Verified Dependencies non-empty when new deps; (d) wave dependencies make sense (no Wave 2 task depends on a Wave 3 task).
    - For target=code: walk every commit since spec creation. Check (a) commit message follows Conventional Commits with allowed scope; (b) commit content matches one PLAN.md task; (c) tests added or modified for new behavior; (d) no obvious misalignment with SPEC § Negative Requirements.
    - Append findings to the per-target `REVIEW.<target>.md` § Findings with `Source: self`. Severity: BLOCK / HIGH / MEDIUM / LOW.
-4. **Cycle N — Heavy subagent pass (only when self-review surfaces ≥ 1 HIGH+ finding OR user explicitly requests `--heavy`).**
+5. **Cycle N — Heavy subagent pass (only when self-review surfaces ≥ 1 HIGH+ finding OR user explicitly requests `--heavy`).**
    - Dispatch ONE review subagent. Apply the `idd-context-budget` skill rules and `idd-subagent-dispatch` shape. The PreToolUse hook (`hooks/check_budget.py`) blocks malformed dispatches mechanically.
    - Budget: SPEC § Acceptance + Negative Requirements + UNDERSTANDING § Pre-Mortem; for target=code, also `git diff --stat` plus the touched files.
    - Task: produce findings the self-pass missed. Same severity scale.
    - Append findings to `REVIEW.<target>.md` with `Source: heavy-subagent`.
-5. **Update Convergence Log row** for cycle N in `REVIEW.<target>.md`: findings opened, findings resolved (the planning agent or user resolved them), HIGH+ remaining.
-6. **Drive convergence.**
-   - If HIGH+ remaining > 0 AND cycle N < 3: surface findings to user, accept resolutions (edits to SPEC / PLAN / code or accepted-risk entries in `decisions.md`), bump `REVIEW.<target>.md` frontmatter `cycles: N+1`, repeat steps 3–5.
+6. **Update Convergence Log row** for cycle N in `REVIEW.<target>.md`: findings opened, findings resolved (the planning agent or user resolved them), HIGH+ remaining.
+7. **Drive convergence.**
+   - If HIGH+ remaining > 0 AND cycle N < 3: surface findings to user, accept resolutions (edits to SPEC / PLAN / code or accepted-risk entries in `decisions.md`), bump `REVIEW.<target>.md` frontmatter `cycles: N+1`, repeat steps 4–6.
    - If HIGH+ remaining > 0 AND cycle N == 3: keep `REVIEW.<target>.md` frontmatter `status: open`, surface to user with full residual list, halt without transitioning state. Document blocker in `decisions.md` § Open.
    - If HIGH+ remaining == 0: set `REVIEW.<target>.md` frontmatter `status: resolved`, proceed.
-7. **Self-review gate:** `REVIEW.<target>.md` status is `resolved` AND no BLOCK findings remain unresolved.
-8. **Transition state.** Call `tools.state.complete_phase(path, "review")`. Next phase: for target=plan → `execute`; for target=code → `verify`. Call `tools.state.start_phase(path, <next>)`.
-9. **Surface to user:** `REVIEW.<target>.md` path, findings count by severity, cycles used, next phase.
+8. **Self-review gate:** `REVIEW.<target>.md` status is `resolved` AND no BLOCK findings remain unresolved.
+9. **Record target completion.** Call `tools.state.complete_review_target(path, review_target=<plan|code>)` so `phases.review.targets_done` records this pass. Idempotent within the same target.
+10. **Transition state — depends on target:**
+   - **target=plan:** review phase stays `in_progress`; `targets_done == ["plan"]`. Do **not** call `complete_phase("review")` yet — the gate requires both targets done. The next phase command is `/idd:execute` (which still observes review as in_progress; `idd-execute` accepts that state).
+   - **target=code:** both targets are now in `targets_done`. Call `tools.state.complete_phase(path, "review")` (the gate clears) followed by `tools.state.start_phase(path, "verify")`.
+11. **Surface to user:** `REVIEW.<target>.md` path, findings count by severity, cycles used, and the resolved next phase (`/idd:execute` after target=plan; `/idd:verify` after target=code).
 
 ## Done
 
-`REVIEW.<target>.md` exists, status is `resolved`, no BLOCK or HIGH findings remain unresolved. `state.json` reflects review=done.
+`REVIEW.<target>.md` exists, status is `resolved`, no BLOCK or HIGH findings remain unresolved. `phases.review.targets_done` records the just-completed target. After target=code only, `state.json` reflects review=done.
