@@ -11,7 +11,7 @@ disable-model-invocation: true
 Active feature `state.json` has `current_phase == "execute"`. Branches on `tier`:
 
 - **Focused** (M1): no PLAN.md; drive from SPEC.md acceptance criteria with one dispatch.
-- **Standard / Full** (M2): PLAN.md exists with REVIEW.md `status: resolved` for `target: plan`. Dispatch slice-by-slice, wave-by-wave.
+- **Standard / Full** (M2): PLAN.md exists with `REVIEW.plan.md` `status: resolved` for `target: plan`. Dispatch slice-by-slice, wave-by-wave.
 
 ## Inputs
 
@@ -22,17 +22,17 @@ Active feature `state.json` has `current_phase == "execute"`. Branches on `tier`
 
 ## Steps
 
-1. **Validate tier and state.** Read `state.json`. For `tier in ("standard", "full")`, also require PLAN.md with `status: ready` and REVIEW.md with `target: plan` and `status: resolved`.
+1. **Validate tier and state.** Read `state.json`. For `tier in ("standard", "full")`, also require PLAN.md with `status: ready` and `REVIEW.plan.md` with `target: plan` and `status: resolved`.
 2. **Transition state.** Call `tools.state.start_phase(path, "execute")` (idempotent if already in_progress).
 3. **Branch on tier.**
 
 ### Focused branch (M1 behavior, unchanged)
 
 3a. Derive a one-slice plan in memory. List all acceptance criteria as the slice's wave 1 tasks. Do NOT write a PLAN.md.
-3b. Dispatch ONE execute subagent per the M1 SKILL behavior (full block preserved from M1 — see git history for `857abdd`/`80bf914`/`ffaed43`):
+3b. Dispatch ONE execute subagent per the M1 focused-tier behavior:
    - Budget: SPEC § [Intent, Codebase Anchors, Scope, Scenarios, Acceptance, Negative Requirements]; `files_in_scope` = union of Codebase Anchors paths.
    - Task: implement each acceptance criterion via TDD.
-3c. Append summary to `.idd/features/<id>/slice-1.summary`. Append commit shas to `state.commits[]` with `phase: "execute"`.
+3c. Append summary to `.idd/features/<id>/slice-1.summary`. Append commit shas to `state.commits[]` with the schema-required fields only — `{ "sha": "...", "phase": "execute", "subject": "...", "logged_at": "..." }`. Slice membership lives in `slice-<N>.summary`, not in `state.commits[]` (the schema rejects extra keys).
 
 ### Standard / Full branch (M2)
 
@@ -45,7 +45,7 @@ Active feature `state.json` has `current_phase == "execute"`. Branches on `tier`
      - `owned_files`: files this specific task writes.
      - `read_only_files`: files the task reads but does not modify.
      - `prior_summaries`: slice summaries from prior slices (always); prior task summaries from THIS slice (only when needed).
-   - Receive subagent summary (≤500 words). Append commit shas to `state.commits[]` with `phase: "execute"`, `slice: <N>`.
+   - Receive subagent summary (≤500 words). Append commit shas to `state.commits[]` with the schema-required fields only — `{ "sha": "...", "phase": "execute", "subject": "...", "logged_at": "..." }`. **Do NOT add a `slice` key** — `state.schema.json` enforces `additionalProperties: false` on `commits[]` and the write will be rejected. Record slice membership in `slice-<N>.summary` instead.
 3e. After each slice completes:
    - Write `.idd/features/<id>/slice-<N>.summary` with the aggregated wave outputs.
    - Self-review gate per slice: every acceptance criterion mapped to this slice has ≥1 commit; no Negative Requirement violated by the diff.
