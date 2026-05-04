@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://idd.dev/schemas/capability-spec-frontmatter.schema.json",
+  "title": "IDD canonical capability SPEC.md frontmatter",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["capability", "status", "created", "last_updated", "evidence"],
+  "properties": {
+    "capability": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "status": {
+      "type": "string",
+      "const": "shipped"
+    },
+    "created": { "type": "string", "format": "date" },
+    "last_updated": { "type": "string", "format": "date" },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "patternProperties": {
+          "^\\d{4}-\\d{2}-\\d{2}-[a-z0-9-]+$": {
+            "type": "string",
+            "pattern": "^features/archive/\\d{4}-\\d{2}-\\d{2}-[a-z0-9-]+/$"
+          }
+        }
+      }
+    },
+    "bounded_context": {
+      "type": ["string", "null"]
+    }
+  }
+}

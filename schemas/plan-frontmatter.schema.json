@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://idd.dev/schemas/plan-frontmatter.schema.json",
+  "title": "IDD PLAN.md frontmatter",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["spec", "slices", "status"],
+  "properties": {
+    "spec": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}-[a-z0-9-]+$"
+    },
+    "slices": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ready", "executing", "done"]
+    }
+  }
+}

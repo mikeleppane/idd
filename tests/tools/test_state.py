@@ -1,4 +1,5 @@
 """Tests for tools.state — feature state.json read/write/transition."""
+
 from __future__ import annotations
 
 import json
@@ -163,7 +164,13 @@ def test_start_phase_marks_next_in_progress(tmp_path: Path, schemas_dir: Path) -
         "feature_id": "2026-05-03-demo-feature",
         "tier": "focused",
         "current_phase": "spec",
-        "phases": {"spec": {"status": "done", "started_at": "2026-05-03T10:00:00Z", "completed_at": "2026-05-03T11:30:00Z"}},
+        "phases": {
+            "spec": {
+                "status": "done",
+                "started_at": "2026-05-03T10:00:00Z",
+                "completed_at": "2026-05-03T11:30:00Z",
+            }
+        },
         "skipped": [],
         "deviations": [],
         "commits": [],
@@ -178,7 +185,10 @@ def test_start_phase_marks_next_in_progress(tmp_path: Path, schemas_dir: Path) -
     )
 
     assert result["current_phase"] == "execute"
-    assert result["phases"]["execute"] == {"status": "in_progress", "started_at": "2026-05-03T11:35:00Z"}
+    assert result["phases"]["execute"] == {
+        "status": "in_progress",
+        "started_at": "2026-05-03T11:35:00Z",
+    }
 
 
 def test_start_phase_resets_existing_entry(tmp_path: Path, schemas_dir: Path) -> None:
@@ -189,8 +199,13 @@ def test_start_phase_resets_existing_entry(tmp_path: Path, schemas_dir: Path) ->
         "tier": "focused",
         "current_phase": "execute",
         "phases": {
-            "spec":    {"status": "done"},
-            "execute": {"status": "done", "current_slice": 3, "started_at": "2026-05-03T11:30:00Z", "completed_at": "2026-05-03T12:00:00Z"},
+            "spec": {"status": "done"},
+            "execute": {
+                "status": "done",
+                "current_slice": 3,
+                "started_at": "2026-05-03T11:30:00Z",
+                "completed_at": "2026-05-03T12:00:00Z",
+            },
         },
         "skipped": [],
         "deviations": [],
@@ -205,7 +220,10 @@ def test_start_phase_resets_existing_entry(tmp_path: Path, schemas_dir: Path) ->
         now="2026-05-03T13:00:00Z",
     )
 
-    assert result["phases"]["execute"] == {"status": "in_progress", "started_at": "2026-05-03T13:00:00Z"}
+    assert result["phases"]["execute"] == {
+        "status": "in_progress",
+        "started_at": "2026-05-03T13:00:00Z",
+    }
     assert "completed_at" not in result["phases"]["execute"]
     assert "current_slice" not in result["phases"]["execute"]
 
@@ -231,16 +249,14 @@ def test_start_phase_rejects_unknown_phase(tmp_path: Path, schemas_dir: Path) ->
         )
 
 
-def test_complete_phase_rejects_when_not_current_phase(
-    tmp_path: Path, schemas_dir: Path
-) -> None:
+def test_complete_phase_rejects_when_not_current_phase(tmp_path: Path, schemas_dir: Path) -> None:
     target = tmp_path / "state.json"
     initial = {
         "feature_id": "2026-05-03-demo-feature",
         "tier": "focused",
         "current_phase": "execute",
         "phases": {
-            "spec":    {"status": "done"},
+            "spec": {"status": "done"},
             "execute": {"status": "in_progress"},
         },
         "skipped": [],
@@ -303,9 +319,9 @@ def test_finish_feature_sets_current_phase_done_without_phases_entry(
         "tier": "focused",
         "current_phase": "verify",
         "phases": {
-            "spec":    {"status": "done"},
+            "spec": {"status": "done"},
             "execute": {"status": "done"},
-            "verify":  {"status": "done"},
+            "verify": {"status": "done"},
         },
         "skipped": [],
         "deviations": [],

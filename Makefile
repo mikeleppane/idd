@@ -1,4 +1,4 @@
-.PHONY: help install format fmt lint fix typecheck test cov check clean ci
+.PHONY: help install format fmt format-check lint fix typecheck test cov check clean ci
 
 # `make` with no target prints the help table.
 .DEFAULT_GOAL := help
@@ -28,6 +28,9 @@ format: ## Apply ruff formatter
 
 fmt: format ## Alias for `format`
 
+format-check: ## Verify formatting (no writes); fails if `make format` would change anything
+	@$(RUFF) format --check tools tests hooks
+
 lint: ## Run ruff lint (no fixes)
 	@$(RUFF) check tools tests hooks
 
@@ -43,7 +46,7 @@ test: ## Run pytest
 cov: ## Run pytest with coverage
 	@$(PYTEST) --cov=tools --cov-report=term-missing
 
-check: lint typecheck test ## Full local quality gate — run before every commit
+check: format-check lint typecheck test ## Full local quality gate — run before every commit
 
 ci: check ## Alias for the composite quality gate (mirrors CI)
 

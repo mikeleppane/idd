@@ -1,5 +1,7 @@
 # IDD — Intent-Driven Development
 
+![IDD logo](images/idd-logo.png)
+
 > **Intent is the source. Spec is the contract. Verification reconciles reality.**
 
 A Claude Code plugin that encodes a lightweight-but-thorough Spec-Driven Development lifecycle for working with AI coding agents on real repositories.
@@ -38,7 +40,7 @@ refine → research → spec → domain → scenarios → plan → crucible → 
 | **scenarios** | Gherkin scenarios in `SPEC.md` | BDD acceptance criteria; auto-escalates to `.feature` files when project supports it |
 | **plan** | `PLAN.md` | Vertical slices and waves of parallelizable tasks; file-bound |
 | **crucible** | `UNDERSTANDING.md` | Adversarial ritual: assumptions inversion → adversarial Q&A → pre-mortem |
-| **review** | `REVIEW.md` | Layered self + heavy + cross-AI reviews with convergence loops |
+| **review** | `REVIEW.plan.md` / `REVIEW.code.md` | Layered self + heavy + cross-AI reviews with convergence loops (per-target file) |
 | **execute** | code + tests | Slice-isolated, subagent-bounded, wave-parallel implementation |
 | **verify** | `VERIFICATION.md` | Three layers: code audit + scenario execution + conversational UAT |
 | **ship** | merged change + updated canonical spec or delta proposal | Reconcile feature spec with shipped capability spec |
@@ -57,6 +59,36 @@ Phases can be skipped via flags or selected automatically by `/idd-do`, which es
 | `--standard` | `spec → scenarios → plan → crucible → execute → verify → ship` | Most features; cross-file changes; non-trivial behavior |
 | `--full` | entire pipeline | New subsystems, cross-cutting refactors, anything requiring deep research and DDD |
 
+### Focused tier (M1)
+
+```
+/idd:spec --focused → /idd:execute → /idd:verify
+```
+
+The shortest path through IDD. Pick this for one-file fixes and surgical changes where scenarios, planning, and crucible would be overhead.
+
+### Standard tier (M2)
+
+```
+/idd:spec --standard
+  → /idd:scenarios
+  → /idd:plan
+  → /idd:crucible
+  → /idd:review                  # target plan (default after crucible)
+  → /idd:execute
+  → /idd:review --target code    # target code diff against PLAN.md
+  → /idd:verify
+  → /idd:ship
+```
+
+Each command refuses to run unless the previous phase is complete (state machine guard). The `idd-context-budget` and `idd-subagent-dispatch` skills enforce the per-subagent token budget at every dispatch.
+
+**M2 limitations (called out so you don't trip on them):**
+
+- **`/idd:ship` is first-ship only.** If `.idd/specs/<capability>/SPEC.md` already exists for the capability slug, ship aborts with a "delta proposal required" message. Delta proposals (`/idd:change`) land in M3+.
+- **`/idd:review --cross-ai` is not implemented.** Cross-AI review (Claude ↔ GPT second-opinion pass) is M4 territory; the flag errors out today.
+- **Refine, research, and domain phases are M3+.** The `--full` pipeline isn't ready yet — pick `--standard` for now even on broader features.
+
 ---
 
 ## Per-feature artifacts
@@ -67,7 +99,7 @@ Every IDD feature lives in `.idd/features/<id>/` with a small set of contracts:
 - `RESEARCH.md` — optional, for research tier and above
 - `UNDERSTANDING.md` — output of the crucible
 - `PLAN.md` — file-bound vertical slices and waves
-- `REVIEW.md` — review findings and convergence cycles
+- `REVIEW.plan.md` / `REVIEW.code.md` — per-target review findings and convergence cycles (the standard-tier flow runs review twice; each pass writes its own file)
 - `VERIFICATION.md` — three-layer verification record
 - `decisions.md` — running log of decisions and rationale
 - `state.json` — phase/slice/wave state for `/idd-resume`

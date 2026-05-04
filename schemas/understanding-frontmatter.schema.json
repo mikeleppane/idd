@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://idd.dev/schemas/understanding-frontmatter.schema.json",
+  "title": "IDD UNDERSTANDING.md frontmatter",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["spec", "ritual", "generated"],
+  "properties": {
+    "spec": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}-[a-z0-9-]+$"
+    },
+    "ritual": {
+      "type": "string",
+      "const": "assumptions → adversarial → pre-mortem"
+    },
+    "generated": {
+      "type": "string",
+      "format": "date"
+    }
+  }
+}

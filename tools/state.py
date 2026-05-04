@@ -1,4 +1,5 @@
 """Read, write, and transition feature state.json files."""
+
 from __future__ import annotations
 
 import json
@@ -60,8 +61,17 @@ def _utc_now_iso() -> str:
 
 
 VALID_LIFECYCLE_PHASES = (
-    "refine", "research", "spec", "domain", "scenarios", "plan",
-    "crucible", "review", "execute", "verify", "ship",
+    "refine",
+    "research",
+    "spec",
+    "domain",
+    "scenarios",
+    "plan",
+    "crucible",
+    "review",
+    "execute",
+    "verify",
+    "ship",
 )
 
 
@@ -131,14 +141,12 @@ def complete_phase(
         raise StateError(f"cannot complete phase '{phase}': not present in phases")
     if payload.get("current_phase") != phase:
         raise StateError(
-            f"cannot complete phase '{phase}': current_phase is "
-            f"'{payload.get('current_phase')}'"
+            f"cannot complete phase '{phase}': current_phase is '{payload.get('current_phase')}'"
         )
     current_status = payload["phases"][phase].get("status")
     if current_status != "in_progress":
         raise StateError(
-            f"cannot complete phase '{phase}': status is '{current_status}', "
-            "expected 'in_progress'"
+            f"cannot complete phase '{phase}': status is '{current_status}', expected 'in_progress'"
         )
 
     payload["phases"][phase]["status"] = "done"

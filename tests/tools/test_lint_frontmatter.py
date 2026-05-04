@@ -1,4 +1,5 @@
 """Tests for tools.lint_frontmatter — frontmatter validator for skills/commands."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -46,9 +47,7 @@ def test_parse_raises_on_invalid_yaml(tmp_path: Path) -> None:
         lint.parse_frontmatter(md)
 
 
-def test_validate_passes_for_valid_skill_with_use_when(
-    tmp_path: Path, schemas_dir: Path
-) -> None:
+def test_validate_passes_for_valid_skill_with_use_when(tmp_path: Path, schemas_dir: Path) -> None:
     md = tmp_path / "skills" / "idd-spec" / "SKILL.md"
     md.parent.mkdir(parents=True)
     md.write_text(
@@ -91,9 +90,7 @@ def test_validate_rejects_description_without_imperative_first_word(
     assert any("imperative" in e.lower() for e in errors), errors
 
 
-def test_validate_rejects_missing_required(
-    tmp_path: Path, schemas_dir: Path
-) -> None:
+def test_validate_rejects_missing_required(tmp_path: Path, schemas_dir: Path) -> None:
     md = tmp_path / "skill.md"
     md.write_text("---\nname: idd-spec\n---\n\nbody\n", encoding="utf-8")
 
@@ -102,9 +99,7 @@ def test_validate_rejects_missing_required(
     assert any("description" in e for e in errors)
 
 
-def test_main_returns_zero_when_all_files_valid(
-    tmp_path: Path, schemas_dir: Path
-) -> None:
+def test_main_returns_zero_when_all_files_valid(tmp_path: Path, schemas_dir: Path) -> None:
     target = tmp_path / "skills" / "idd-spec" / "SKILL.md"
     target.parent.mkdir(parents=True)
     target.write_text(
@@ -112,24 +107,28 @@ def test_main_returns_zero_when_all_files_valid(
         encoding="utf-8",
     )
 
-    rc = lint.main([
-        "--schema", str(schemas_dir / "frontmatter.schema.json"),
-        str(target),
-    ])
+    rc = lint.main(
+        [
+            "--schema",
+            str(schemas_dir / "frontmatter.schema.json"),
+            str(target),
+        ]
+    )
 
     assert rc == 0
 
 
-def test_main_returns_nonzero_when_any_file_invalid(
-    tmp_path: Path, schemas_dir: Path
-) -> None:
+def test_main_returns_nonzero_when_any_file_invalid(tmp_path: Path, schemas_dir: Path) -> None:
     target = tmp_path / "broken.md"
     target.write_text("---\nname: BadName\n---\n", encoding="utf-8")
 
-    rc = lint.main([
-        "--schema", str(schemas_dir / "frontmatter.schema.json"),
-        str(target),
-    ])
+    rc = lint.main(
+        [
+            "--schema",
+            str(schemas_dir / "frontmatter.schema.json"),
+            str(target),
+        ]
+    )
 
     assert rc == 1
 

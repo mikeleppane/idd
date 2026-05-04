@@ -1,0 +1,1 @@
+Add a kill-switch feature flag system to the demo app. Operators should be able to toggle a flag named `enable_payments` at runtime without restarting the service. When the flag is off, payment endpoints return 503 with a clear message; when on, they execute normally. Flag state lives in a single source of truth that survives restarts.

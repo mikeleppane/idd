@@ -13,7 +13,12 @@ Every subagent dispatch issued by IDD MUST follow this shape (after the budget b
 You are an IDD <phase> subagent for feature <feature-id>.
 
 context_budget:
-  ...
+{
+  "spec_sections": ["..."],
+  "files_in_scope": ["..."],
+  "forbidden": ["read entire repo", "load all specs"],
+  "return_format": { "max_words": 500 }
+}
 
 # Task
 <one-paragraph statement of the discrete task>
@@ -33,6 +38,8 @@ context_budget:
 Respond ONLY with the structured payload defined by `return_format` in the budget block.
 Do not narrate. Do not summarize files I already gave you.
 ```
+
+The `context_budget:` block is JSON, not YAML — the PreToolUse hook parses it with `json.loads` so the plugin stays stdlib-only on the user's machine. See `idd-context-budget/SKILL.md` for the full set of keys the contract supports.
 
 ## Hard rules
 

@@ -7,27 +7,35 @@ description: Refuse subagent dispatches that lack a context_budget block, or who
 
 ## Rule
 
-Every subagent dispatch fired during an IDD phase MUST include a `context_budget:` YAML block at the top of the dispatch prompt. The `PreToolUse` hook (see `hooks/check_budget.py`) blocks dispatches that lack the block, lack `files_in_scope`, leave `forbidden` empty, or set `files_in_scope` to an unbounded glob. This skill describes the contract; the hook enforces it.
+Every subagent dispatch fired during an IDD phase MUST include a `context_budget:` JSON block at the top of the dispatch prompt. The `PreToolUse` hook (see `hooks/check_budget.py`) blocks dispatches that lack the block, lack `files_in_scope`, leave `forbidden` empty, or set `files_in_scope` to an unbounded glob. This skill describes the contract; the hook enforces it. The block is JSON (not YAML) so the hook stays stdlib-only and parses dispatches with `json.loads` — no third-party YAML dep.
 
 ## Required block
 
-```yaml
+A literal `context_budget:` marker at column 0, followed by a JSON object. The marker line must not be inside a fenced code block (` ``` `).
+
+```text
 context_budget:
-  spec_sections: [<list of SPEC.md section names this task needs>]
-  files_in_scope: [<exact paths or globs>]
-  intel_files: [<paths under .idd/intel/, or [] if none>]
-  decisions_filter: <"tag:<topic>" or "all" or "none">
-  prior_summaries: [<slice-N.summary or wave-N.summary, or [] if none>]
-  forbidden:
-    - "read entire repo"
-    - "load all specs"
-return_format:
-  commits_made: list[sha + one-line subject]
-  decisions: list[ref ids in decisions.md]
-  deviations: list[{cause: str, resolution: str}]
-  next_recommendations: optional list[str]
-  max_words: 500
+{
+  "spec_sections": ["<list of SPEC.md section names this task needs>"],
+  "files_in_scope": ["<exact paths or globs>"],
+  "intel_files": ["<paths under .idd/intel/, or omit if none>"],
+  "decisions_filter": "tag:<topic> | all | none",
+  "prior_summaries": ["<slice-N.summary or wave-N.summary>"],
+  "forbidden": [
+    "read entire repo",
+    "load all specs"
+  ],
+  "return_format": {
+    "commits_made": "list[sha + one-line subject]",
+    "decisions": "list[ref ids in decisions.md]",
+    "deviations": "list[{cause: str, resolution: str}]",
+    "next_recommendations": "optional list[str]",
+    "max_words": 500
+  }
+}
 ```
+
+The hook validates only `files_in_scope` (non-empty array of bounded globs) and `forbidden` (non-empty array). The other keys are part of the IDD contract but not hook-enforced — they are read by the dispatched subagent.
 
 ## What to do when the hook blocks
 
