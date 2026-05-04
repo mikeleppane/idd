@@ -258,6 +258,33 @@ def record_routing_decision(
     return payload
 
 
+def record_refined_idea(
+    path: Path,
+    *,
+    refined: str,
+    schema_path: Path | None = None,
+) -> dict[str, Any]:
+    """Persist the refined idea paragraph to state.json.refined_idea.
+
+    Args:
+        path: state.json path.
+        refined: Single-paragraph refined idea text.
+        schema_path: Optional schema for read+write validation.
+
+    Returns:
+        Updated state payload.
+
+    Raises:
+        StateError: empty input, or schema validation failure.
+    """
+    if not refined.strip():
+        raise StateError("refined_idea must be non-empty")
+    payload = read_state(path, schema_path=schema_path)
+    payload["refined_idea"] = refined
+    write_state(path, payload, schema_path=schema_path)
+    return payload
+
+
 def feature_folder_exists(repo_root: Path, feature_id: str) -> bool:
     """Return True when .idd/features/<feature_id>/ exists under repo_root."""
     return (repo_root / ".idd" / "features" / feature_id).is_dir()

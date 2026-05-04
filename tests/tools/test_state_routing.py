@@ -123,3 +123,43 @@ def test_record_routing_decision_overwrites_existing_block(
     assert result["routing"]["idea"] == "new idea"
     assert result["routing"]["final_tier"] == "full"
     assert result["routing"]["constitution_present"] is True
+
+
+def test_record_refined_idea_writes_string(tmp_path: Path, schemas_dir: Path) -> None:
+    target = tmp_path / "state.json"
+    state.write_state(target, _base_payload(), schema_path=schemas_dir / "state.schema.json")
+
+    result = state.record_refined_idea(
+        target,
+        refined="Allow checkout to apply a single stackable coupon.",
+        schema_path=schemas_dir / "state.schema.json",
+    )
+
+    assert result["refined_idea"] == "Allow checkout to apply a single stackable coupon."
+
+
+def test_record_refined_idea_overwrites_previous(tmp_path: Path, schemas_dir: Path) -> None:
+    target = tmp_path / "state.json"
+    initial = _base_payload()
+    initial["refined_idea"] = "old draft"
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+
+    result = state.record_refined_idea(
+        target,
+        refined="new draft",
+        schema_path=schemas_dir / "state.schema.json",
+    )
+
+    assert result["refined_idea"] == "new draft"
+
+
+def test_record_refined_idea_rejects_empty_string(tmp_path: Path, schemas_dir: Path) -> None:
+    target = tmp_path / "state.json"
+    state.write_state(target, _base_payload(), schema_path=schemas_dir / "state.schema.json")
+
+    with pytest.raises(state.StateError, match="non-empty"):
+        state.record_refined_idea(
+            target,
+            refined="",
+            schema_path=schemas_dir / "state.schema.json",
+        )
