@@ -22,7 +22,7 @@ Run `tools/validate.py` and report findings. Read-only.
 - `--target constitution` runs the Constitution structural checker.
 - `--target ship` runs capability-uniqueness only in P2a. Full ship-gate validation (Constitution acknowledge gate) lands in **P5**.
 - `--target health` runs the D-HEALTH repo-wide scan.
-- `--target all` is currently equivalent to `--target health`. Per-file fan-out is deferred to P2b once semantic checks are wired.
+- `--target all` is currently equivalent to `--target health`. **Deviation from M3 spec §5.3.6**: the spec language allows `all` to fan out across every P2a structural check (per-file constitution / delta / spec). P2a stages this to `health` only; per-file fan-out lands in P2b alongside the semantic checks (scenario↔acceptance mapping, plan task↔acceptance mapping). Recorded here so the deviation is visible at the command surface, not buried in code.
 
 ## Failure modes
 

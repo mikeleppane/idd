@@ -930,6 +930,9 @@ def _dispatch_target(target: str, path: Path | None, repo_root: Path) -> list[Fi
     elif target == "ship":
         findings.extend(validate_capability_uniqueness(repo_root))
     elif target in {"health", "all"}:
+        # P2a deviation: `all` is staged to `health` only. Per-file fan-out
+        # over .idd/specs/, .idd/changes/, .idd/features/ ships in P2b
+        # alongside the semantic checks. See commands/validate.md.
         findings.extend(validate_health(repo_root))
 
     return findings
