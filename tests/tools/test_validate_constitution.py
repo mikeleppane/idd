@@ -69,6 +69,15 @@ def test_missing_file_returns_block_finding(tmp_path: Path) -> None:
     assert any(f.severity == "BLOCK" and "not found" in f.message.lower() for f in findings)
 
 
+def test_fenced_article_example_does_not_trigger_findings() -> None:
+    """A constitution that includes a `## Article N — X [LEVEL]` line inside
+    a fenced code block (e.g., authoring instructions) must NOT count it as
+    a real article. Mirrors validate_negative_requirements' code-fence
+    awareness so example markup stays illustrative, not normative."""
+    findings = validate.validate_constitution(FIXTURES / "constitution_fenced_article_example.md")
+    assert findings == [], findings
+
+
 def test_single_gap_emits_single_monotonic_finding() -> None:
     """A single missing article (`[1, 2, 4, 5, 6]`) must fire ONE monotonic
     finding, not one per subsequent article. Resync prevents cascading

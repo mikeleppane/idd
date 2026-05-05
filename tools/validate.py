@@ -192,6 +192,12 @@ def validate_constitution(path: Path) -> list[Finding]:
             Finding("BLOCK", "constitution", path, f"frontmatter{field}: {err.message}"),
         )
 
+    # Strip fenced + inline code so authoring examples (e.g. "paste this template:
+    # ## Article N — Title [LEVEL]") inside code blocks are not mistaken for real
+    # articles. _strip_code preserves byte offsets, so any future line-number
+    # reporting still maps to the original file.
+    body = _strip_code(body)
+
     article_lines = [line for line in body.splitlines() if line.startswith("## Article")]
     article_numbers: list[int] = []
     for line in article_lines:
