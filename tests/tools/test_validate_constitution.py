@@ -67,3 +67,12 @@ def test_too_many_articles_blocks() -> None:
 def test_missing_file_returns_block_finding(tmp_path: Path) -> None:
     findings = validate.validate_constitution(tmp_path / "absent.md")
     assert any(f.severity == "BLOCK" and "not found" in f.message.lower() for f in findings)
+
+
+def test_invalid_yaml_frontmatter_returns_block_not_traceback() -> None:
+    """Malformed YAML must surface as a structured BLOCK finding instead of
+    crashing the CLI on a `yaml.YAMLError` traceback."""
+    findings = validate.validate_constitution(FIXTURES / "constitution_invalid_yaml.md")
+    assert any(f.severity == "BLOCK" and "invalid yaml" in f.message.lower() for f in findings), (
+        findings
+    )

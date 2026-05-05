@@ -50,3 +50,12 @@ def test_unknown_kind_raises_validation_error(tmp_path: Path) -> None:
 def test_missing_file_returns_block_finding(tmp_path: Path) -> None:
     findings = validate.validate_frontmatter(tmp_path / "absent.md", kind="spec")
     assert any(f.severity == "BLOCK" and "not found" in f.message.lower() for f in findings)
+
+
+def test_invalid_yaml_returns_block_not_traceback() -> None:
+    """Malformed YAML in a SPEC.md must surface as BLOCK, not crash the CLI."""
+    fixtures = Path(__file__).resolve().parent.parent / "fixtures" / "_validate"
+    findings = validate.validate_frontmatter(fixtures / "spec_invalid_yaml.md", kind="spec")
+    assert any(f.severity == "BLOCK" and "invalid yaml" in f.message.lower() for f in findings), (
+        findings
+    )

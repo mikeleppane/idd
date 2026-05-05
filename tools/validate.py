@@ -90,20 +90,54 @@ def _coerce_dates(payload: dict[str, Any]) -> dict[str, Any]:
     return coerced
 
 
+class _FrontmatterParseError(RuntimeError):
+    """Raised when the YAML frontmatter block is present but malformed.
+
+    Distinct from "no frontmatter" so callers can surface a precise BLOCK
+    finding instead of crashing the CLI on a `yaml.YAMLError` traceback.
+    """
+
+
 def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str] | None:
     """Return `(frontmatter, body)` or `None` if no parseable frontmatter.
 
     Returning the body alongside the parsed dict lets callers avoid re-running
     `_FRONTMATTER.match()` (mypy --strict cannot narrow repeated regex calls,
     and the duplication invited the bug fixed by this helper).
+
+    Raises:
+        _FrontmatterParseError: when the `---` block exists but the YAML
+            inside fails to parse, or decodes to a non-mapping.
     """
     match = _FRONTMATTER.match(text)
     if not match:
         return None
-    parsed = yaml.safe_load(match.group(1))
+    try:
+        parsed = yaml.safe_load(match.group(1))
+    except yaml.YAMLError as exc:
+        raise _FrontmatterParseError(f"invalid YAML in frontmatter: {exc}") from exc
     if not isinstance(parsed, dict):
-        return None
+        raise _FrontmatterParseError(
+            f"frontmatter must be a YAML mapping, got {type(parsed).__name__}"
+        )
     return _coerce_dates(parsed), text[match.end() :]
+
+
+def _parse_frontmatter_or_finding(
+    text: str, target: str, path: Path
+) -> tuple[dict[str, Any], str] | Finding:
+    """Parse frontmatter; on any structural failure return a single BLOCK Finding.
+
+    Centralizes the missing/malformed-frontmatter branch so each validator
+    gets identical error shape and stays crash-free on bad YAML.
+    """
+    try:
+        parsed = _parse_frontmatter(text)
+    except _FrontmatterParseError as exc:
+        return Finding("BLOCK", target, path, str(exc))
+    if parsed is None:
+        return Finding("BLOCK", target, path, "missing or malformed frontmatter")
+    return parsed
 
 
 def _build_validator(schema: dict[str, Any]) -> Draft202012Validator:
@@ -136,11 +170,9 @@ def validate_constitution(path: Path) -> list[Finding]:
         )
         return findings
 
-    parsed = _parse_frontmatter(text)
-    if parsed is None:
-        findings.append(
-            Finding("BLOCK", "constitution", path, "missing or malformed frontmatter"),
-        )
+    parsed = _parse_frontmatter_or_finding(text, "constitution", path)
+    if isinstance(parsed, Finding):
+        findings.append(parsed)
         return findings
     fm, body = parsed
 
@@ -250,11 +282,9 @@ def validate_delta(path: Path) -> list[Finding]:
         )
         return findings
 
-    parsed = _parse_frontmatter(text)
-    if parsed is None:
-        findings.append(
-            Finding("BLOCK", "delta", path, "missing or malformed frontmatter"),
-        )
+    parsed = _parse_frontmatter_or_finding(text, "delta", path)
+    if isinstance(parsed, Finding):
+        findings.append(parsed)
         return findings
     fm, body = parsed
 
@@ -377,10 +407,21 @@ def validate_negative_requirements(path: Path) -> list[Finding]:
 
 
 def _read_capability_from_spec(spec_path: Path) -> str | None:
+    """Best-effort capability slug extraction.
+
+    Returns None on missing file, missing/malformed frontmatter, or non-string
+    capability. The per-target spec validator (`validate_frontmatter` /
+    `validate_negative_requirements`) is responsible for surfacing parse
+    errors as findings; this helper stays silent so the health scan keeps
+    moving across the rest of the tree.
+    """
     text = _read_text(spec_path)
     if text is None:
         return None
-    parsed = _parse_frontmatter(text)
+    try:
+        parsed = _parse_frontmatter(text)
+    except _FrontmatterParseError:
+        return None
     if parsed is None:
         return None
     fm, _body = parsed
@@ -518,11 +559,9 @@ def validate_frontmatter(path: Path, *, kind: str) -> list[Finding]:
         findings.append(Finding("BLOCK", kind, path, f"file not found: {path}"))
         return findings
 
-    parsed = _parse_frontmatter(text)
-    if parsed is None:
-        findings.append(
-            Finding("BLOCK", kind, path, "missing or malformed frontmatter"),
-        )
+    parsed = _parse_frontmatter_or_finding(text, kind, path)
+    if isinstance(parsed, Finding):
+        findings.append(parsed)
         return findings
     fm, _body = parsed
 
@@ -694,7 +733,10 @@ def _check_change_entry(entry: Path, canonical_root: Path) -> list[Finding]:
     text = _read_text(proposal)
     if text is None:
         return findings
-    parsed = _parse_frontmatter(text)
+    try:
+        parsed = _parse_frontmatter(text)
+    except _FrontmatterParseError:
+        return findings
     if parsed is None:
         return findings
     fm, _body = parsed
@@ -734,7 +776,10 @@ def _check_canonical_entry(entry: Path) -> list[Finding]:
     text = _read_text(spec)
     if text is None:
         return findings
-    parsed = _parse_frontmatter(text)
+    try:
+        parsed = _parse_frontmatter(text)
+    except _FrontmatterParseError:
+        return findings
     if parsed is None:
         return findings
     fm, _body = parsed
