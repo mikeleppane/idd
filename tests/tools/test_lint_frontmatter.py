@@ -206,3 +206,17 @@ def test_idd_status_command_passes_lint(repo_root: Path) -> None:
     schema = repo_root / "schemas" / "frontmatter.schema.json"
     errors = lint.validate_file(cmd, schema)
     assert errors == [], errors
+
+
+def test_idd_validate_skill_passes_lint(repo_root: Path) -> None:
+    skill = repo_root / "skills" / "idd-validate" / "SKILL.md"
+    schema = repo_root / "schemas" / "frontmatter.schema.json"
+    errors = lint.validate_file(skill, schema)
+    assert errors == [], errors
+
+
+def test_idd_validate_command_passes_lint(repo_root: Path) -> None:
+    cmd = repo_root / "commands" / "validate.md"
+    schema = repo_root / "schemas" / "frontmatter.schema.json"
+    errors = lint.validate_file(cmd, schema)
+    assert errors == [], errors

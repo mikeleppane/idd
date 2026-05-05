@@ -1,4 +1,4 @@
-.PHONY: help install format fmt format-check lint fix typecheck test cov check clean ci
+.PHONY: help install format fmt format-check lint fix typecheck test cov validate-health check clean ci
 
 # `make` with no target prints the help table.
 .DEFAULT_GOAL := help
@@ -46,7 +46,10 @@ test: ## Run pytest
 cov: ## Run pytest with coverage
 	@$(PYTEST) --cov=tools --cov-report=term-missing
 
-check: format-check lint typecheck test ## Full local quality gate — run before every commit
+validate-health: ## Run /idd:validate --target health on the current repo
+	@$(PY) -m tools.validate --target health
+
+check: format-check lint typecheck test validate-health ## Full local quality gate — run before every commit
 
 ci: check ## Alias for the composite quality gate (mirrors CI)
 
