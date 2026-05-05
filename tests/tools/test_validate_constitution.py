@@ -88,6 +88,22 @@ def test_single_gap_emits_single_monotonic_finding() -> None:
     assert "expected 3" in monotonic[0].message and "found 4" in monotonic[0].message
 
 
+def test_duplicate_article_numbers_report_duplicate_not_monotonic() -> None:
+    """Two articles with the same number (`[1, 1]`) must surface as a
+    'duplicate article number' finding, not the 'numbers not monotonic'
+    message used for gaps. Distinct messages help authors fix the right
+    problem (renumber duplicate vs fill gap)."""
+    findings = validate.validate_constitution(
+        FIXTURES / "constitution_duplicate_article_numbers.md"
+    )
+    duplicate = [f for f in findings if "duplicate" in f.message.lower()]
+    monotonic = [f for f in findings if "monotonic" in f.message.lower()]
+    assert duplicate, findings
+    assert "1" in duplicate[0].message
+    assert duplicate[0].severity == "BLOCK"
+    assert not monotonic, monotonic
+
+
 def test_invalid_yaml_frontmatter_returns_block_not_traceback() -> None:
     """Malformed YAML must surface as a structured BLOCK finding instead of
     crashing the CLI on a `yaml.YAMLError` traceback."""

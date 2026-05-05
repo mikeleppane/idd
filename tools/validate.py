@@ -153,6 +153,42 @@ def _build_validator(schema: dict[str, Any]) -> Draft202012Validator:
     return Draft202012Validator(schema, format_checker=FormatChecker())
 
 
+def _check_article_numbering(article_numbers: list[int], path: Path) -> list[Finding]:
+    """Verify constitution article numbers are unique and monotonic from 1.
+
+    Reports duplicate article numbers separately from gaps so authors can fix
+    the right problem (renumber the duplicate vs fill the gap). Resyncs the
+    expected counter after each gap so a single missing article fires one
+    finding, not one per subsequent article.
+    """
+    findings: list[Finding] = []
+    expected = 1
+    seen: set[int] = set()
+    for number in article_numbers:
+        if number in seen:
+            findings.append(
+                Finding(
+                    "BLOCK",
+                    "constitution",
+                    path,
+                    f"duplicate article number {number}; renumber the second occurrence",
+                ),
+            )
+        elif number != expected:
+            findings.append(
+                Finding(
+                    "BLOCK",
+                    "constitution",
+                    path,
+                    f"article numbers not monotonic: expected {expected}, found {number}",
+                ),
+            )
+            expected = number
+        seen.add(number)
+        expected += 1
+    return findings
+
+
 def validate_constitution(path: Path) -> list[Finding]:
     """Validate `.idd/CONSTITUTION.md` structural shape per M3 spec §5.3.1.
 
@@ -215,19 +251,7 @@ def validate_constitution(path: Path) -> list[Finding]:
             continue
         article_numbers.append(int(match.group(1)))
 
-    expected = 1
-    for number in article_numbers:
-        if number != expected:
-            findings.append(
-                Finding(
-                    "BLOCK",
-                    "constitution",
-                    path,
-                    f"article numbers not monotonic: expected {expected}, found {number}",
-                ),
-            )
-            expected = number  # resync so each gap fires once, not N times
-        expected += 1
+    findings.extend(_check_article_numbering(article_numbers, path))
 
     for block in _ARTICLE_BLOCK.finditer(body):
         article_no = block.group(1)
