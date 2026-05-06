@@ -54,7 +54,7 @@ Either:
 4. **Final self-review gate (both branches):**
    - Every acceptance criterion maps to ≥1 commit recorded in `state.commits`.
    - Every Negative Requirement passes a code-audit search (no MUST-NOT behavior present).
-   - No deviations marked unresolved.
+   - Run `python -m tools.validate --target deviations .idd/features/<id>` to confirm every `state.json` deviation has a matching `decisions.md` entry. `BLOCK`/`HIGH` gates phase exit; `MEDIUM`/`LOW`/`INFO` are advisory.
    - All tests in scope pass on the working tree.
 5. **Transition state.** Call `tools.state.complete_phase(path, "execute")`. Standard / full → leave further state changes to `/idd:review --target code`, which resumes the open review phase (carrying the `targets_done=["plan"]` audit through `start_phase`'s preservation, so the per-target gate is satisfied once the code pass closes). Focused → `tools.state.start_phase(path, "verify")`.
 6. **Surface to user:** slice summaries written, commit count, criteria-with-commit map, next phase.

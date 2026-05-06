@@ -34,14 +34,17 @@ Produce a `.idd/features/<id>/SPEC.md` that obeys the §7.1 template and exits w
    - **Acceptance Criteria.** Falsifiable. Each maps to one scenario or one measurable outcome.
    - **Negative Requirements.** Explicit MUST-NOT statements. `/idd:verify` will assert each.
    - **Open Questions.** Numbered. Add liberally as you fill the template; resolve before exit.
-6. **Self-review gate (cheap, embedded):**
-   - No placeholder text remaining.
-   - Every Term in Domain appears at least once in Intent / Scope / Scenarios.
-   - Every In Scope bullet is covered by ≥1 Scenario.
-   - Every Acceptance criterion maps to ≥1 Scenario or names a measurable outcome.
-   - Every Acceptance criterion has a row in Test Strategy.
-   - Open Questions count is 0.
-   - Ambiguity score (heuristic): count words like "should", "might", "TBD", "etc." in non-list paragraphs. > 3 = block; refine.
+6. **Self-review gate:**
+   - Run: `python -m tools.validate --target spec-semantic .idd/features/<id>/SPEC.md` (covers Scenarios↔Acceptance mapping, orphan scenarios, weasel words, and Codebase Anchors path/symbol resolution). Any finding with severity `BLOCK` or `HIGH` blocks phase exit. `MEDIUM`/`LOW` are advisory; surface to the user.
+   - For ACs that map to a measurable outcome instead of a scenario (per the current rule), append the literal token `(measurable)` to the AC line so the validator skips scenario-mapping for that index. Example:
+     `4. p99 latency under 200ms over a 24h window (measurable)`
+   - Inline checks (not migrated):
+     - No placeholder text remaining.
+     - Every Term in Domain appears at least once in Intent / Scope / Scenarios.
+     - Every In Scope bullet is covered by ≥1 Scenario.
+     - Every Acceptance criterion has a row in Test Strategy.
+     - Open Questions count is 0.
+     - Ambiguity score (heuristic): count words like "should", "might", "TBD", "etc." in non-list paragraphs. > 3 = block; refine.
 7. **Update `state.json`:** call `tools.state.complete_phase(path, "spec")`, then `tools.state.start_phase(path, next_phase)` where `next_phase` is `execute` for `--focused`, otherwise the first phase the user requested.
 8. **Surface to the user:** print path to SPEC.md, summarize Intent and Acceptance, list any accepted assumptions logged to `decisions.md` during refinement.
 

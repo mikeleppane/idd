@@ -30,12 +30,11 @@ Active feature `state.json` has `tier in ("standard", "full")`, `phases.scenario
    - **Acceptance:** the spec sections / scenarios / criteria the slice unblocks.
 5. **Verified Dependencies (only when new external deps introduced):**
    - Fill the table per design §7.3: package · version range · registry · source checked · key APIs used · notes.
-   - Validator (M3+) will check registry presence; in M2, the table presence is sufficient and the user is responsible for its accuracy. Surface this gap in the user-facing summary.
-6. **Self-review gate:**
-   - Slice count ≤ 4 in standard tier.
-   - Every acceptance criterion is unblocked by exactly one slice.
-   - No file appears in more than one slice's `Files in scope` (unless explicitly marked shared).
-   - If new external deps are present in the slices, Verified Dependencies section is non-empty.
+6. **Self-review gate (delegates to validator):**
+   - Run: `python -m tools.validate --target plan-tasks .idd/features/<id>/PLAN.md` (covers slice↔acceptance mapping, file-collision across slices).
+   - Run: `python -m tools.validate --target verified-deps .idd/features/<id>/PLAN.md` (covers Verified Dependencies table shape; pass `--check-registries` for a live registry probe).
+   - Any finding with severity `BLOCK` or `HIGH` blocks phase exit. `MEDIUM`/`LOW` are advisory; surface to the user.
+   - Inline check (not migrated): slice count ≤ 4 in standard tier.
 7. **Transition state.** Call `tools.state.complete_phase(path, "plan")`, then `tools.state.start_phase(path, "crucible")`.
 8. **Surface to user:** slice count, files-in-scope summary, deps decision, next phase = `crucible`.
 

@@ -33,11 +33,10 @@ Active feature `state.json` has `tier in ("standard", "full")` and `phases.spec.
    - Write the file with the same scenarios, framework-correct syntax (e.g., `pytest-bdd` step decorators handled by step files, not the .feature itself).
    - Add the file path to `state.json.commits[]` evidence later when execute commits it.
    - DO NOT generate step definitions — that is execute-phase work.
-5. **Self-review gate:**
-   - Every acceptance criterion has ≥1 scenario.
-   - Every scenario maps to ≥1 acceptance criterion (no orphan scenarios).
-   - No scenario contains "should", "might", "TBD".
-   - Escalation decision is logged to `decisions.md` when detection ran.
+5. **Self-review gate (delegates to validator):**
+   - Run: `python -m tools.validate --target scenarios .idd/features/<id>/SPEC.md`
+   - Any finding with severity `BLOCK` or `HIGH` blocks phase exit. `MEDIUM`/`LOW` are advisory; surface to the user.
+   - Inline check (not migrated): the escalation decision is logged to `decisions.md` when detection ran.
 6. **Transition state.** Call `tools.state.complete_phase(path, "scenarios")`, then `tools.state.start_phase(path, "plan")`.
 7. **Surface to user:** scenarios count, escalation decision, path to `.feature` file (if emitted), next phase = `plan`.
 
