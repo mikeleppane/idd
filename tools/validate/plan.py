@@ -1,12 +1,21 @@
-r"""Semantic validators for PLAN.md (M3 §5.3.6 D-8 plan task↔acceptance, P2b).
+r"""Semantic validators for PLAN.md (M3 §5.3.6 D-8, P2b).
 
-Migrates ``skills/idd-plan/SKILL.md:35-37`` self-review rules:
+Two validators live here:
+
+``validate_plan_tasks`` — migrates ``skills/idd-plan/SKILL.md:35-37`` self-review
+rules:
 
 - Every numbered AC index in the paired SPEC's ``# Acceptance Criteria`` body
   slice is unblocked by **exactly one** slice (HIGH on count != 1).
 - No file appears in more than one slice's ``**Files in scope:**`` unless the
   entry is flagged ``shared:`` (HIGH).
 - Every slice declares an ``**Acceptance:**`` line (HIGH if missing).
+
+``validate_verified_deps`` — migrates the M2 plan-skill placeholder
+("Validator (M3+) will check registry presence" — ``skills/idd-plan/SKILL.md:33``).
+Validates ``## Verified Dependencies`` table shape per master design §7.3.
+Live registry probe is opt-in via ``check_registries=True``; offline by default
+to keep CI deterministic.
 
 Section parsing strategy mirrors :mod:`spec_semantic`:
 
@@ -28,6 +37,8 @@ validator cannot guarantee. Deferred to a tier-aware validator in P3.
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from collections import defaultdict
 from pathlib import Path
 
@@ -211,3 +222,204 @@ def _check_file_collisions(
                 )
             )
     return findings
+
+
+_VERIFIED_DEPS_BLOCK = re.compile(
+    r"(?ms)^## Verified Dependencies\b[^\n]*\n(?P<body>.*?)(?=^## |\Z)"
+)
+_TABLE_ROW = re.compile(r"^\|(?P<row>.*)\|\s*$", re.MULTILINE)
+_REQUIRED_COLUMNS: tuple[str, ...] = ("package", "version range", "registry")
+_KNOWN_ECOSYSTEMS: frozenset[str] = frozenset(
+    {"npm", "pypi", "crates", "go", "maven", "nuget", "gem"}
+)
+_SEPARATOR_ROW = re.compile(r"^[\s|:\-]+$")
+_REGISTRY_PROBE_TIMEOUT_SECONDS = 5
+
+
+def _split_table_row(raw: str) -> list[str]:
+    """Split a markdown table row into cells preserving index alignment.
+
+    Drops only the leading and trailing empty cells produced by the bracketing
+    pipes (e.g. ``|a|b|`` → ``["", "a", "b", ""]`` → ``["a", "b"]``). Interior
+    empty cells are KEPT so column indexes stay aligned with the header.
+    """
+    parts = raw.split("|")
+    if parts and parts[0] == "":
+        parts = parts[1:]
+    if parts and parts[-1].strip() == "":
+        parts = parts[:-1]
+    return [c.strip() for c in parts]
+
+
+def _normalize_header_cell(cell: str) -> str:
+    """Lowercase + collapse the master-design ``Version / range`` form."""
+    lowered = cell.strip().lower()
+    if lowered == "version / range":
+        return "version range"
+    return lowered
+
+
+def validate_verified_deps(plan_path: Path, *, check_registries: bool = False) -> list[Finding]:
+    """Validate ``## Verified Dependencies`` table shape in PLAN.md.
+
+    Args:
+        plan_path: Path to the PLAN.md file under audit.
+        check_registries: When True, shell out to the registry CLI for each
+            row (npm/pypi only; other ecosystems WARN). Defaults to False so
+            offline CI runs stay deterministic.
+
+    Returns:
+        List of Finding records. Empty list means the section is absent
+        (no deps declared) or the table is well-formed and (when probed)
+        every package was found.
+    """
+    plan_text = _read_text(plan_path)
+    if plan_text is None:
+        return [
+            Finding(
+                "BLOCK",
+                "verified-deps",
+                plan_path,
+                f"missing or unreadable: {plan_path}",
+            )
+        ]
+
+    # Do NOT _strip_code here — the table is markdown, not fenced.
+    block = _VERIFIED_DEPS_BLOCK.search(plan_text)
+    if block is None:
+        return []  # No deps declared = no table required.
+
+    raw_rows = [m.group("row") for m in _TABLE_ROW.finditer(block.group("body"))]
+    if not raw_rows:
+        return [
+            Finding(
+                "HIGH",
+                "verified-deps",
+                plan_path,
+                "Verified Dependencies section has no table",
+            )
+        ]
+
+    header_cells = [_normalize_header_cell(c) for c in _split_table_row(raw_rows[0])]
+    findings: list[Finding] = []
+    missing = [c for c in _REQUIRED_COLUMNS if c not in header_cells]
+    if missing:
+        findings.append(
+            Finding(
+                "HIGH",
+                "verified-deps",
+                plan_path,
+                f"Verified Dependencies missing required columns: {missing}",
+            )
+        )
+        return findings  # column shape broken — skip per-row checks
+
+    data_rows = [r for r in raw_rows[1:] if not _SEPARATOR_ROW.match(r)]
+    if not data_rows:
+        return [
+            Finding(
+                "HIGH",
+                "verified-deps",
+                plan_path,
+                "Verified Dependencies table has header but no data rows (declared empty)",
+            )
+        ]
+
+    pkg_idx = header_cells.index("package")
+    reg_idx = header_cells.index("registry")
+
+    for raw in data_rows:
+        cells = _split_table_row(raw)
+        if len(cells) <= max(pkg_idx, reg_idx):
+            findings.append(
+                Finding(
+                    "HIGH",
+                    "verified-deps",
+                    plan_path,
+                    f"Verified Dependencies row underfilled: {raw!r}",
+                )
+            )
+            continue
+        package = _clean_scope_entry(cells[pkg_idx])
+        registry = cells[reg_idx].lower()
+        if not registry:
+            findings.append(
+                Finding(
+                    "HIGH",
+                    "verified-deps",
+                    plan_path,
+                    f"Verified Dependencies row missing registry: {raw!r}",
+                )
+            )
+            continue
+        if registry not in _KNOWN_ECOSYSTEMS:
+            findings.append(
+                Finding(
+                    "HIGH",
+                    "verified-deps",
+                    plan_path,
+                    f"unknown ecosystem {registry!r}",
+                )
+            )
+            continue
+        if check_registries:
+            findings.extend(_probe_registry(plan_path, package, registry))
+
+    return findings
+
+
+def _probe_registry(plan_path: Path, package: str, registry: str) -> list[Finding]:
+    """Shell out to the registry CLI; map exit/timeout/missing-CLI to findings."""
+    cmd: list[str]
+    if registry == "npm":
+        cmd = ["npm", "view", package, "versions", "--json"]
+    elif registry == "pypi":
+        cmd = ["pip", "index", "versions", package]
+    else:
+        return [
+            Finding(
+                "WARN",
+                "verified-deps",
+                plan_path,
+                f"registry probe not implemented for {registry}",
+            )
+        ]
+
+    if shutil.which(cmd[0]) is None:
+        return [
+            Finding(
+                "WARN",
+                "verified-deps",
+                plan_path,
+                f"registry CLI {cmd[0]!r} not on PATH",
+            )
+        ]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_REGISTRY_PROBE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return [
+            Finding(
+                "WARN",
+                "verified-deps",
+                plan_path,
+                f"registry probe timed out for {package}",
+            )
+        ]
+
+    if result.returncode != 0:
+        return [
+            Finding(
+                "HIGH",
+                "verified-deps",
+                plan_path,
+                f"package {package!r} not found in {registry}",
+            )
+        ]
+    return []

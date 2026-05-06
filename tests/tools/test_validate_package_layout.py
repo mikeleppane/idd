@@ -28,6 +28,7 @@ REQUIRED_ALL: frozenset[str] = frozenset(
         "validate_negative_requirements",
         "validate_plan_tasks",
         "validate_scenarios",
+        "validate_verified_deps",
     }
 )
 
@@ -43,6 +44,7 @@ EXPECTED_SIGNATURES: dict[str, tuple[str, ...]] = {
     "validate_anchors": ("path", "repo_root"),
     "validate_plan_tasks": ("plan_path", "spec_path"),
     "validate_deviations": ("feature_root",),
+    "validate_verified_deps": ("plan_path", "check_registries"),
 }
 
 
