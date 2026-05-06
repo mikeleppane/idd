@@ -1,0 +1,15 @@
+{
+  "feature_id": "2026-05-05-deviations-missing-decisions",
+  "tier": "standard",
+  "current_phase": "execute",
+  "phases": {},
+  "skipped": [],
+  "deviations": [
+    {
+      "phase": "execute",
+      "cause": "Switched logger backend",
+      "resolution": "Adopted structlog"
+    }
+  ],
+  "commits": []
+}

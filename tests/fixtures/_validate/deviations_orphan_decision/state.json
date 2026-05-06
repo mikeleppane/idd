@@ -1,0 +1,15 @@
+{
+  "feature_id": "2026-05-05-deviations-orphan",
+  "tier": "standard",
+  "current_phase": "execute",
+  "phases": {},
+  "skipped": [],
+  "deviations": [
+    {
+      "phase": "execute",
+      "cause": "Bumped pytest minimum to 8.2",
+      "resolution": "Updated pyproject.toml constraint"
+    }
+  ],
+  "commits": []
+}

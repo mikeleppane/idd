@@ -1,0 +1,15 @@
+{
+  "feature_id": "2026-05-05-deviations-endash",
+  "tier": "standard",
+  "current_phase": "execute",
+  "phases": {},
+  "skipped": [],
+  "deviations": [
+    {
+      "phase": "execute",
+      "cause": "Renamed module foo to bar for clarity",
+      "resolution": "Updated all imports"
+    }
+  ],
+  "commits": []
+}

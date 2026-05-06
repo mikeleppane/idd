@@ -26,6 +26,7 @@ from .spec_structural import (
     validate_frontmatter,
     validate_negative_requirements,
 )
+from .state_semantic import validate_deviations
 
 __all__ = [
     "EXIT_NONZERO_SEVERITIES",
@@ -37,6 +38,7 @@ __all__ = [
     "validate_capability_uniqueness",
     "validate_constitution",
     "validate_delta",
+    "validate_deviations",
     "validate_frontmatter",
     "validate_health",
     "validate_negative_requirements",

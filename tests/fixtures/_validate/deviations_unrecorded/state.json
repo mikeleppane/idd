@@ -1,0 +1,15 @@
+{
+  "feature_id": "2026-05-05-deviations-unrecorded",
+  "tier": "standard",
+  "current_phase": "execute",
+  "phases": {},
+  "skipped": [],
+  "deviations": [
+    {
+      "phase": "execute",
+      "cause": "Switched build system from poetry to uv mid-phase",
+      "resolution": "Updated CI to call uv directly"
+    }
+  ],
+  "commits": []
+}

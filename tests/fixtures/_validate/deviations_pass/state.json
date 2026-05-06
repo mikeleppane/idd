@@ -1,0 +1,15 @@
+{
+  "feature_id": "2026-05-05-deviations-pass",
+  "tier": "standard",
+  "current_phase": "execute",
+  "phases": {},
+  "skipped": [],
+  "deviations": [
+    {
+      "phase": "execute",
+      "cause": "Postgres driver pinned to 14 caused planner regression on JSON path queries",
+      "resolution": "Pin to 14.7 and add regression test"
+    }
+  ],
+  "commits": []
+}

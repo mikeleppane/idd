@@ -1,0 +1,15 @@
+{
+  "feature_id": "2026-05-05-deviations-hyphen",
+  "tier": "standard",
+  "current_phase": "execute",
+  "phases": {},
+  "skipped": [],
+  "deviations": [
+    {
+      "phase": "execute",
+      "cause": "Skipped optional cache layer for v1",
+      "resolution": "Documented as follow-up in ROADMAP"
+    }
+  ],
+  "commits": []
+}
