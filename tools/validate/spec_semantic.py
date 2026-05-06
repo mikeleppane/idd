@@ -38,6 +38,8 @@ _WEASEL_WORDS: dict[str, re.Pattern[str]] = {
 }
 
 _ANCHORS_BLOCK = re.compile(r"(?ms)^#{1,2} Codebase Anchors\b[^\n]*\n(?P<body>.*?)(?=^#{1,2} |\Z)")
+# `re.MULTILINE` deviates from the plan literal: the anchors body slice is
+# multi-line, so `^` must match each row's start, not just the slice's start.
 _ANCHOR_ROW = re.compile(
     r"^[-*]\s+`(?P<path>[^`:]+?)(?::(?P<symbol>[^`]+))?`",
     re.MULTILINE,
