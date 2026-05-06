@@ -37,6 +37,31 @@ _WEASEL_WORDS: dict[str, re.Pattern[str]] = {
     "TBD": re.compile(r"\bTBD\b"),  # uppercase token only
 }
 
+_ANCHORS_BLOCK = re.compile(r"(?ms)^#{1,2} Codebase Anchors\b[^\n]*\n(?P<body>.*?)(?=^#{1,2} |\Z)")
+_ANCHOR_ROW = re.compile(
+    r"^[-*]\s+`(?P<path>[^`:]+?)(?::(?P<symbol>[^`]+))?`",
+    re.MULTILINE,
+)
+
+
+def _anchor_path_within_repo(repo_root: Path, raw: str) -> Path | None:
+    """Resolve raw anchor path under repo_root.
+
+    Reject absolute paths and ``..`` traversal that escapes the repo root.
+    Returns ``None`` on rejection so the caller can surface a BLOCK finding.
+    """
+    raw = raw.strip()
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        return None
+    repo_root_resolved = repo_root.resolve()
+    resolved = (repo_root_resolved / candidate).resolve()
+    try:
+        resolved.relative_to(repo_root_resolved)
+    except ValueError:
+        return None
+    return resolved
+
 
 def _extract_scenarios_slice(text: str) -> str | None:
     """Return raw scenarios body slice (fences preserved) or None."""
@@ -173,5 +198,93 @@ def validate_scenarios(path: Path) -> list[Finding]:
                         f"scenario {title!r} contains weasel word {word!r}",
                     ),
                 )
+
+    return findings
+
+
+def validate_anchors(path: Path, *, repo_root: Path) -> list[Finding]:
+    """Resolve ``path:Symbol`` rows in SPEC ``# Codebase Anchors`` against repo_root.
+
+    Migrates ``skills/idd-spec/SKILL.md:30`` — Codebase Anchors must point at
+    real files and (where supplied) real symbols.
+
+    Rules:
+        1. SPEC missing ``# Codebase Anchors`` -> no findings (anchors are
+           optional). Heading accepts H1 or H2.
+        2. Anchor path absolute or escaping ``repo_root`` via ``..`` -> BLOCK
+           (path-traversal guard).
+        3. Anchor path resolves under ``repo_root`` but is not a regular file
+           -> HIGH (the anchor lies).
+        4. Path resolves and ``:Symbol`` is supplied but the symbol token is
+           not present in the file (word-boundary regex) -> MEDIUM (drift /
+           rename).
+        5. Module-only rows (``pkg/mod.py`` with no ``:Symbol``) skip the
+           symbol step -- path-only check.
+
+    Args:
+        path: Path to the SPEC.md file.
+        repo_root: Repository root that anchor paths resolve against.
+
+    Returns:
+        List of Finding records. Empty list means every Codebase Anchor row
+        resolves cleanly (or the section is absent).
+    """
+    text = _read_text(path)
+    if text is None:
+        return [Finding("BLOCK", "anchors", path, f"missing or unreadable: {path}")]
+
+    block_match = _ANCHORS_BLOCK.search(text)
+    if block_match is None:
+        return []
+
+    findings: list[Finding] = []
+    for row in _ANCHOR_ROW.finditer(block_match.group("body")):
+        raw_path = row.group("path").strip()
+        anchor_path = _anchor_path_within_repo(repo_root, raw_path)
+        if anchor_path is None:
+            findings.append(
+                Finding(
+                    "BLOCK",
+                    "anchors",
+                    path,
+                    f"anchor path escapes repo_root or is absolute: {raw_path!r}",
+                )
+            )
+            continue
+        if not anchor_path.is_file():
+            findings.append(
+                Finding(
+                    "HIGH",
+                    "anchors",
+                    path,
+                    f"anchor path not found in repo: {raw_path}",
+                )
+            )
+            continue
+        symbol = row.group("symbol")
+        if symbol is None:
+            continue
+        symbol = symbol.strip()
+        try:
+            file_text = anchor_path.read_text(encoding="utf-8")
+        except OSError as exc:  # pragma: no cover - defensive
+            findings.append(
+                Finding(
+                    "MEDIUM",
+                    "anchors",
+                    path,
+                    f"could not read anchor file {anchor_path}: {exc}",
+                )
+            )
+            continue
+        if not re.search(rf"\b{re.escape(symbol)}\b", file_text):
+            findings.append(
+                Finding(
+                    "MEDIUM",
+                    "anchors",
+                    path,
+                    f"anchor symbol {symbol!r} not found in {raw_path}",
+                )
+            )
 
     return findings

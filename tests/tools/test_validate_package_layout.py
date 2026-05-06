@@ -18,6 +18,7 @@ REQUIRED_ALL: frozenset[str] = frozenset(
         "Severity",
         "ValidationError",
         "main",
+        "validate_anchors",
         "validate_capability_uniqueness",
         "validate_constitution",
         "validate_delta",
@@ -37,6 +38,7 @@ EXPECTED_SIGNATURES: dict[str, tuple[str, ...]] = {
     "validate_frontmatter": ("path", "kind"),
     "validate_health": ("repo_root",),
     "validate_scenarios": ("path",),
+    "validate_anchors": ("path", "repo_root"),
 }
 
 
