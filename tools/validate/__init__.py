@@ -19,6 +19,7 @@ from .cli import main
 from .constitution import validate_constitution
 from .delta import validate_delta
 from .health import validate_health
+from .spec_semantic import validate_scenarios
 from .spec_structural import (
     validate_capability_uniqueness,
     validate_frontmatter,
@@ -37,4 +38,5 @@ __all__ = [
     "validate_frontmatter",
     "validate_health",
     "validate_negative_requirements",
+    "validate_scenarios",
 ]

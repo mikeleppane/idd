@@ -24,6 +24,7 @@ REQUIRED_ALL: frozenset[str] = frozenset(
         "validate_frontmatter",
         "validate_health",
         "validate_negative_requirements",
+        "validate_scenarios",
     }
 )
 
@@ -35,6 +36,7 @@ EXPECTED_SIGNATURES: dict[str, tuple[str, ...]] = {
     "validate_capability_uniqueness": ("repo_root",),
     "validate_frontmatter": ("path", "kind"),
     "validate_health": ("repo_root",),
+    "validate_scenarios": ("path",),
 }
 
 
@@ -64,6 +66,7 @@ def test_public_callables_have_pinned_signatures() -> None:
         "tools.validate._feature_layout",
         "tools.validate.constitution",
         "tools.validate.delta",
+        "tools.validate.spec_semantic",
         "tools.validate.spec_structural",
         "tools.validate.health",
         "tools.validate.cli",
