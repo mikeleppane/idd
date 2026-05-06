@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from tools import validate
+from tools.validate import cli as validate_cli
 
 
 def test_health_clean_repo_returns_zero(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -136,4 +137,137 @@ def test_repo_root_must_be_a_directory(tmp_path: Path, capsys: pytest.CaptureFix
     assert any(
         f["severity"] == "BLOCK" and "repo-root" in f["message"].lower()
         for f in payload["findings"]
+    ), payload
+
+
+def test_cli_accepts_new_targets(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Every new P2b --target value is accepted (exit 0 or 1, never 2)."""
+    spec = tmp_path / "SPEC.md"
+    spec.write_text(
+        "# Scenarios\nScenario: 1 demo\n# Acceptance Criteria\n1. crit-1 done\n",
+        encoding="utf-8",
+    )
+    plan = tmp_path / "PLAN.md"
+    plan.write_text(
+        "# Slice 1: x\n**Files in scope:** a.py\n**Acceptance:** crit-1\n",
+        encoding="utf-8",
+    )
+    feature = tmp_path
+    (feature / "state.json").write_text('{"deviations": []}', encoding="utf-8")
+
+    cases: list[tuple[str, Path]] = [
+        ("scenarios", spec),
+        ("anchors", spec),
+        ("spec-semantic", spec),
+        ("plan-tasks", plan),
+        ("verified-deps", plan),
+        ("deviations", feature),
+    ]
+    for tgt, p in cases:
+        rc = validate.main(["--target", tgt, "--repo-root", str(tmp_path), str(p)])
+        capsys.readouterr()
+        assert rc in (0, 1), f"target {tgt} returned {rc}"
+
+
+def test_cli_target_all_fans_out_over_features(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--target all` must aggregate per-feature semantic validators in addition
+    to repo-wide health/ship calls. Patches are applied to the CLI module's
+    own bindings (cli.py imports siblings — package-level re-export is a
+    different binding object)."""
+    sentinel_calls: list[str] = []
+
+    def make_sentinel(name: str) -> object:
+        def fn(*args: object, **kwargs: object) -> list[object]:
+            sentinel_calls.append(name)
+            return []
+
+        return fn
+
+    monkeypatch.setattr(validate_cli, "validate_health", make_sentinel("health"))
+    monkeypatch.setattr(validate_cli, "validate_capability_uniqueness", make_sentinel("ship"))
+    monkeypatch.setattr(validate_cli, "validate_deviations", make_sentinel("deviations"))
+    monkeypatch.setattr(validate_cli, "validate_scenarios", make_sentinel("scenarios"))
+    monkeypatch.setattr(validate_cli, "validate_anchors", make_sentinel("anchors"))
+    monkeypatch.setattr(validate_cli, "validate_negative_requirements", make_sentinel("nr"))
+    monkeypatch.setattr(validate_cli, "validate_frontmatter", make_sentinel("fm"))
+
+    feat = tmp_path / ".idd" / "features" / "2026-05-05-x"
+    feat.mkdir(parents=True)
+    (feat / "state.json").write_text('{"deviations": []}', encoding="utf-8")
+    (feat / "SPEC.md").write_text("# Scenarios\n# Acceptance Criteria\n", encoding="utf-8")
+
+    rc = validate.main(["--target", "all", "--repo-root", str(tmp_path)])
+    capsys.readouterr()
+    assert rc in (0, 1)
+    assert "health" in sentinel_calls
+    assert "ship" in sentinel_calls
+    assert "deviations" in sentinel_calls
+    assert "scenarios" in sentinel_calls
+    assert "anchors" in sentinel_calls
+
+
+def test_cli_check_registries_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--check-registries` forwards to validate_verified_deps."""
+    captured: dict[str, bool] = {}
+
+    def fake(plan_path: Path, *, check_registries: bool) -> list[object]:
+        captured["check"] = check_registries
+        return []
+
+    monkeypatch.setattr(validate_cli, "validate_verified_deps", fake)
+    plan = tmp_path / "PLAN.md"
+    plan.write_text("# Slice 1: x\n**Acceptance:** crit-1\n", encoding="utf-8")
+    rc = validate.main(["--target", "verified-deps", "--check-registries", str(plan)])
+    capsys.readouterr()
+    assert rc in (0, 1)
+    assert captured["check"] is True
+
+
+def test_cli_check_registries_default_false(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Without --check-registries, the flag is False by default."""
+    captured: dict[str, bool] = {}
+
+    def fake(plan_path: Path, *, check_registries: bool) -> list[object]:
+        captured["check"] = check_registries
+        return []
+
+    monkeypatch.setattr(validate_cli, "validate_verified_deps", fake)
+    plan = tmp_path / "PLAN.md"
+    plan.write_text("# Slice 1: x\n**Acceptance:** crit-1\n", encoding="utf-8")
+    rc = validate.main(["--target", "verified-deps", str(plan)])
+    capsys.readouterr()
+    assert rc in (0, 1)
+    assert captured["check"] is False
+
+
+def test_cli_deviations_requires_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--target deviations` BLOCKs when positional path is not a directory."""
+    f = tmp_path / "not_a_dir.txt"
+    f.write_text("x", encoding="utf-8")
+    rc = validate.main(["--target", "deviations", str(f)])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert rc == 1
+    assert any(
+        f["severity"] == "BLOCK" and "directory" in f["message"].lower()
+        for f in payload["findings"]
+    ), payload
+
+
+def test_cli_deviations_requires_path(capsys: pytest.CaptureFixture[str]) -> None:
+    """`--target deviations` without a positional path BLOCKs."""
+    rc = validate.main(["--target", "deviations"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert rc == 1
+    assert any(
+        f["severity"] == "BLOCK" and "folder" in f["message"].lower() for f in payload["findings"]
     ), payload

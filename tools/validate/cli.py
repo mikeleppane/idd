@@ -1,79 +1,297 @@
-"""CLI entry point for /idd:validate (M3 §5.3.6 D-CLI)."""
+"""CLI entry point for /idd:validate (M3 §5.3.6 D-CLI).
+
+Wires structural (P2a) and semantic (P2b) validators behind the
+``--target`` flag. ``--target all`` fans out across the full ``.idd``
+tree: it runs ``validate_health`` + ``validate_capability_uniqueness``
+once at the repo level, then walks ``.idd/changes/`` and ``.idd/features/``
+applying the appropriate per-artifact validators.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from ._feature_layout import PLAN_FILENAME, SPEC_FILENAME
 from ._finding import EXIT_NONZERO_SEVERITIES, Finding, _finding_to_dict
 from .constitution import validate_constitution
 from .delta import validate_delta
 from .health import validate_health
+from .plan import validate_plan_tasks, validate_verified_deps
+from .spec_semantic import validate_anchors, validate_scenarios
 from .spec_structural import (
     validate_capability_uniqueness,
     validate_frontmatter,
     validate_negative_requirements,
 )
+from .state_semantic import validate_deviations
 
-_PER_FILE_TARGETS: frozenset[str] = frozenset({"spec", "plan", "delta"})
+_PER_FILE_TARGETS: frozenset[str] = frozenset(
+    {
+        "spec",
+        "plan",
+        "delta",
+        "scenarios",
+        "anchors",
+        "spec-semantic",
+        "plan-tasks",
+        "verified-deps",
+    }
+)
+_PER_FOLDER_TARGETS: frozenset[str] = frozenset({"deviations"})
 _REPO_WIDE_TARGETS: frozenset[str] = frozenset({"health", "ship", "all"})
 
+_TARGET_CHOICES: tuple[str, ...] = (
+    "spec",
+    "plan",
+    "delta",
+    "scenarios",
+    "anchors",
+    "spec-semantic",
+    "plan-tasks",
+    "verified-deps",
+    "deviations",
+    "constitution",
+    "health",
+    "ship",
+    "all",
+)
 
-def _dispatch_target(target: str, path: Path | None, repo_root: Path) -> list[Finding]:
-    """Run the validator(s) for *target* and return all findings."""
+
+# Dispatch helpers share a uniform `(args, repo_root)` signature so the
+# `_TARGET_DISPATCH` table below can reference them all by the same callable
+# type. Some helpers do not consume both inputs; ARG001 is silenced
+# per-function rather than refactoring away the table.
+
+
+def _dispatch_spec(args: argparse.Namespace, repo_root: Path) -> list[Finding]:  # noqa: ARG001
     findings: list[Finding] = []
+    findings.extend(validate_negative_requirements(args.path))
+    findings.extend(validate_frontmatter(args.path, kind="spec"))
+    return findings
 
-    if target in _PER_FILE_TARGETS and path is None:
-        findings.append(
+
+def _dispatch_plan(args: argparse.Namespace, repo_root: Path) -> list[Finding]:  # noqa: ARG001
+    return list(validate_frontmatter(args.path, kind="plan"))
+
+
+def _dispatch_delta(args: argparse.Namespace, repo_root: Path) -> list[Finding]:  # noqa: ARG001
+    return list(validate_delta(args.path))
+
+
+def _dispatch_scenarios(args: argparse.Namespace, repo_root: Path) -> list[Finding]:  # noqa: ARG001
+    return list(validate_scenarios(args.path))
+
+
+def _dispatch_anchors(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
+    return list(validate_anchors(args.path, repo_root=repo_root))
+
+
+def _dispatch_spec_semantic(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
+    findings: list[Finding] = []
+    findings.extend(validate_scenarios(args.path))
+    findings.extend(validate_anchors(args.path, repo_root=repo_root))
+    return findings
+
+
+def _dispatch_plan_tasks(args: argparse.Namespace, repo_root: Path) -> list[Finding]:  # noqa: ARG001
+    spec = args.path.parent / SPEC_FILENAME
+    return list(validate_plan_tasks(args.path, spec_path=spec))
+
+
+def _dispatch_verified_deps(
+    args: argparse.Namespace,
+    repo_root: Path,  # noqa: ARG001
+) -> list[Finding]:
+    return list(validate_verified_deps(args.path, check_registries=args.check_registries))
+
+
+def _dispatch_deviations(args: argparse.Namespace, repo_root: Path) -> list[Finding]:  # noqa: ARG001
+    return list(validate_deviations(args.path))
+
+
+def _dispatch_constitution(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
+    resolved = args.path if args.path is not None else repo_root / ".idd" / "CONSTITUTION.md"
+    return list(validate_constitution(resolved))
+
+
+def _dispatch_health(
+    args: argparse.Namespace,  # noqa: ARG001
+    repo_root: Path,
+) -> list[Finding]:
+    return list(validate_health(repo_root))
+
+
+def _dispatch_ship(
+    args: argparse.Namespace,  # noqa: ARG001
+    repo_root: Path,
+) -> list[Finding]:
+    return list(validate_capability_uniqueness(repo_root))
+
+
+def _dispatch_all(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
+    """Walk the full .idd tree, invoking every applicable validator.
+
+    Layout signals come from a single ``validate_health`` call. Per-feature
+    semantic helpers are invoked directly here (they do NOT re-run
+    ``_check_feature_payload``); that avoids double-counting findings
+    surfaced by health.
+    """
+    findings: list[Finding] = []
+    findings.extend(validate_health(repo_root))
+    findings.extend(validate_capability_uniqueness(repo_root))
+
+    constitution = repo_root / ".idd" / "CONSTITUTION.md"
+    if constitution.is_file():
+        findings.extend(validate_constitution(constitution))
+
+    changes_root = repo_root / ".idd" / "changes"
+    if changes_root.is_dir():
+        for change in sorted(changes_root.iterdir()):
+            proposal = change / "proposal.md"
+            if proposal.is_file():
+                findings.extend(validate_delta(proposal))
+
+    features_root = repo_root / ".idd" / "features"
+    if features_root.is_dir():
+        for feature in sorted(features_root.iterdir()):
+            if not feature.is_dir():
+                continue
+            findings.extend(validate_deviations(feature))
+            spec = feature / SPEC_FILENAME
+            plan = feature / PLAN_FILENAME
+            if spec.is_file():
+                findings.extend(validate_negative_requirements(spec))
+                findings.extend(validate_frontmatter(spec, kind="spec"))
+                findings.extend(validate_scenarios(spec))
+                findings.extend(validate_anchors(spec, repo_root=repo_root))
+            if plan.is_file():
+                findings.extend(validate_frontmatter(plan, kind="plan"))
+                if spec.is_file():
+                    findings.extend(validate_plan_tasks(plan, spec_path=spec))
+                findings.extend(
+                    validate_verified_deps(plan, check_registries=args.check_registries)
+                )
+    return findings
+
+
+_TARGET_DISPATCH: dict[str, Callable[[argparse.Namespace, Path], list[Finding]]] = {
+    "spec": _dispatch_spec,
+    "plan": _dispatch_plan,
+    "delta": _dispatch_delta,
+    "scenarios": _dispatch_scenarios,
+    "anchors": _dispatch_anchors,
+    "spec-semantic": _dispatch_spec_semantic,
+    "plan-tasks": _dispatch_plan_tasks,
+    "verified-deps": _dispatch_verified_deps,
+    "deviations": _dispatch_deviations,
+    "constitution": _dispatch_constitution,
+    "health": _dispatch_health,
+    "ship": _dispatch_ship,
+    "all": _dispatch_all,
+}
+
+
+def _gate_per_file(target: str, args: argparse.Namespace) -> list[Finding]:
+    if args.path is None:
+        return [
             Finding(
                 "BLOCK",
                 target,
                 Path(),
                 f"--target {target} requires a path argument",
             )
-        )
-    elif target == "delta" and path is not None:
-        findings.extend(validate_delta(path))
-    elif target == "spec" and path is not None:
-        findings.extend(validate_negative_requirements(path))
-        findings.extend(validate_frontmatter(path, kind="spec"))
-    elif target == "plan" and path is not None:
-        findings.extend(validate_frontmatter(path, kind="plan"))
-    elif target == "constitution":
-        resolved = path or repo_root / ".idd" / "CONSTITUTION.md"
-        findings.extend(validate_constitution(resolved))
-    elif target == "ship":
-        findings.extend(validate_capability_uniqueness(repo_root))
-    elif target in {"health", "all"}:
-        # P2a deviation: `all` is staged to `health` only. Per-file fan-out
-        # over .idd/specs/, .idd/changes/, .idd/features/ ships in P2b
-        # alongside the semantic checks. See commands/validate.md.
-        findings.extend(validate_health(repo_root))
+        ]
+    if not args.path.is_file():
+        return [
+            Finding(
+                "BLOCK",
+                target,
+                args.path,
+                f"--target {target} requires an existing file: {args.path}",
+            )
+        ]
+    return _TARGET_DISPATCH[target](args, args.repo_root)
 
+
+def _gate_per_folder(target: str, args: argparse.Namespace) -> list[Finding]:
+    if args.path is None:
+        return [
+            Finding(
+                "BLOCK",
+                target,
+                Path(),
+                f"--target {target} requires a folder path argument",
+            )
+        ]
+    if not args.path.is_dir():
+        return [
+            Finding(
+                "BLOCK",
+                target,
+                args.path,
+                f"--target {target} requires a directory: {args.path}",
+            )
+        ]
+    return _TARGET_DISPATCH[target](args, args.repo_root)
+
+
+def _gate_repo_wide(target: str, args: argparse.Namespace) -> list[Finding]:
+    findings: list[Finding] = []
+    if args.path is not None:
+        findings.append(
+            Finding(
+                "WARN",
+                target,
+                args.path,
+                f"--target {target} ignores positional path argument",
+            )
+        )
+    if not args.repo_root.is_dir():
+        findings.append(
+            Finding(
+                "BLOCK",
+                target,
+                args.repo_root,
+                f"--repo-root {str(args.repo_root)!r} is not a directory; "
+                f"point it at the repository root containing the .idd/ tree",
+            )
+        )
+        return findings
+    findings.extend(_TARGET_DISPATCH[target](args, args.repo_root))
     return findings
+
+
+def _gate_and_dispatch(target: str, args: argparse.Namespace) -> list[Finding]:
+    """Validate path-kind expectations, then run the target's dispatcher.
+
+    `constitution` is special: it accepts either a positional path or
+    falls back to ``<repo-root>/.idd/CONSTITUTION.md``. It is dispatched
+    directly without per-file/per-folder gating.
+    """
+    if target in _PER_FILE_TARGETS:
+        return _gate_per_file(target, args)
+    if target in _PER_FOLDER_TARGETS:
+        return _gate_per_folder(target, args)
+    if target in _REPO_WIDE_TARGETS:
+        return _gate_repo_wide(target, args)
+    # constitution (or any future hybrid target): no path-kind gating.
+    return _TARGET_DISPATCH[target](args, args.repo_root)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point for /idd:validate. See module-level exit-code contract."""
     parser = argparse.ArgumentParser(
         prog="python -m tools.validate",
-        description="IDD structural validator (M3 P2a)",
+        description="IDD validator (M3 P2a structural + P2b semantic)",
     )
     parser.add_argument(
         "--target",
         required=True,
-        choices=[
-            "spec",
-            "plan",
-            "delta",
-            "constitution",
-            "ship",
-            "health",
-            "all",
-        ],
+        choices=list(_TARGET_CHOICES),
         help="Which validator to run.",
     )
     parser.add_argument(
@@ -83,42 +301,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Repository root for repo-wide checks (default: cwd).",
     )
     parser.add_argument(
+        "--check-registries",
+        action="store_true",
+        default=False,
+        help=(
+            "For verified-deps / all: probe registries (npm, pip) for declared "
+            "dependencies. Off by default (offline / shape-only)."
+        ),
+    )
+    parser.add_argument(
         "path",
         nargs="?",
         type=Path,
-        help="Optional path to a single artifact for per-file targets.",
+        help=(
+            "Per-file targets: path to artifact (SPEC.md/PLAN.md/proposal.md). "
+            "Per-folder targets (deviations): the feature folder. "
+            "Repo-wide targets ignore this argument with a WARN."
+        ),
     )
     try:
         args = parser.parse_args(list(argv) if argv is not None else None)
     except SystemExit as exc:
-        # argparse already wrote the usage error to stderr.
         return exc.code if isinstance(exc.code, int) else 2
 
-    target = args.target
-    findings: list[Finding] = []
-
-    if target in _REPO_WIDE_TARGETS and args.path is not None:
-        findings.append(
-            Finding(
-                "WARN",
-                target,
-                args.path,
-                f"--target {target} ignores positional path argument",
-            ),
-        )
-
-    if target in _REPO_WIDE_TARGETS and not args.repo_root.is_dir():
-        findings.append(
-            Finding(
-                "BLOCK",
-                target,
-                args.repo_root,
-                f"--repo-root {str(args.repo_root)!r} is not a directory; "
-                f"point it at the repository root containing the .idd/ tree",
-            ),
-        )
-    else:
-        findings.extend(_dispatch_target(target, args.path, args.repo_root))
+    target: str = args.target
+    findings: list[Finding] = _gate_and_dispatch(target, args)
 
     payload = {
         "target": target,

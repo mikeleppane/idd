@@ -12,9 +12,27 @@ Run `tools/validate.py` against a target and surface findings to the user.
 
 ## Inputs
 
-- `--target <spec|plan|delta|constitution|ship|health|all>` (required).
-- Optional `path` argument for per-file targets (`spec`, `plan`, `delta`, `constitution`).
-- `--repo-root <path>` (defaults to cwd) for repo-wide targets (`health`, `ship`, `all`).
+- `--target` (required), one of:
+  - **Per-file (positional `path` = artifact)**:
+    - `spec` — NR placement + frontmatter schema (SPEC.md).
+    - `plan` — frontmatter schema (PLAN.md).
+    - `delta` — `## Affects` / `## Delta` section + op-marker shape (proposal.md).
+    - `scenarios` — Scenarios↔Acceptance mapping (SPEC.md, P2b).
+    - `anchors` — Codebase Anchors module-resolve (SPEC.md, P2b).
+    - `spec-semantic` — umbrella for `scenarios` + `anchors` over the same SPEC.md.
+    - `plan-tasks` — slice↔acceptance mapping; reads paired `SPEC.md` next to PLAN.md (P2b).
+    - `verified-deps` — `## Verified Dependencies` table shape on PLAN.md (P2b).
+  - **Per-folder (positional `path` = feature folder)**:
+    - `deviations` — cross-references `state.json` deviations against `decisions.md`.
+  - **Repo-wide (no positional path; uses `--repo-root`)**:
+    - `health` — D-HEALTH layout scan over `.idd/`.
+    - `ship` — capability-uniqueness check (P2a slice; full ship-gate in P5).
+    - `constitution` — Constitution structural check (defaults to `<repo-root>/.idd/CONSTITUTION.md` if `path` omitted).
+    - `all` — fan-out: `health` + `ship` + per-feature semantic validators across `.idd/changes/` and `.idd/features/`.
+- `--repo-root <path>` (defaults to cwd) for repo-wide targets and the `anchors` module-resolve base.
+- `--check-registries` (off by default). When set, `verified-deps` (and `all`) probe `npm` / `pip` for declared dependencies.
+
+> **Offline default for `verified-deps`:** by default `verified-deps` is shape-only; pass `--check-registries` for live registry probes (requires `npm` and/or `pip` on PATH). Keep it off in CI to stay deterministic.
 
 ## Steps
 
