@@ -281,3 +281,45 @@ def test_amend_constitution_rejects_empty_decisions_body(tmp_path: Path) -> None
     # No mutation.
     assert constitution.read_text(encoding="utf-8") == original
     assert not decisions_path.exists()
+
+
+def test_amend_constitution_replaces_existing_updated_field(tmp_path: Path) -> None:
+    """Cover the _replace_or_append_frontmatter replace branch (every amend after the first)."""
+    repo = tmp_path / "repo"
+    (repo / ".idd").mkdir(parents=True)
+    constitution = repo / ".idd" / "CONSTITUTION.md"
+    decisions_path = repo / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+
+    # Seed a Constitution that already has an `updated:` field.
+    seeded = (
+        '---\nversion: 0.1.0\ncreated: "2026-01-01"\nupdated: "2025-12-15"\n---\n\n'
+        "# Project Constitution\n\n"
+        "## Article 1 — Secrets via vault only [CRITICAL]\n"
+        "**Rule:** Use the vault loader.\n"
+        "**Reference:** OWASP A02:2021\n"
+        "**Rationale:** Prevent leaked credentials.\n"
+        "**Exception:** None.\n"
+    )
+    constitution.write_text(seeded, encoding="utf-8")
+
+    # Editor makes a clarification edit (rule rewording) -> classify=patch.
+    after_text = seeded.replace("Use the vault loader.", "Always use the vault loader.")
+    inputs = StubInputs(editor_writes=after_text, decisions_entry="rule rewording")
+
+    result = am.amend_constitution(
+        repo_root=repo,
+        decisions_path=decisions_path,
+        editor=inputs.open_editor,
+        prompter=inputs.prompt_decisions,
+        today=date(2026, 5, 7),
+    )
+
+    assert result.scope == "patch"
+    assert result.new_version == "0.1.1"
+    final_text = constitution.read_text(encoding="utf-8")
+    assert 'updated: "2026-05-07"' in final_text
+    # Old date must not survive.
+    assert '"2025-12-15"' not in final_text
+    # No duplicate `updated:` lines.
+    assert final_text.count("\nupdated:") == 1
