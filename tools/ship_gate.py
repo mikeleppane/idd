@@ -215,7 +215,7 @@ def render_gate_prompt(
             "  (a) Resolve the finding (edit code, re-run /idd:review --target code, /idd:verify, /idd:ship).",
             "  (b) Log a Constitution exception in decisions.md (template printed below) and re-run.",
             "  (c) Type 'ACKNOWLEDGE' to ship anyway. The acknowledgement is recorded in",
-            "      state.json.commits[] subject and in the archived feature folder.",
+            "      state.json.deviations[] and decisions.md, both persisting into the archive.",
             "",
             "Choice [a/b/c]:",
         ]
@@ -305,12 +305,55 @@ def make_acknowledgement_hook(
     )
 
     def _record(_source: Path) -> None:
+        # Two-sided idempotency: this hook may re-run after a partial-write
+        # failure (e.g. decisions.md succeeded but state.json write raised, the
+        # outer `ship_feature` rolled back the canonical-spec write, and the
+        # caller is now retrying). Treat the ACK as already-applied if EITHER
+        # sink already records it. A bare decisions.md heading without the
+        # matching state.json deviation entry is the recovery scenario we must
+        # tolerate so the second attempt can complete the state.json write
+        # without appending a duplicate decisions heading.
         payload = json.loads(state_path.read_text(encoding="utf-8"))
         deviations: list[dict[str, str]] = payload.setdefault("deviations", [])
-        # Idempotency: do not append a second deviation if the hook re-runs
-        # (caller-side retry semantics — see tools.archive.ship_feature docs).
-        if any(d.get("cause") == cause for d in deviations):
+        already_in_state = any(d.get("cause") == cause for d in deviations)
+        if already_in_state:
             return
+
+        decisions_text = (
+            decisions_path.read_text(encoding="utf-8") if decisions_path.exists() else ""
+        )
+        # Match the heading by its (cause-bearing) "Cause:" body line so the
+        # idempotency check survives heading-date drift across retries.
+        already_in_decisions = f"Cause: {cause}" in decisions_text
+
+        # Step 1: append the decisions.md heading FIRST. An orphan heading
+        # without a matching state.json deviation is silent under
+        # `validate_deviations` (the validator keys on deviations[]), whereas
+        # the reverse — state.json deviation without the decisions heading —
+        # is a non-recoverable BLOCK on the next /idd:validate run.
+        if not already_in_decisions:
+            body_lines = [
+                "",
+                f"## {now.date().isoformat()} — {_DECISIONS_HEADING_PREFIX}",
+                "",
+                # Echo the deviation cause verbatim so `validate_deviations`'
+                # 60-char substring cross-ref locates it inside the body block
+                # regardless of how many tags accumulate on the cause line.
+                f"Cause: {cause}",
+            ]
+            for f in gate_findings:
+                article = by_id.get(f.article_id or "")
+                title = article.title if article else "(unknown)"
+                body_lines.append(
+                    f"- [constitution:{f.article_id}] **{title}** — {f.location} — {f.message}"
+                )
+            with decisions_path.open("a", encoding="utf-8") as fh:
+                fh.write("\n".join(body_lines) + "\n")
+
+        # Step 2: mutate state.json. If this raises (ENOSPC, permission, …)
+        # the caller's outer transaction rolls back and a retry will find the
+        # decisions heading already present (skipped above) and only complete
+        # the state.json write — exactly one deviation, exactly one heading.
         deviations.append(
             {
                 "phase": "ship",
@@ -320,23 +363,5 @@ def make_acknowledgement_hook(
             }
         )
         state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-
-        body_lines = [
-            "",
-            f"## {now.date().isoformat()} — {_DECISIONS_HEADING_PREFIX}",
-            "",
-            # Echo the deviation cause verbatim so `validate_deviations`'
-            # 60-char substring cross-ref locates it inside the body block
-            # regardless of how many tags accumulate on the cause line.
-            f"Cause: {cause}",
-        ]
-        for f in gate_findings:
-            article = by_id.get(f.article_id or "")
-            title = article.title if article else "(unknown)"
-            body_lines.append(
-                f"- [constitution:{f.article_id}] **{title}** — {f.location} — {f.message}"
-            )
-        with decisions_path.open("a", encoding="utf-8") as fh:
-            fh.write("\n".join(body_lines) + "\n")
 
     return _record

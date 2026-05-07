@@ -208,6 +208,73 @@ def test_acknowledgement_satisfies_validate_deviations(tmp_path: Path) -> None:
     )
 
 
+def test_ack_hook_recovers_from_state_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If state.json write fails after decisions.md write, retry must complete the deviation."""
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "feature_id": "2026-05-07-demo",
+                "tier": "full",
+                "current_phase": "ship",
+                "phases": {"ship": {"status": "in_progress", "started_at": "2026-05-07T00:00:00Z"}},
+                "skipped": [],
+                "deviations": [],
+                "commits": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    decisions_path = tmp_path / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+    findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
+    gate, _w, _i = sg.partition_by_article_level(findings, _articles())
+
+    # First attempt: decisions write succeeds, state write raises.
+    original_write = Path.write_text
+    failures = {"count": 0}
+
+    def _failing_write(self: Path, *args: object, **kwargs: object) -> int:
+        if self == state_path and failures["count"] == 0:
+            failures["count"] += 1
+            raise OSError("simulated state write failure")
+        return original_write(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "write_text", _failing_write)
+
+    hook = sg.make_acknowledgement_hook(
+        state_path=state_path,
+        decisions_path=decisions_path,
+        gate_findings=gate,
+        articles=_articles(),
+        now=datetime(2026, 5, 7, 12, 0, 0, tzinfo=UTC),
+    )
+
+    with pytest.raises(OSError, match="simulated state write failure"):
+        hook(tmp_path)
+
+    # Decisions heading was written on the first attempt.
+    decisions_after_fail = decisions_path.read_text(encoding="utf-8")
+    assert "Constitution finding acknowledged at ship" in decisions_after_fail
+    # State unchanged from initial.
+    assert json.loads(state_path.read_text(encoding="utf-8"))["deviations"] == []
+
+    # Second attempt: succeeds.
+    hook(tmp_path)
+
+    # State now has the deviation; decisions still has exactly one heading.
+    final_state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert final_state["deviations"][-1]["resolution"] == "user_acknowledged"
+    final_decisions = decisions_path.read_text(encoding="utf-8")
+    # Exactly one decisions heading — the second hook attempt detected the
+    # orphan heading from the first attempt and skipped re-appending. The
+    # phrase itself appears twice per entry (heading line + Cause: body line),
+    # so count the heading marker instead.
+    assert final_decisions.count("## 2026-05-07 — Constitution finding acknowledged at ship") == 1
+
+
 def test_render_warn_summary_lists_should_findings() -> None:
     findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
     _gate, warn, _info = sg.partition_by_article_level(findings, _articles())
