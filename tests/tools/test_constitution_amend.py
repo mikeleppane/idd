@@ -416,3 +416,75 @@ def test_bootstrap_drop_removes_proposal(tmp_path: Path) -> None:
     assert "secrets" not in final.lower()
     # At least one article (repository or test coverage) remains.
     assert "## Article 1 —" in final
+
+
+def test_bootstrap_constitution_rolls_back_on_validator_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Validator rejects the assembled body -> Constitution stays absent, decisions clean."""
+    repo = tmp_path / "repo"
+    (repo / ".idd").mkdir(parents=True)
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\ndependencies = ["pytest>=8.0"]\n',
+        encoding="utf-8",
+    )
+    decisions_path = repo / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+
+    # Force the validator subprocess to report failure regardless of body content.
+    def _fake_validate(target: Path) -> None:
+        raise am.AmendError("Constitution validation failed (forced)")
+
+    monkeypatch.setattr(am, "_validate_constitution_body", _fake_validate)
+
+    accept_all = lambda proposal: ("accept", proposal)  # noqa: E731
+
+    with pytest.raises(am.AmendError, match="validation failed"):
+        am.bootstrap_constitution(
+            repo_root=repo,
+            decisions_path=decisions_path,
+            review_proposal=accept_all,
+            today=date(2026, 5, 7),
+        )
+
+    assert not (repo / ".idd" / "CONSTITUTION.md").exists()
+    assert "Constitution bootstrap" not in decisions_path.read_text(encoding="utf-8")
+
+
+def test_bootstrap_constitution_rolls_back_constitution_on_decisions_append_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Decisions append fails -> freshly-written Constitution is deleted; pair stays atomic."""
+    repo = tmp_path / "repo"
+    (repo / ".idd").mkdir(parents=True)
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\ndependencies = ["pytest>=8.0"]\n',
+        encoding="utf-8",
+    )
+    decisions_path = repo / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+
+    original_open = Path.open
+
+    def _patched_open(self, *a, **kw):  # type: ignore[no-untyped-def]
+        if self == decisions_path and a and a[0] == "a":
+            raise OSError("simulated append failure")
+        return original_open(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "open", _patched_open)
+
+    accept_all = lambda proposal: ("accept", proposal)  # noqa: E731
+
+    with pytest.raises(am.AmendError, match=r"decisions\.md append failed"):
+        am.bootstrap_constitution(
+            repo_root=repo,
+            decisions_path=decisions_path,
+            review_proposal=accept_all,
+            today=date(2026, 5, 7),
+        )
+
+    # Constitution must be gone; decisions log unchanged.
+    assert not (repo / ".idd" / "CONSTITUTION.md").exists()
+    assert decisions_path.read_text(encoding="utf-8") == "# Decisions\n\n"

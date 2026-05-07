@@ -495,7 +495,7 @@ def bootstrap_constitution(
     for index, proposal in enumerate(accepted, start=1):
         body += _format_article(proposal, index)
 
-    # Validate via the structural validator before disk write.
+    # Validate via the structural validator before any disk mutation.
     with tempfile.NamedTemporaryFile(
         prefix="idd-constitution-bootstrap-",
         suffix=".md",
@@ -507,11 +507,15 @@ def bootstrap_constitution(
         candidate = Path(handle.name)
     try:
         _validate_constitution_body(candidate)
-        constitution.parent.mkdir(parents=True, exist_ok=True)
-        constitution.write_text(body, encoding="utf-8")
     finally:
         candidate.unlink(missing_ok=True)
 
+    # Atomic-pair write: ensure decisions.md parent exists, atomically write
+    # the Constitution, then append the bootstrap ADR. If the append fails
+    # (read-only fs, etc.) delete the freshly-written Constitution so the
+    # pair stays atomic.
+    _ensure_decisions_file(decisions_path)
+    _atomic_replace(constitution, body)
     entry = (
         f"\n## {today.isoformat()} — Constitution bootstrap: v0.1.0\n"
         f"**Context:** Bootstrap proposed {len(proposals)} starter articles; "
@@ -519,6 +523,10 @@ def bootstrap_constitution(
         f"**Change:** New Constitution seeded.\n"
         f"**Alternatives considered:** Skip (default).\n"
     )
-    with decisions_path.open("a", encoding="utf-8") as fh:
-        fh.write(entry)
+    try:
+        with decisions_path.open("a", encoding="utf-8") as fh:
+            fh.write(entry)
+    except OSError as exc:
+        constitution.unlink(missing_ok=True)
+        raise AmendError(f"decisions.md append failed: {exc}") from exc
     return constitution
