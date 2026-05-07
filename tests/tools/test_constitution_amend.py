@@ -323,3 +323,96 @@ def test_amend_constitution_replaces_existing_updated_field(tmp_path: Path) -> N
     assert '"2025-12-15"' not in final_text
     # No duplicate `updated:` lines.
     assert final_text.count("\nupdated:") == 1
+
+
+def test_propose_starter_articles_picks_orm_and_test_floor(tmp_path: Path) -> None:
+    repo = FIXTURES / "bootstrap_repo_python"
+    proposals = am.propose_starter_articles(repo_root=repo)
+    titles = {p.title.lower() for p in proposals}
+    assert any("secrets" in t for t in titles), "secrets article always proposed"
+    assert any("repository" in t for t in titles), "ORM detected → repository article"
+    assert any("test coverage" in t for t in titles), "pytest detected → coverage floor"
+    assert len(proposals) <= 5, "default cap = 5"
+
+
+def test_propose_starter_articles_no_orm_no_test_only_minimum(tmp_path: Path) -> None:
+    repo = tmp_path / "minimal"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text('[project]\nname = "minimal"\n', encoding="utf-8")
+    proposals = am.propose_starter_articles(repo_root=repo)
+    titles = {p.title.lower() for p in proposals}
+    assert any("secrets" in t for t in titles), "secrets always proposed"
+    assert not any("repository" in t for t in titles)
+    assert not any("test coverage" in t for t in titles)
+
+
+def test_bootstrap_constitution_writes_starter_file(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / ".idd").mkdir(parents=True)
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\ndependencies = ["pytest>=8.0"]\n',
+        encoding="utf-8",
+    )
+    decisions_path = repo / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+
+    accept_all = lambda proposal: ("accept", proposal)  # noqa: E731
+    am.bootstrap_constitution(
+        repo_root=repo,
+        decisions_path=decisions_path,
+        review_proposal=accept_all,
+        today=date(2026, 5, 7),
+    )
+
+    final = (repo / ".idd" / "CONSTITUTION.md").read_text(encoding="utf-8")
+    assert "version: 0.1.0" in final
+    assert "## Article 1 — " in final
+    assert "Constitution bootstrap: v0.1.0" in decisions_path.read_text(encoding="utf-8")
+
+
+def test_bootstrap_constitution_refuses_when_file_exists(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / ".idd").mkdir(parents=True)
+    (repo / ".idd" / "CONSTITUTION.md").write_text(
+        '---\nversion: 0.1.0\ncreated: "2026-01-01"\n---\n', encoding="utf-8"
+    )
+    decisions_path = repo / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+
+    accept_all = lambda proposal: ("accept", proposal)  # noqa: E731
+
+    with pytest.raises(am.AmendError, match="already exists"):
+        am.bootstrap_constitution(
+            repo_root=repo,
+            decisions_path=decisions_path,
+            review_proposal=accept_all,
+            today=date(2026, 5, 7),
+        )
+
+
+def test_bootstrap_drop_removes_proposal(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / ".idd").mkdir(parents=True)
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\ndependencies = ["pytest>=8.0", "sqlalchemy>=2.0"]\n',
+        encoding="utf-8",
+    )
+    decisions_path = repo / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+
+    def review(proposal: am.ProposedArticle) -> tuple[str, am.ProposedArticle | None]:
+        if "secrets" in proposal.title.lower():
+            return ("drop", None)
+        return ("accept", proposal)
+
+    am.bootstrap_constitution(
+        repo_root=repo,
+        decisions_path=decisions_path,
+        review_proposal=review,
+        today=date(2026, 5, 7),
+    )
+
+    final = (repo / ".idd" / "CONSTITUTION.md").read_text(encoding="utf-8")
+    assert "secrets" not in final.lower()
+    # At least one article (repository or test coverage) remains.
+    assert "## Article 1 —" in final

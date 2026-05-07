@@ -23,6 +23,8 @@ from pathlib import Path
 from tools.constitution import (
     Article,
     ConstitutionError,
+    _read_package_json_top_level_deps,
+    _read_pyproject_top_level_deps,
     parse_constitution,
 )
 
@@ -322,3 +324,201 @@ def amend_constitution(
         new_version=new_version,
         decisions_entry=entry,
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProposedArticle:
+    """Bootstrap proposal record reviewed article-by-article by the user."""
+
+    title: str
+    level: str
+    rule: str
+    reference: str
+    rationale: str
+    exception: str = "None."
+
+
+_BOOTSTRAP_PROPOSALS_CAP = 5
+
+
+def propose_starter_articles(*, repo_root: Path) -> list[ProposedArticle]:
+    """Generate up to 5 starter articles based on detected project signals.
+
+    Reuses ``tools.constitution._read_pyproject_top_level_deps`` /
+    ``_read_package_json_top_level_deps`` so dep parsing has one source of truth.
+
+    Deviation from plan literal: T2 commit 2a10d34 privatized these dep readers
+    after the plan was authored. We import the underscored names at module top
+    rather than re-implementing them; the lazy/inline import in the plan
+    literal was unnecessary (no circular risk).
+    """
+    pyproject = repo_root / "pyproject.toml"
+    package_json = repo_root / "package.json"
+    deps_python = " ".join(_read_pyproject_top_level_deps(pyproject))
+    deps_node = " ".join(_read_package_json_top_level_deps(package_json))
+    blob = (deps_python + " " + deps_node).lower()
+
+    proposals: list[ProposedArticle] = [
+        ProposedArticle(
+            title="Secrets via vault only",
+            level="SHOULD",
+            rule=(
+                "Secrets, API keys, and credentials SHOULD be retrieved through "
+                "the project's vault loader. Inline credentials are forbidden."
+            ),
+            reference="OWASP A02:2021, CWE-798",
+            rationale="Hard-coded credentials are the most common cause of public credential leaks.",
+        )
+    ]
+
+    has_analytics = any(
+        kw in blob for kw in ("segment", "amplitude", "mixpanel", "heap", "google-analytics")
+    )
+    proposals.append(
+        ProposedArticle(
+            title="PII boundary",
+            level="CRITICAL" if has_analytics else "SHOULD",
+            rule=(
+                "Personally identifiable information MUST stay inside the project's "
+                "PII boundary. Telemetry hooks SHALL strip user-level identifiers."
+            ),
+            reference="GDPR Art. 25 (data protection by design)",
+            rationale="Analytics integrations make PII leakage trivial without a hard boundary.",
+        )
+    )
+
+    has_orm = any(kw in blob for kw in ("sqlalchemy", "django", "peewee", "tortoise"))
+    if has_orm:
+        proposals.append(
+            ProposedArticle(
+                title="Repository pattern for data access",
+                level="SHOULD",
+                rule=(
+                    "ORM session calls SHOULD be confined to a `repository/` layer. "
+                    "Service-layer code calls repository functions, never the session "
+                    "directly."
+                ),
+                reference="Team consensus 2026-01.",
+                rationale="Direct session access in services couples business logic to schema.",
+            )
+        )
+
+    has_test_framework = any(
+        kw in blob for kw in ("pytest", "unittest", "jest", "vitest", "mocha", "rspec")
+    )
+    if has_test_framework:
+        proposals.append(
+            ProposedArticle(
+                title="Test coverage floor",
+                level="SHOULD",
+                rule=(
+                    "New modules SHOULD ship with unit tests covering the documented "
+                    "public surface."
+                ),
+                reference="Team consensus 2026-01.",
+                rationale="Untested modules accumulate bugs faster than features.",
+            )
+        )
+
+    forbidden_packages = {"left-pad", "request", "node-uuid"}  # extend as needed
+    if any(pkg in blob for pkg in forbidden_packages):
+        proposals.append(
+            ProposedArticle(
+                title="Forbidden deps",
+                level="SHOULD",
+                rule=(
+                    "Pinned-deprecated packages MUST NOT be added. The Verified "
+                    "Dependencies section in PLAN.md SHALL cite a current source."
+                ),
+                reference="GitHub Advisory Database",
+                rationale="Supply-chain risk surfaces fastest in unmaintained deps.",
+            )
+        )
+
+    # Cap kept defensively; the if-chain currently produces <=5 but a future
+    # signal could push past. _BOOTSTRAP_PROPOSALS_CAP is the contract floor.
+    return proposals[:_BOOTSTRAP_PROPOSALS_CAP]
+
+
+def _format_article(proposal: ProposedArticle, number: int) -> str:
+    return (
+        f"\n## Article {number} — {proposal.title} [{proposal.level}]\n"
+        f"**Rule:** {proposal.rule}\n"
+        f"**Reference:** {proposal.reference}\n"
+        f"**Rationale:** {proposal.rationale}\n"
+        f"**Exception:** {proposal.exception}\n"
+    )
+
+
+def bootstrap_constitution(
+    *,
+    repo_root: Path,
+    decisions_path: Path,
+    review_proposal: Callable[[ProposedArticle], tuple[str, ProposedArticle | None]],
+    today: date | None = None,
+) -> Path:
+    """Seed ``.idd/CONSTITUTION.md`` from project signals.
+
+    ``review_proposal(proposal)`` returns ``("accept", proposal)`` |
+    ``("edit", proposal')`` | ``("drop", None)``. Caller-supplied; the test
+    suite drives it deterministically.
+
+    Refuses if ``.idd/CONSTITUTION.md`` already exists. Refuses if the user
+    drops every proposal (zero accepted articles is not a valid Constitution).
+
+    Returns the path to the new Constitution.
+    """
+    today = today or date.today()
+    constitution = repo_root / ".idd" / "CONSTITUTION.md"
+    if constitution.exists():
+        raise AmendError(
+            f"Constitution already exists at {constitution}; use plain /idd:amend-constitution"
+        )
+
+    proposals = propose_starter_articles(repo_root=repo_root)
+    accepted: list[ProposedArticle] = []
+    for proposal in proposals:
+        action, returned = review_proposal(proposal)
+        if action in ("accept", "edit") and returned is not None:
+            accepted.append(returned)
+        # action == "drop" -> skip
+    if not accepted:
+        raise AmendError("bootstrap aborted: zero articles accepted")
+
+    body = (
+        f'---\nversion: 0.1.0\ncreated: "{today.isoformat()}"\n---\n\n'
+        "# Project Constitution\n\n"
+        "Project-wide guidance authored by the team. Articles below are surfaced "
+        "to spec/plan/execute/review subagents as advisory context (M3) and to "
+        "the reviewer subagent as severity hints.\n"
+    )
+    for index, proposal in enumerate(accepted, start=1):
+        body += _format_article(proposal, index)
+
+    # Validate via the structural validator before disk write.
+    with tempfile.NamedTemporaryFile(
+        prefix="idd-constitution-bootstrap-",
+        suffix=".md",
+        delete=False,
+        mode="w",
+        encoding="utf-8",
+    ) as handle:
+        handle.write(body)
+        candidate = Path(handle.name)
+    try:
+        _validate_constitution_body(candidate)
+        constitution.parent.mkdir(parents=True, exist_ok=True)
+        constitution.write_text(body, encoding="utf-8")
+    finally:
+        candidate.unlink(missing_ok=True)
+
+    entry = (
+        f"\n## {today.isoformat()} — Constitution bootstrap: v0.1.0\n"
+        f"**Context:** Bootstrap proposed {len(proposals)} starter articles; "
+        f"accepted {len(accepted)}.\n"
+        f"**Change:** New Constitution seeded.\n"
+        f"**Alternatives considered:** Skip (default).\n"
+    )
+    with decisions_path.open("a", encoding="utf-8") as fh:
+        fh.write(entry)
+    return constitution
