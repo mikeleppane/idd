@@ -77,6 +77,17 @@ def test_plan_tasks_shared_flag_exempts_from_collision() -> None:
     assert findings == []
 
 
+def test_plan_tasks_template_acceptance_phrase_does_not_double_count(tmp_path: Path) -> None:
+    """The shipped PLAN template writes `Scenario 1 passes + criterion-1 met`
+    on the Acceptance line. Both alternatives match AC 1, but the slice owns
+    AC 1 once — not twice. The validator must dedupe per slice and emit no
+    multi-slice HIGH.
+    """
+    plan, spec = _pair("plan_tasks_template_phrase")
+    findings = validate.validate_plan_tasks(plan, spec_path=spec)
+    assert findings == [], [f.message for f in findings]
+
+
 def test_plan_tasks_missing_plan_file_blocks(tmp_path: Path) -> None:
     spec = FIX / "plan_tasks_pass" / "SPEC.md"
     findings = validate.validate_plan_tasks(tmp_path / "missing_PLAN.md", spec_path=spec)

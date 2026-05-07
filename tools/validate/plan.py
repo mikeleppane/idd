@@ -162,8 +162,18 @@ def _scan_slice(
             )
         )
     else:
+        # Dedupe AC tokens within a single slice. The shipped PLAN template
+        # writes `**Acceptance:** <Scenario 1 passes + criterion-1 met>` which
+        # matches AC 1 twice via two alternations of `_AC_TOKEN`. Without this
+        # set, `ac_unblocked[1]` would carry [slice_idx, slice_idx] and the
+        # multi-slice check below would fire a false HIGH.
+        seen_in_slice: set[int] = set()
         for tok in _AC_TOKEN.finditer(accept.group(1)):
-            ac_unblocked[int(tok.group(1))].append(slice_idx)
+            idx = int(tok.group(1))
+            if idx in seen_in_slice:
+                continue
+            seen_in_slice.add(idx)
+            ac_unblocked[idx].append(slice_idx)
 
     files = _FILES_IN_SCOPE.search(slice_body)
     if files:
