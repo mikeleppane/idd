@@ -23,7 +23,7 @@ Either:
 
 1. **Validate tier and state.** Read `state.json`. For `tier in ("standard", "full")`, require PLAN.md with `status: ready`, `REVIEW.plan.md` with `target: plan` and `status: resolved`, and `"plan"` recorded in `phases.review.targets_done` (the gate's audit trail). The review phase will be `status: in_progress` at this point — that is expected; do not abort.
 2. **Transition state.** Call `tools.state.start_phase(path, "execute")` (idempotent if already in_progress). For standard/full, this changes `current_phase` from `review` to `execute` while leaving `phases.review` untouched so the plan-pass audit (`targets_done`, `current_target`) survives until the second review pass completes.
-3.0 **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<plan_files_union>)`. The resulting `articles[]` (serialized via `Article.to_budget_dict()`) is included in EVERY per-task subagent dispatch budget under the `articles` field.
+2a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<plan_files_union>)`. The resulting `articles[]` (serialized via `Article.to_budget_dict()`) is included in EVERY per-task subagent dispatch budget under the `articles` field.
 3. **Branch on tier.**
 
 ### Focused branch (M1 behavior, unchanged)

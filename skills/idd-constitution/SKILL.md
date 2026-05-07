@@ -22,8 +22,9 @@ explicit.
 - Otherwise parses the Constitution and applies the M3 minimal relevance
   filter (D-9): all CRITICAL articles kept regardless of score; SHOULD
   articles below the 25th percentile dropped; MAY articles below the median
-  dropped; cumulative kept body ≤ 1500 tokens (CRITICAL exempt from cap;
-  per-article body cap = 600 words).
+  dropped; cumulative kept body word count ≤ `MAX_INJECTED_WORDS` (= 1153,
+  derived from 1500 tokens × 1/1.3 word→token ratio). CRITICAL articles
+  are exempt from the cumulative cap.
 
 ## Dispatch budget shape
 

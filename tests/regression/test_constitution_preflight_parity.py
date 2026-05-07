@@ -47,7 +47,7 @@ def test_skill_documents_constitution_preflight(skill_path: str) -> None:
 @pytest.mark.parametrize("skill_path", SKILL_FILES)
 def test_skill_documents_articles_in_dispatch_budget(skill_path: str) -> None:
     text = Path(skill_path).read_text(encoding="utf-8")
-    assert "articles[]" in text or "articles:" in text or "articles " in text, (
+    assert "articles[]" in text or "articles:" in text, (
         f"{skill_path} must mention articles[] or articles: in its subagent dispatch contract"
     )
 
