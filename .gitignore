@@ -24,6 +24,8 @@ build/
 
 # IDD runtime artifacts (per-project, never committed in plugin repo)
 .idd/
+# Test fixtures intentionally ship a synthetic .idd/ tree under target_repo/.
+!tests/fixtures/**/target_repo/.idd/
 
 # Local config
 .env

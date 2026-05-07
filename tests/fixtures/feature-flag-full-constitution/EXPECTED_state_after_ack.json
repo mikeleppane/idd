@@ -1,0 +1,18 @@
+{
+  "feature_id": "2026-05-07-checkout-flow",
+  "tier": "full",
+  "current_phase": "ship",
+  "phases": {
+    "ship": {"status": "in_progress", "started_at": "2026-05-07T00:00:00Z"}
+  },
+  "skipped": [],
+  "deviations": [
+    {
+      "phase": "ship",
+      "cause": "Constitution finding acknowledged at ship: [constitution:A3]",
+      "resolution": "user_acknowledged",
+      "logged_at": "2026-05-07T12:00:00Z"
+    }
+  ],
+  "commits": []
+}
