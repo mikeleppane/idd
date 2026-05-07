@@ -50,6 +50,19 @@ This file lets non-Claude tools (Cursor, Aider, Codex) discover the same IDD ski
 | `templates/feature/decisions.md`    | Append-only ADR-lite log. |
 | `templates/feature/state.json`      | Phase machine state per feature. |
 
+## Engineering skills (`.agents/skills/`)
+
+Local engineering-practice skills that govern HOW Python work lands in this repo. Every Python edit, refactor, review, test, or commit MUST consult these skills — not optional, not "if relevant".
+
+| Skill | Path | When to use |
+|---|---|---|
+| `test-driven-development` | `.agents/skills/test-driven-development/SKILL.md` | Every behavior change. RED → GREEN → REFACTOR. Failing test before code. |
+| `coding-guidance-python` | `.agents/skills/coding-guidance-python/SKILL.md` | Every Python file create / modify / review. Type safety, contracts, module boundaries. |
+| `git-conventions` | `.agents/skills/git-conventions/SKILL.md` | Every commit. Conventional Commits with required scopes, ASCII-only subjects, ≤72 char hard cap. |
+| `code-review-and-quality` | `.agents/skills/code-review-and-quality/SKILL.md` | Every review pass before merge. |
+
+Subagent dispatches that touch Python code MUST cite all four in the dispatch brief alongside the task. Skipping these for "small" or "trivial" Python edits is the most common drift mode — do not.
+
 ## Hooks
 
 The `hooks/` directory contains a `PreToolUse` hook that enforces the IDD subagent context-budget contract. In Claude Code it is wired automatically via `.claude-plugin/plugin.json`. In other tools, run `python3 hooks/check_budget.py` manually before each subagent dispatch.
