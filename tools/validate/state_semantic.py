@@ -29,25 +29,42 @@ _DECISION_HEADING = re.compile(
 )
 
 
-def _load_state_deviations(state_path: Path) -> list[dict[str, Any]] | None:
-    """Return the deviations[] list, or None if state is missing/malformed.
+class _DeviationsParseError(RuntimeError):
+    """Raised when state.json deviations[] cannot be processed.
 
-    None signals an unrecoverable state-shape problem so the caller can emit
-    a single BLOCK finding instead of cascading per-deviation errors.
+    Carries a precise message so the caller can surface it verbatim in the
+    BLOCK finding instead of the generic "missing or malformed" string.
+    """
+
+
+def _load_state_deviations(state_path: Path) -> list[dict[str, Any]]:
+    """Return the deviations[] list. Raise on any structural problem.
+
+    Pre-fix this helper silently dropped non-dict deviation entries (e.g.
+    ``{"deviations": ["bad"]}`` collapsed to ``[]``). Now any non-object
+    entry raises so the caller emits a BLOCK — ``/idd:execute`` migrated to
+    delegate its self-review to this validator, and a silently-passing
+    malformed deviation would let the phase exit unreviewed.
     """
     text = _read_text(state_path)
     if text is None:
-        return None
+        raise _DeviationsParseError("state.json missing or unreadable")
     try:
         payload = json.loads(text)
-    except json.JSONDecodeError:
-        return None
+    except json.JSONDecodeError as exc:
+        raise _DeviationsParseError(f"state.json invalid JSON: {exc}") from exc
     if not isinstance(payload, dict):
-        return None
+        raise _DeviationsParseError("state.json must be a JSON object")
     deviations = payload.get("deviations")
     if not isinstance(deviations, list):
-        return None
-    return [d for d in deviations if isinstance(d, dict)]
+        raise _DeviationsParseError("state.json deviations must be a list")
+    for i, entry in enumerate(deviations):
+        if not isinstance(entry, dict):
+            raise _DeviationsParseError(
+                f"state.json deviations[{i}] must be an object, "
+                f"got {type(entry).__name__}: {entry!r}"
+            )
+    return deviations
 
 
 def validate_deviations(feature_root: Path) -> list[Finding]:
@@ -55,16 +72,10 @@ def validate_deviations(feature_root: Path) -> list[Finding]:
     state_path = feature_root / STATE_FILENAME
     decisions_path = feature_root / DECISIONS_FILENAME
 
-    deviations = _load_state_deviations(state_path)
-    if deviations is None:
-        return [
-            Finding(
-                "BLOCK",
-                "deviations",
-                state_path,
-                "state.json missing, unreadable, or malformed",
-            )
-        ]
+    try:
+        deviations = _load_state_deviations(state_path)
+    except _DeviationsParseError as exc:
+        return [Finding("BLOCK", "deviations", state_path, str(exc))]
 
     if not deviations:
         return []  # Empty deviations[] is fine; nothing to cross-ref.

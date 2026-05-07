@@ -107,3 +107,30 @@ def test_deviations_non_list_deviations_block(tmp_path: Path) -> None:
     findings = validate.validate_deviations(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == "BLOCK"
+
+
+def test_deviations_non_dict_entry_blocks(tmp_path: Path) -> None:
+    """A deviations[] list with a non-object entry is malformed; pre-fix the
+    helper silently dropped such entries and the validator returned []. Now
+    /idd:execute delegates to this validator, so a passing run on malformed
+    state.json would let the phase exit unreviewed.
+    """
+    state = tmp_path / "state.json"
+    state.write_text('{"deviations": ["bad"]}', encoding="utf-8")
+    findings = validate.validate_deviations(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "BLOCK"
+    assert "deviations[0]" in findings[0].message
+
+
+def test_deviations_mixed_valid_and_non_dict_blocks(tmp_path: Path) -> None:
+    """Even one non-dict entry in an otherwise valid list aborts cross-ref."""
+    state = tmp_path / "state.json"
+    state.write_text(
+        '{"feature_id":"x","deviations":[{"phase":"execute","cause":"a","resolution":"b"},42]}',
+        encoding="utf-8",
+    )
+    findings = validate.validate_deviations(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == "BLOCK"
+    assert "deviations[1]" in findings[0].message
