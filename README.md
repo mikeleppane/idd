@@ -140,6 +140,23 @@ Three layers, all rolled into `VERIFICATION.md`:
 
 A feature ships only after all three layers pass.
 
+### M3 Constitution limitations
+
+The project Constitution (`.idd/CONSTITUTION.md`) ships in M3 as **advisory
+context plus a reviewer severity hint plus a ship-time user gate**. It is
+NOT a machine BLOCK gate (D-4 / D-4a):
+
+- Reviewer subagents tag findings with `[constitution:A<n>]` and map
+  severity per the Constitution article level (CRITICAL→HIGH,
+  SHOULD→MEDIUM, MAY→LOW).
+- `/idd:ship` shows a mandatory gate prompt for any unresolved CRITICAL
+  finding; user must resolve, log a written exception, or type
+  `ACKNOWLEDGE` exactly. `ACKNOWLEDGE` proceeds with audit trail in
+  `decisions.md` + `state.json.deviations[]` + ship summary banner.
+- The reviewer LLM may miss violations. **Project CI is the real
+  enforcement** in M3. M4 will add Detection-driven BLOCK gates that close
+  the agent-side gap.
+
 ---
 
 ## Install (Claude Code)

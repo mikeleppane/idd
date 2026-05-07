@@ -27,3 +27,7 @@ Run the IDD execute phase against the active feature.
 - Subagent dispatch blocked by `PreToolUse` hook → surface the hook's reason; the model edits the dispatch to comply, then retries.
 - Subagent returns `status: blocked` → halt, log to `decisions.md` § Open, surface blocker.
 - Working tree has uncommitted changes when execute starts → warn, ask user to commit or stash.
+
+## Constitution preflight
+
+When `.idd/CONSTITUTION.md` is present, the skill calls `tools.constitution.load_and_filter` before its primary work and passes filtered `articles[]` into every subagent dispatch budget. No-op when absent.

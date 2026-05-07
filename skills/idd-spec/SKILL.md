@@ -22,6 +22,7 @@ Produce a `.idd/features/<id>/SPEC.md` that obeys the §7.1 template and exits w
 2. **Check for collision.** If `.idd/features/<id>/` already exists, abort with: "Feature folder already exists. Re-run with `--feature <id>` to refine, or pick a different slug." Use `tools.state.feature_folder_exists(repo_root, feature_id)`.
 3. **Create the feature folder.** `.idd/features/<id>/`. Copy `templates/feature/state.json`, `templates/feature/SPEC.md`, and `templates/feature/decisions.md` into it; set `feature_id`, `tier` (default `focused`), and `current_phase: "spec"`.
 4. **Initialize SPEC.md** from the copied template; `decisions.md` stays empty until the first decision is logged.
+4a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<idea>, files_in_scope=[])`. When `articles[]` is non-empty, include them in the spec-author subagent's dispatch budget under the `articles` field. The author MUST keep CRITICAL articles' rules in view while drafting Intent + Negative Requirements.
 5. **Fill the template — one section at a time, asking only when ambiguous.**
    - **Frontmatter.** Set `id`, `status: draft`, `tier`, `created`, `capability` (stable handle).
    - **Intent.** One paragraph. WHY. Drill until the *why* is concrete.

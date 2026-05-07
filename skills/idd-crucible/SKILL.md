@@ -21,6 +21,7 @@ Active feature has SPEC.md and PLAN.md. `current_phase == "crucible"`.
 
 1. **Validate state.** Read `state.json`; abort if not in crucible phase.
 2. **Copy template** if UNDERSTANDING.md does not exist: copy `templates/feature/UNDERSTANDING.md` into `.idd/features/<id>/UNDERSTANDING.md`. Set frontmatter: `spec: <feature-id>`, `ritual: assumptions → adversarial → pre-mortem`, `generated: <YYYY-MM-DD>`.
+2a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<plan_files>)`. Pass the filtered `articles[]` (via `Article.to_budget_dict()`) to the red-team subagent so adversarial scenarios target Constitution-flagged surfaces.
 3. **Step A — Assumptions inversion.**
    - Read SPEC § Intent, Scope, Acceptance. List the implicit assumptions (e.g., "user is authenticated", "input is well-formed", "DB is reachable").
    - For each: invert it. State the opposite. Decide: is the spec robust under inversion, or does it break?

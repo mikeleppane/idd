@@ -25,3 +25,7 @@ Run the IDD spec phase. Either:
 - Feature folder already exists with same id → suggest a slug suffix or `--feature <id>` to refine.
 - `templates/feature/SPEC.md` missing in plugin → instruct user to reinstall plugin.
 - `tools.state.write_state` raises StateError → surface error, do not write partial files.
+
+## Constitution preflight
+
+When `.idd/CONSTITUTION.md` is present, the skill calls `tools.constitution.load_and_filter` before its primary work and passes filtered `articles[]` into every subagent dispatch budget. No-op when absent.

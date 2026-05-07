@@ -20,3 +20,7 @@ Run the IDD crucible phase against the active feature.
 - `tier == "focused"` → abort: "Crucible is standard-tier+. Re-run /idd:spec --standard or use /idd:execute directly for focused work."
 - SPEC.md or PLAN.md missing → abort with: "Crucible requires both SPEC.md and PLAN.md to challenge."
 - User declines all adversarial questions → log and surface; phase remains `in_progress` so user can resume.
+
+## Constitution preflight
+
+When `.idd/CONSTITUTION.md` is present, the skill calls `tools.constitution.load_and_filter` before its primary work and passes filtered `articles[]` into every subagent dispatch budget. No-op when absent.

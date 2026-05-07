@@ -20,3 +20,7 @@ Run the IDD plan phase against the active feature.
 - `tier == "focused"` → abort: "Focused tier drives execute directly from SPEC.md; PLAN.md is not used."
 - New external deps proposed but PLAN.md § Verified Dependencies left empty → abort, instruct skill to fill it before phase exit.
 - `templates/feature/PLAN.md` missing → instruct user to reinstall plugin.
+
+## Constitution preflight
+
+When `.idd/CONSTITUTION.md` is present, the skill calls `tools.constitution.load_and_filter` before its primary work and passes filtered `articles[]` into every subagent dispatch budget. No-op when absent.

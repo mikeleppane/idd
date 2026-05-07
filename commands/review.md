@@ -24,3 +24,9 @@ Run the IDD review phase against the active feature.
 - `tier == "focused"` → abort: "Review is standard-tier+. Focused tier verifies directly via /idd:verify after /idd:execute."
 - `--cross-ai` flag passed → fail with: "Cross-AI review is M4. Use /idd:review without --cross-ai for M2."
 - Convergence loop fails to drive HIGH+ findings to zero in 3 cycles → halt, surface remaining findings to user, status=escalated.
+
+## Constitution preflight
+
+When `.idd/CONSTITUTION.md` is present, the skill calls `tools.constitution.load_and_filter` before its primary work and passes filtered `articles[]` into every subagent dispatch budget. No-op when absent.
+
+The heavy subagent pass is mandatory when `target=code` AND `len(articles) > 0`; otherwise self-review may miss Constitution violations and the §5.3.9 ship gate would see nothing.

@@ -28,6 +28,7 @@ The plain name `.idd/features/<id>/REVIEW.md` is reserved (do not write it). Dow
 ## Steps
 
 1. **Validate state.** Read `state.json`; abort if not in review phase.
+1.5. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<spec_anchors_or_plan_files>)`. For target=code, the resulting `articles[]` (serialized via `Article.to_budget_dict()`) MUST be included in the heavy-subagent dispatch budget. **When `len(articles) > 0` AND target=code, the heavy pass is mandatory** — it cannot be skipped on a clean self-review (closes the self-review skip gap; see Open Scoping #13). The reviewer subagent tags every article violation in REVIEW.code.md with `[constitution:A<n>]` (e.g. `[constitution:A1] HIGH src/foo.py:42 — direct session call`). Severity mapping: CRITICAL→HIGH, SHOULD→MEDIUM, MAY→LOW.
 2. **Mark active target.** Call `tools.state.set_review_target(path, review_target=<plan|code>)` so `phases.review.current_target` reflects which pass is in flight. Idempotent within an in-progress review — safe to call once per skill invocation.
 3. **Copy template** if `REVIEW.<target>.md` does not exist: write `.idd/features/<id>/REVIEW.<target>.md` from `templates/feature/REVIEW.md` with frontmatter: `spec: <feature-id>`, `target: <plan|code>`, `status: open`, `cycles: 1`.
 4. **Cycle N — Self-review pass.**

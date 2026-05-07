@@ -53,6 +53,7 @@ For every UNVERIFIABLE criterion from Layer 1 (and any criterion the user reques
 
 1. **Validate state.** `phases.execute.status == "done"`. For standard / full, also `phases.review.status == "done"` AND `.idd/features/<id>/REVIEW.code.md` exists with frontmatter `target: code`, `status: resolved`. Otherwise abort.
 2. **Transition state.** `tools.state.start_phase(path, "verify")` (idempotent).
+2a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<plan_files>)`. Pass `articles[]` to the verify subagent so UAT questions can call out CRITICAL surfaces (e.g., "verify the vault path is the only secret source per [constitution:A1]").
 3. **Run Layer 1.** Dispatch the audit subagent. Receive `{criterion, status, evidence}` list (acceptance + negative-requirement rows).
 4. **Run Layer 2** per the rules above. Capture command + exit code into VERIFICATION § Coverage rows.
 5. **Run Layer 3** for everything still UNVERIFIABLE. Walk user through each, log timestamps.

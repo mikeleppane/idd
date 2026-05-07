@@ -20,6 +20,7 @@ Active feature `state.json` has `tier in ("standard", "full")`, `phases.scenario
 
 1. **Validate state.** Read `state.json`; abort if not in plan phase.
 2. **Copy template** if PLAN.md does not exist: copy `templates/feature/PLAN.md` into `.idd/features/<id>/PLAN.md`. Set frontmatter: `spec: <feature-id>`, `slices: <integer>`, `status: ready`.
+2a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<spec_anchors>)`. Pass `articles[]` into the planner subagent budget. The planner MUST flag any slice whose `Files in scope` overlaps a CRITICAL article's domain (e.g., `repository/`, `vault.ts`, `secrets/`) under the slice's notes.
 3. **Derive vertical slices.** Each slice ships end-to-end user-visible behavior, not a horizontal layer. Slice count rule: aim for 1–4 in standard tier; > 4 means feature is too big — surface to user.
 4. **Per slice, define:**
    - **Goal:** end-to-end behavior the slice delivers.

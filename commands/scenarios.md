@@ -20,3 +20,7 @@ Run the IDD scenarios phase against the active feature.
 - `tier == "focused"` → abort with "Scenarios authoring is standard-tier+. Re-run /idd:spec --standard or use /idd:execute directly."
 - SPEC.md missing § Scenarios → abort, instruct user to re-enter spec phase.
 - BDD framework partially configured (deps without features dir) → surface ambiguity, ask user once and cache decision in `.idd/config.json` per `tools.bdd_detect`.
+
+## Constitution preflight
+
+When `.idd/CONSTITUTION.md` is present, the skill calls `tools.constitution.load_and_filter` before its primary work and passes filtered `articles[]` into every subagent dispatch budget. No-op when absent.

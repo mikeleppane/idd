@@ -19,6 +19,7 @@ Active feature `state.json` has `tier in ("standard", "full")` and `phases.spec.
 ## Steps
 
 1. **Validate state.** Read `state.json`; abort if `tier == "focused"` or `phases.scenarios.status` is not `in_progress`.
+1a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<spec_anchors>)`. Pass `articles[]` to the scenario-author subagent so Gherkin Given/When/Then steps respect article rules.
 2. **Detect BDD framework.** Call `tools.bdd_detect.detect(repo_root)`. Three outcomes:
    - **Detected** → escalate to executable `.feature` files. Record the decision in `decisions.md` (timestamp + framework + features_dir).
    - **Not detected** → markdown Gherkin only. No file emission outside SPEC.md.
