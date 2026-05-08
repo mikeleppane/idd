@@ -18,7 +18,13 @@ Produce a `.forge/features/<id>/SPEC.md` that obeys the §7.1 template and exits
 
 ## Steps
 
-1. **Capability scan (all tiers, runs first).** Compute `slug =
+1. **Capability scan (new-feature path only, all tiers, runs first).**
+   This step runs **only** when the caller invoked `/forge:spec "<idea>"` —
+   i.e., the new-feature path with idea text. **Skip this step entirely
+   when invoked as `/forge:spec --feature <id>`** (refine-existing); that
+   mode has no idea text and operates on a known feature folder.
+
+   On the new-feature path: compute `slug =
    tools.archive.slug_from_idea(idea_text)`. Read `existing =
    tools.archive.scan_existing_capabilities(repo_root)`. If `existing` is
    non-empty AND `slug in existing`, prompt the user: "Capability `<slug>`
