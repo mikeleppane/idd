@@ -304,7 +304,7 @@ def test_happy_path_no_hook(tmp_path: Path) -> None:
     # Canonical SPEC.md was updated
     assert canonical_path.is_file()
     content = canonical_path.read_text(encoding="utf-8")
-    assert "criterion 3" in content  # merged
+    assert "criterion-3" in content  # merged (dash form — H1 fix: header label in new_text)
 
     # Archive folder contains snapshots
     assert (archive_path / "canonical-pre.md").is_file()
@@ -418,8 +418,8 @@ sections [Acceptance Criteria]
     canonical_path, _ = merge_delta_proposal(tmp_path, change_id, "my-cap")
     content = canonical_path.read_text(encoding="utf-8")
 
-    assert "criterion 3" in content
-    assert "criterion 4" in content
+    assert "criterion-3" in content  # dash form — H1 fix: header label in new_text
+    assert "criterion-4" in content  # dash form — H1 fix: header label in new_text
 
 
 # ---------------------------------------------------------------------------

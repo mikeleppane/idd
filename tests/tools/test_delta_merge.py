@@ -106,7 +106,9 @@ def test_single_section_happy_path_one_add_one_remove_one_modify() -> None:
     add_op = ops[0]
     assert add_op.kind == "ADD"
     assert add_op.section == "Scenarios"
-    assert add_op.anchor == "scenario new-login"
+    # ADD anchor is always "" — the label lives in new_text (H1 fix).
+    assert add_op.anchor == ""
+    assert add_op.new_text.startswith("scenario new-login")
     assert add_op.old_text is None
 
     remove_op = ops[1]
@@ -135,7 +137,9 @@ def test_multi_section_tagged_ops() -> None:
     add_op = ops[0]
     assert add_op.kind == "ADD"
     assert add_op.section == "Scenarios"
-    assert add_op.anchor == "scenario new-feature"
+    # ADD anchor is always "" — the label lives in new_text (H1 fix).
+    assert add_op.anchor == ""
+    assert add_op.new_text.startswith("scenario new-feature")
 
     modify_op = ops[1]
     assert modify_op.kind == "MODIFY"
@@ -173,7 +177,9 @@ def test_multi_line_gherkin_add() -> None:
     assert len(ops) == 1
     op = ops[0]
     assert op.kind == "ADD"
-    assert op.anchor == "scenario user-login"
+    # ADD anchor is always "" — the label lives in new_text (H1 fix).
+    assert op.anchor == ""
+    assert op.new_text.startswith("scenario user-login")
     assert "Scenario: User login" in op.new_text
     assert "Given the login page is open" in op.new_text
     assert "When the user enters valid credentials" in op.new_text
@@ -567,7 +573,9 @@ def test_parse_proposal_body_with_no_frontmatter_separator() -> None:
     text = "## Affects\n\nsections [Scenarios]\n\n## Delta\n\n+ ADD: scenario foo\n"
     ops = parse_proposal_body(text)
     assert len(ops) == 1
-    assert ops[0].anchor == "scenario foo"
+    # ADD anchor is always "" — the label lives in new_text (H1 fix).
+    assert ops[0].anchor == ""
+    assert ops[0].new_text.startswith("scenario foo")
 
 
 def test_affects_without_sections_list_single_op_uses_empty_section() -> None:
@@ -753,9 +761,11 @@ def test_fenced_h2_inside_delta_op_does_not_truncate_section() -> None:
     # Both ADD ops must be parsed; the second one is the canary for
     # fence-aware ## handling.
     kinds = [op.kind for op in ops]
-    anchors = [op.anchor for op in ops]
     assert kinds == ["ADD", "ADD"], f"expected 2 ADD ops, got {kinds}"
-    assert anchors == ["scenario doc-example", "scenario after-fence"]
+    # ADD anchor is always "" — the label lives in new_text (H1 fix).
+    assert all(op.anchor == "" for op in ops)
+    assert ops[0].new_text.startswith("scenario doc-example")
+    assert ops[1].new_text.startswith("scenario after-fence")
 
     # First op's body must contain the fenced literal, including the
     # illustrative ## line — fence content is preserved verbatim.
@@ -793,4 +803,61 @@ def test_fenced_h2_in_affects_section_does_not_truncate() -> None:
     ops = parse_proposal_body(proposal)
     assert len(ops) == 1
     assert ops[0].section == "Scenarios"
-    assert ops[0].anchor == "scenario foo"
+    # ADD anchor is always "" — the label lives in new_text (H1 fix).
+    assert ops[0].anchor == ""
+    assert ops[0].new_text.startswith("scenario foo")
+
+
+# ---------------------------------------------------------------------------
+# H1 deep-validation — ADD op header label preserved in canonical (deep-H1)
+# ---------------------------------------------------------------------------
+
+
+def test_add_op_preserves_header_label_in_canonical() -> None:
+    """A `+ ADD: <header>\\n  <body>` op must put the header AND body into canonical.
+
+    The header label (e.g., 'scenario-3: percent rollout') must survive into
+    the canonical SPEC.md, not be silently dropped.
+    """
+    canonical = (
+        "## Affects\n"
+        "- spec: foo - sections [Scenarios]\n"
+        "## Scenarios\n"
+        "scenario-1: existing\n"
+        "## Acceptance Criteria\n"
+        "- criterion-1\n"
+    )
+    proposal = (
+        "## Affects\n"
+        "- spec: foo - sections [Scenarios]\n"
+        "## Delta\n"
+        "+ ADD: scenario-3: percent rollout\n"
+        "  - Given a flag\n"
+        "  - When code reads it\n"
+        "  - Then resolution returns false\n"
+    )
+    ops = parse_proposal_body(proposal)
+    result = apply_delta_ops(canonical, ops)
+
+    # Header label MUST appear verbatim in the canonical body.
+    assert "scenario-3: percent rollout" in result, (
+        f"ADD header label dropped from canonical:\n{result}"
+    )
+    # Body bullets must also appear.
+    assert "- Given a flag" in result
+    assert "- When code reads it" in result
+    assert "- Then resolution returns false" in result
+
+
+def test_add_op_with_empty_body_preserves_header() -> None:
+    """A `+ ADD: <header>` op with no body still puts the header into canonical."""
+    canonical = "## Affects\n- spec: foo - sections [Scenarios]\n## Scenarios\nexisting\n"
+    proposal = (
+        "## Affects\n"
+        "- spec: foo - sections [Scenarios]\n"
+        "## Delta\n"
+        "+ ADD: scenario-3: standalone header\n"
+    )
+    ops = parse_proposal_body(proposal)
+    result = apply_delta_ops(canonical, ops)
+    assert "scenario-3: standalone header" in result

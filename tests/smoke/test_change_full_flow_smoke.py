@@ -110,6 +110,12 @@ def test_happy_path_full_flow(tmp_path: Path) -> None:
     original_change_folder = repo / ".forge" / "changes" / _CHANGE_ID
     assert not original_change_folder.exists()
 
+    # H1 regression guard: ADD header label must reach canonical.
+    canonical_text = canonical_path.read_text(encoding="utf-8")
+    assert "scenario-3" in canonical_text, (
+        "ADD op anchor label must appear verbatim in merged canonical"
+    )
+
 
 # ---------------------------------------------------------------------------
 # Test 2 — Rollback on validator fail

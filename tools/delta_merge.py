@@ -309,8 +309,10 @@ def _parse_op_fields(
         return raw_anchor, old_text, new_text
     if kind == "REMOVE":
         return rest, None, ""
-    # ADD
-    return rest, None, body_text
+    # ADD — header label belongs in new_text so it reaches the canonical body.
+    # anchor is unused by _apply_add, so set it to "" to avoid confusion.
+    new_text = (rest + "\n" + body_text) if body_text else rest
+    return "", None, new_text
 
 
 def _build_ops_from_delta(

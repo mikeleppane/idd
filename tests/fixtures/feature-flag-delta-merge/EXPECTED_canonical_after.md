@@ -39,6 +39,7 @@ boolean. Resolution order: in-process override > env var > default.
 - When code reads the flag
 - Then resolution returns the configured default
 
+scenario-3: percent rollout
   - Given a feature flag `foo` with percent rollout `50`
   - When 1000 unique users read the flag
   - Then approximately 500 receive `true` (within ±5% tolerance)
