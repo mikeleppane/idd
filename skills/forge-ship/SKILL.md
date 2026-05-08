@@ -6,6 +6,48 @@ disable-model-invocation: true
 
 # FORGE Ship
 
+## Mode selection
+
+`/forge:ship` accepts an optional `--change <change_id>` flag.
+
+- **Without `--change`** — feature ship (default). Run the existing
+  feature-ship lifecycle below: validate phase=ship, parse REVIEW.code.md,
+  apply Constitution gate, call `tools.archive.ship_feature`. This is the
+  M2/M3-P3 path; no behaviour change.
+- **With `--change <change_id>`** — delta merge. Skip the entire feature
+  lifecycle and dispatch to the delta-merge subroutine below. The
+  Constitution gate (P3 §5.3.9) does NOT apply — there is no feature
+  folder, no REVIEW.code.md, no `articles[]` to surface.
+
+## Mode: delta merge (`--change <id>`)
+
+1. **Validate `change_id` slug.** Use `tools.archive._CHANGE_ID_RE` /
+   `tools.archive._validate_change_id` (the same helper the merger uses
+   in preflight) — abort early on malformed ids before reading any file.
+2. **Read proposal frontmatter.** Open
+   `.forge/changes/<change_id>/proposal.md`; extract `affects_capability`
+   from the YAML frontmatter. This is the `capability` argument the merger
+   needs.
+3. **Construct hook.**
+   `hook = tools.archive._mark_change_merged_hook(proposal_path)`.
+4. **Call the merger.**
+   `tools.archive.merge_delta_proposal(repo_root, change_id, capability,
+   pre_archive_hook=hook)`. The hook is part of the merge transaction:
+   `merge_delta_proposal` snapshots `proposal.md` before invoking the
+   hook, and any post-hook failure restores it from `proposal-pre.md`.
+5. **On success**, render the banner:
+   ```
+   Canonical updated:   <canonical_spec_path>
+   Archived to:         <archive_path>
+   Snapshots retained:  <archive>/canonical-pre.md, <archive>/proposal-pre.md
+   ```
+   Do NOT advance any feature state.json (none exists for change proposals).
+6. **On `ArchiveError`**, surface the exception's message verbatim to the
+   user. Do not retry automatically. Failures are documented as recoverable
+   per the merger contract; the user inspects the error, fixes the cause
+   (e.g., adjusts the proposal, re-validates, re-flips status to
+   `approved`), and re-invokes `/forge:ship --change <change_id>`.
+
 ## Goal
 
 Promote a verified feature to a canonical capability and move the feature folder to the archive.

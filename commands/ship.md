@@ -7,6 +7,18 @@ description: Run the ship phase against the active feature — write or refuse t
 
 Run the FORGE ship phase against the active feature.
 
+## Args
+
+- `--change <change_id>` — delta-merge mode. Routes the slash command to
+  the merge-delta-proposal subroutine (see `skills/forge-ship/SKILL.md`).
+  When set, skips the feature-ship lifecycle (no Constitution gate, no
+  REVIEW.code.md parsing, no feature state advance). Calls
+  `tools.archive.merge_delta_proposal` with
+  `_mark_change_merged_hook(proposal_path)` as the
+  `pre_archive_hook`. On success, prints the canonical path, archive
+  path, and the two retained snapshots. On `ArchiveError`, surfaces the
+  error and exits without retry.
+
 ## Behavior
 
 1. Determine active feature.
