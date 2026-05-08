@@ -347,6 +347,13 @@ _RESEARCH_SKIPPED_ENTRY: dict[str, str] = {
     "reason": "M3 deferred — manual research acceptable",
 }
 
+# Seed-time entry phases accepted by ``create_feature_folder``.  ``"spec"`` is
+# the P6.1 focused/standard path; ``"refine"`` is the P6.2 full-tier path.
+# Any other lifecycle phase value (e.g. ``"plan"``, ``"execute"``) is post-
+# seed territory and is rejected here so /forge:do callers cannot accidentally
+# create a folder mid-lifecycle.
+_VALID_SEED_PHASES: frozenset[str] = frozenset({"spec", "refine"})
+
 
 def _render_seed_spec_md(template: str, *, feature_id: str, tier: str) -> str:
     """Substitute the four placeholders in templates/feature/SPEC.md.
@@ -379,15 +386,17 @@ def create_feature_folder(
     *,
     feature_id: str,
     tier: str,
+    current_phase: str = "spec",
     schema_path: Path | None = None,
 ) -> Path:
     """Seed a fresh ``.forge/features/<feature_id>/`` folder for ``/forge:do``.
 
     Composes the three ``templates/feature/`` files (state.json, SPEC.md,
     decisions.md) into a new feature folder with substitutions for
-    ``feature_id`` and ``tier``.  ``current_phase`` is hard-locked to
-    ``"spec"`` for M3 P6.1 (P6.2 will reintroduce a parameter when full-tier
-    routing ships).
+    ``feature_id`` and ``tier``.  The ``current_phase`` keyword controls the
+    seed entry: ``"spec"`` (P6.1, focused/standard) or ``"refine"`` (P6.2,
+    full-tier only).  Any other lifecycle phase is post-seed territory and is
+    refused.
 
     Per-file write is atomic via ``atomic_replace`` (tempfile +
     ``Path.replace`` on the same directory — POSIX-rename semantics).
@@ -403,8 +412,8 @@ def create_feature_folder(
     State body shape (per spec §5.3.2 step 6 + plan deviation #4):
 
       - ``feature_id`` / ``tier`` (validated above)
-      - ``current_phase = "spec"``
-      - ``phases.spec = {"status": "in_progress", "started_at": <utc-iso>}``
+      - ``current_phase`` (``"spec"`` or ``"refine"``)
+      - ``phases.<current_phase> = {"status": "in_progress", "started_at": <utc-iso>}``
       - ``skipped = [{"phase": "research", "reason": "M3 deferred — manual research acceptable"}]``
       - ``deviations = []``
       - ``commits = []``
@@ -412,10 +421,22 @@ def create_feature_folder(
     The ``routing`` block is **not** written here — ``record_routing_decision``
     writes it next as a separate validated step.
 
+    Validation order (locked):
+        1. ``feature_id`` slug format.
+        2. ``tier`` membership in ``VALID_TIERS``.
+        3. ``current_phase`` membership in ``{"spec", "refine"}``.
+        4. ``current_phase == "refine"`` ⇒ ``tier == "full"`` (refine is
+           full-tier-only per the locked P4 deep-followup decision).
+        5. Folder collision via ``feature_folder_exists``.
+
     Args:
         repo_root: Repository root containing the ``.forge/`` tree.
         feature_id: Feature folder name in YYYY-MM-DD-slug form.
         tier: One of ``VALID_TIERS`` (focused/standard/full).
+        current_phase: Seed entry phase; one of ``{"spec", "refine"}``.
+            Defaults to ``"spec"`` to preserve the P6.1 focused/standard
+            contract.  ``"refine"`` opens the P6.2 full-tier path and
+            additionally requires ``tier == "full"``.
         schema_path: Optional path to ``schemas/state.schema.json``.  When
             given, ``write_state`` validates the seed payload before any disk
             mutation.
@@ -425,7 +446,9 @@ def create_feature_folder(
 
     Raises:
         ArchiveError: ``feature_id`` slug malformed, ``tier`` not in
-            ``VALID_TIERS``, or the feature folder already exists.
+            ``VALID_TIERS``, ``current_phase`` outside ``{"spec","refine"}``,
+            ``current_phase == "refine"`` without ``tier == "full"``, or the
+            feature folder already exists.
         StateError: Seed payload fails schema validation when
             ``schema_path`` is given (folder rmtree'd before re-raise).
         OSError: Per-file write failure (folder rmtree'd before re-raise).
@@ -433,6 +456,12 @@ def create_feature_folder(
     _validate_feature_id(feature_id)
     if tier not in VALID_TIERS:
         raise ArchiveError(f"invalid tier: {tier!r}; must be one of {VALID_TIERS}")
+    if current_phase not in _VALID_SEED_PHASES:
+        raise ArchiveError(
+            f"invalid current_phase {current_phase!r}; must be one of {{'spec', 'refine'}}"
+        )
+    if current_phase == "refine" and tier != "full":
+        raise ArchiveError(f"current_phase 'refine' requires tier 'full'; got tier {tier!r}")
     if feature_folder_exists(repo_root, feature_id):
         raise ArchiveError(f"feature folder already exists: {feature_id!r}")
 
@@ -444,8 +473,8 @@ def create_feature_folder(
         seed_state: dict[str, object] = {
             "feature_id": feature_id,
             "tier": tier,
-            "current_phase": "spec",
-            "phases": {"spec": {"status": "in_progress", "started_at": _utc_now_iso()}},
+            "current_phase": current_phase,
+            "phases": {current_phase: {"status": "in_progress", "started_at": _utc_now_iso()}},
             "skipped": [dict(_RESEARCH_SKIPPED_ENTRY)],
             "deviations": [],
             "commits": [],

@@ -287,3 +287,104 @@ def test_create_feature_folder_decisions_md_copied_byte_for_byte(tmp_path: Path)
     written = (tmp_path / ".forge" / "features" / feature_id / "decisions.md").read_bytes()
     expected = TEMPLATE_DECISIONS.read_bytes()
     assert written == expected
+
+
+# ---------------------------------------------------------------------------
+# current_phase kwarg — P6.2 full-tier refine seed
+# ---------------------------------------------------------------------------
+
+
+def test_create_feature_folder_full_tier_refine_seed_success(tmp_path: Path) -> None:
+    """Full tier + current_phase='refine' → seed validates; refine block in_progress."""
+    feature_id = "2026-05-08-full-refine"
+
+    folder = create_feature_folder(
+        tmp_path,
+        feature_id=feature_id,
+        tier="full",
+        current_phase="refine",
+        schema_path=SCHEMA_PATH,
+    )
+
+    assert folder.is_dir()
+    payload = _read_state(folder)
+    assert payload["current_phase"] == "refine"
+    assert payload["tier"] == "full"
+    assert payload["phases"]["refine"]["status"] == "in_progress"
+    started_at = payload["phases"]["refine"]["started_at"]
+    assert isinstance(started_at, str)
+    assert ISO8601_UTC_RE.match(started_at), f"not ISO 8601 UTC: {started_at!r}"
+
+
+def test_create_feature_folder_refine_with_focused_tier_raises(tmp_path: Path) -> None:
+    """current_phase='refine' + tier='focused' → ArchiveError; no folder."""
+    feature_id = "2026-05-08-refine-focused"
+    with pytest.raises(ArchiveError, match="current_phase 'refine' requires tier 'full'"):
+        create_feature_folder(
+            tmp_path,
+            feature_id=feature_id,
+            tier="focused",
+            current_phase="refine",
+            schema_path=SCHEMA_PATH,
+        )
+    assert not (tmp_path / ".forge" / "features" / feature_id).exists()
+
+
+def test_create_feature_folder_refine_with_standard_tier_raises(tmp_path: Path) -> None:
+    """current_phase='refine' + tier='standard' → ArchiveError; no folder."""
+    feature_id = "2026-05-08-refine-standard"
+    with pytest.raises(ArchiveError, match="current_phase 'refine' requires tier 'full'"):
+        create_feature_folder(
+            tmp_path,
+            feature_id=feature_id,
+            tier="standard",
+            current_phase="refine",
+            schema_path=SCHEMA_PATH,
+        )
+    assert not (tmp_path / ".forge" / "features" / feature_id).exists()
+
+
+@pytest.mark.parametrize("bad_phase", ["plan", "execute", ""])
+def test_create_feature_folder_invalid_current_phase_raises(tmp_path: Path, bad_phase: str) -> None:
+    """current_phase outside {'spec','refine'} → ArchiveError; no folder."""
+    feature_id = f"2026-05-08-bad-phase-{bad_phase or 'empty'}"
+    with pytest.raises(ArchiveError, match="invalid current_phase"):
+        create_feature_folder(
+            tmp_path,
+            feature_id=feature_id,
+            tier="full",
+            current_phase=bad_phase,
+            schema_path=SCHEMA_PATH,
+        )
+    assert not (tmp_path / ".forge" / "features" / feature_id).exists()
+
+
+def test_create_feature_folder_default_current_phase_is_spec(tmp_path: Path) -> None:
+    """Calling without current_phase= preserves P6.1 contract: phases.spec block."""
+    feature_id = "2026-05-08-default-spec"
+    create_feature_folder(
+        tmp_path,
+        feature_id=feature_id,
+        tier="focused",
+        schema_path=SCHEMA_PATH,
+    )
+    payload = _read_state(tmp_path / ".forge" / "features" / feature_id)
+    assert payload["current_phase"] == "spec"
+    assert "spec" in payload["phases"]
+    assert "refine" not in payload["phases"]
+
+
+def test_create_feature_folder_full_tier_refine_phase_block_only_has_refine(
+    tmp_path: Path,
+) -> None:
+    """Full-tier refine seed: phases dict has exactly {'refine'} — no leaked spec."""
+    feature_id = "2026-05-08-refine-only"
+    create_feature_folder(
+        tmp_path,
+        feature_id=feature_id,
+        tier="full",
+        current_phase="refine",
+        schema_path=SCHEMA_PATH,
+    )
+    payload = _read_state(tmp_path / ".forge" / "features" / feature_id)
+    assert set(payload["phases"].keys()) == {"refine"}
