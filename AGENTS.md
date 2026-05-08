@@ -23,6 +23,7 @@ This file lets non-Claude tools (Cursor, Aider, Codex) discover the same FORGE s
 | `forge-subagent-dispatch` | `skills/forge-subagent-dispatch/SKILL.md` | default | Helper rules for dispatching context-bounded subagents. |
 | `forge-constitution`        | `skills/forge-constitution/SKILL.md`        | doc-only | Documents the loader+filter contract. Phase skills invoke `tools.constitution.load_and_filter` directly; this skill has `disable-model-invocation: true`. |
 | `forge-amend-constitution`  | `skills/forge-amend-constitution/SKILL.md`  | explicit | $EDITOR-driven Constitution edits with atomic-pair (Constitution + decisions.md) write, semver bump; `--bootstrap` mode seeds a starter Constitution from project signals. |
+| `forge-change`              | `skills/forge-change/SKILL.md`              | explicit | Author a delta proposal against a canonical capability spec; routed from `/forge:spec` capability scan or invoked directly via `/forge:change`. |
 
 "Default" auto-load = Claude Code may invoke based on description match. "Explicit" = `disable-model-invocation: true` in frontmatter; only invoked through commands or by name.
 
@@ -37,7 +38,8 @@ This file lets non-Claude tools (Cursor, Aider, Codex) discover the same FORGE s
 | `/forge:review`    | `commands/review.md`    | Run the review phase against the active feature. `--target plan` (default after crucible) or `--target code` (default after execute). Cross-AI review is M4 territory. |
 | `/forge:execute`   | `commands/execute.md`   | Run the execute phase against the active feature. |
 | `/forge:verify`    | `commands/verify.md`    | Run the verify phase against the active feature. |
-| `/forge:ship`      | `commands/ship.md`      | Run the ship phase: write the canonical capability SPEC.md and archive the feature. First-ship only in M2; delta proposals are M3+. |
+| `/forge:ship`      | `commands/ship.md`      | Run the ship phase: write the canonical capability SPEC.md and archive the feature. First-ship only in M2; `--change <id>` merges an approved delta proposal (M3+). |
+| `/forge:change`    | `commands/change.md`    | Author a delta proposal for an existing canonical capability. Args: `[--capability <slug>] [<description>]`. |
 | `/forge:next`      | `commands/next.md`      | Show or run the next phase command for the active feature. Flags: `--feature <id>`, `--run`. |
 | `/forge:status`    | `commands/status.md`    | One-line feature status: phase, tier, last commit. Flags: `--feature <id>`, `--verbose`. |
 | `/forge:validate`  | `commands/validate.md`  | Run the structural and semantic validator. Flags: `--target <spec\|plan\|delta\|constitution\|ship\|health\|scenarios\|anchors\|spec-semantic\|plan-tasks\|verified-deps\|deviations\|all>`, optional path, `--repo-root <path>`, `--check-registries` (off by default; live registry probes for `verified-deps` / `all`). Exit 0 / 1 (BLOCK\|HIGH) / 2 (usage). |
@@ -71,6 +73,8 @@ Subagent dispatches that touch Python code MUST cite all four in the dispatch br
 The `hooks/` directory contains a `PreToolUse` hook that enforces the FORGE subagent context-budget contract. In Claude Code it is wired automatically via `.claude-plugin/plugin.json`. In other tools, run `python3 hooks/check_budget.py` manually before each subagent dispatch.
 
 The PreToolUse budget hook is permissive on the optional `articles[]` field carrying filtered Constitution articles for subagent context (M3 P3). Tests in `tests/hooks/test_check_budget_articles.py` pin this permissiveness.
+
+**M3 P5 — Delta proposals.** `tools.archive.slug_from_idea` is the single source of truth for capability slug semantics; all slug derivation routes through it. `scan_existing_capabilities` feeds the `/forge:spec` capability scan: when the derived slug already matches a canonical spec, the scan routes to `/forge:change` before any feature folder is created. `merge_delta_proposal` is a transactional helper (snapshot → apply → validate → hook → atomic-write → archive-move, with rollback at every step) for applying approved delta proposals to canonical capability specs; `ship_feature` is unchanged — `--change <id>` on `/forge:ship` invokes the new helper instead. See `skills/forge-change/SKILL.md` for the full authoring lifecycle.
 
 ## Tool Mapping
 

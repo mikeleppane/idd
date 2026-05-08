@@ -157,6 +157,8 @@ NOT a machine BLOCK gate (D-4 / D-4a):
   enforcement** in M3. M4 will add Detection-driven BLOCK gates that close
   the agent-side gap.
 
+**Delta proposals (M3).** Once a capability has shipped, change it via `/forge:change` instead of forking a new feature. The skill drafts a proposal under `.forge/changes/<id>/`, validates the structural shape via `/forge:validate --target delta`, and the user flips frontmatter to `status: approved`. Merging the change happens at `/forge:ship --change <id>`, which delegates to `tools.archive.merge_delta_proposal` — a transactional helper that snapshots the canonical SPEC.md and the proposal, applies the ADD/REMOVE/MODIFY ops in memory, validates the merged body against the capability-spec contract, runs a status-flip hook, atomic-writes the merged canonical, and archives the change folder. Any failure rolls back via the snapshots. `/forge:spec` runs a capability scan on every idea and routes to `/forge:change` when the slug already exists.
+
 ---
 
 ## Install (Claude Code)
