@@ -46,6 +46,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from tools.constitution import Article
+from tools.constitution_amend import atomic_replace, ensure_decisions_file
 
 
 class ShipGateError(RuntimeError):
@@ -365,6 +366,21 @@ def make_acknowledgement_hook(
     If preflight fails, the hook never runs — no ghost deviation (Open
     Scoping #14). Hook failure rolls back ship_feature's canonical write.
 
+    Concurrency note: state.json mutation goes through an atomic
+    tmpfile+rename pair (``tools.constitution_amend.atomic_replace``) so a
+    crash mid-write leaves the canonical file pointed at the previous valid
+    payload, not a partial mix. The two-sided idempotency check at the top
+    of the closure makes safe retries deterministic — a second call after a
+    crashed state.json write detects nothing in deviations[], finds the
+    orphan decisions.md heading, and completes only the state.json write.
+
+    Decisions.md bootstrap: if ``decisions_path`` is absent the closure
+    creates it with the standard ``# Decisions`` H1 via the shared
+    ``ensure_decisions_file`` helper before appending the ACK heading. This
+    matches what the amend lifecycle produces so a fresh feature folder
+    never ends up with a header-less decisions.md that downstream
+    validators reject.
+
     Combine with ``_mark_done`` in idd-ship via::
 
         def composed(source: Path) -> None:
@@ -438,6 +454,10 @@ def make_acknowledgement_hook(
         # the reverse — state.json deviation without the decisions heading —
         # is a non-recoverable BLOCK on the next /idd:validate run.
         if not already_in_decisions:
+            # Bootstrap decisions.md with `# Decisions` H1 if absent so a
+            # fresh feature folder ends up with the same shape the amend
+            # lifecycle produces. Shared helper keeps both paths in sync.
+            ensure_decisions_file(decisions_path)
             body_lines = [
                 "",
                 f"## {now.date().isoformat()} — {_DECISIONS_HEADING_PREFIX}",
@@ -460,10 +480,12 @@ def make_acknowledgement_hook(
             with decisions_path.open("a", encoding="utf-8") as fh:
                 fh.write("\n".join(body_lines) + "\n")
 
-        # Step 2: mutate state.json. If this raises (ENOSPC, permission, …)
-        # the caller's outer transaction rolls back and a retry will find the
-        # decisions heading already present (skipped above) and only complete
-        # the state.json write — exactly one deviation, exactly one heading.
+        # Step 2: mutate state.json via atomic-replace (tmpfile + rename).
+        # Direct `state_path.write_text(...)` could leave a half-written
+        # state.json on a crash mid-write; the rename is the single moment
+        # the canonical name flips. On a retry after partial failure, the
+        # idempotency check above (already_in_state) short-circuits before
+        # reaching this line.
         deviations.append(
             {
                 "phase": "ship",
@@ -472,6 +494,6 @@ def make_acknowledgement_hook(
                 "logged_at": iso,
             }
         )
-        state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        atomic_replace(state_path, json.dumps(payload, indent=2) + "\n")
 
     return _record

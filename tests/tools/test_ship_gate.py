@@ -243,12 +243,16 @@ def test_ack_hook_recovers_from_state_write_failure(
     findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
     gate, _w, _i = sg.partition_by_article_level(findings, _articles())
 
-    # First attempt: decisions write succeeds, state write raises.
+    # First attempt: decisions write succeeds, state write raises. After
+    # the M4 atomic-replace migration the state write hits the sibling
+    # tmpfile (`state.json.tmp`) before the rename, so target the tmpfile
+    # name rather than state.json itself.
+    state_tmp_path = state_path.with_suffix(state_path.suffix + ".tmp")
     original_write = Path.write_text
     failures = {"count": 0}
 
     def _failing_write(self: Path, *args: object, **kwargs: object) -> int:
-        if self == state_path and failures["count"] == 0:
+        if self == state_tmp_path and failures["count"] == 0:
             failures["count"] += 1
             raise OSError("simulated state write failure")
         return original_write(self, *args, **kwargs)  # type: ignore[arg-type]
@@ -422,6 +426,115 @@ def test_partition_routes_block_severity_should_finding_to_warn() -> None:
     gate, warn, info = sg.partition_by_article_level(findings, _articles())
     assert gate == [] and info == []
     assert {f.article_id for f in warn} == {"A4"}
+
+
+def test_ack_hook_writes_state_atomically_via_tmpfile_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M4 — state.json write must be atomic (tmpfile + rename), not direct rewrite.
+
+    Pre-fix the ACK hook called `state_path.write_text(...)` directly, so a
+    crash mid-write left state.json half-written and unrecoverable. With an
+    atomic-replace, an injected failure on write_text against `state.json`
+    itself must NEVER happen — the hook always writes to a sibling tempfile
+    first and then renames into place. Track every write_text invocation so
+    we can assert the final write went through a `*.tmp` neighbour rather
+    than the canonical name.
+    """
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "feature_id": "2026-05-07-demo",
+                "tier": "full",
+                "current_phase": "ship",
+                "phases": {"ship": {"status": "in_progress", "started_at": "2026-05-07T00:00:00Z"}},
+                "skipped": [],
+                "deviations": [],
+                "commits": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    decisions_path = tmp_path / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+    findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
+    gate, _w, _i = sg.partition_by_article_level(findings, _articles())
+
+    seen_writes: list[Path] = []
+    original_write = Path.write_text
+
+    def _track_write(self: Path, *args: object, **kwargs: object) -> int:
+        seen_writes.append(self)
+        return original_write(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "write_text", _track_write)
+
+    hook = sg.make_acknowledgement_hook(
+        state_path=state_path,
+        decisions_path=decisions_path,
+        gate_findings=gate,
+        articles=_articles(),
+        now=datetime(2026, 5, 7, 12, 0, 0, tzinfo=UTC),
+    )
+    hook(tmp_path)
+
+    # No direct write_text call landed on state.json after the hook started;
+    # the hook wrote to a sibling tempfile and renamed via Path.replace.
+    state_writes = [p for p in seen_writes if p == state_path]
+    assert state_writes == [], (
+        f"state.json must be written via atomic-replace, got direct writes: {state_writes}"
+    )
+    # And the final state.json reflects the deviation.
+    final = json.loads(state_path.read_text(encoding="utf-8"))
+    assert final["deviations"][-1]["resolution"] == "user_acknowledged"
+
+
+def test_ack_hook_creates_decisions_file_with_h1_header_when_missing(tmp_path: Path) -> None:
+    """M5 — auto-created decisions.md must include the `# Decisions` H1.
+
+    Pre-fix the hook used `decisions_path.open("a", ...)` which created the
+    file (under POSIX append-create semantics) without any header, leaving a
+    headerless decisions.md that downstream `validate_decisions` could
+    reject. Both the amend lifecycle and the ACK hook must produce a
+    decisions.md with the standard H1 when bootstrapping the file.
+    """
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "feature_id": "2026-05-07-demo",
+                "tier": "full",
+                "current_phase": "ship",
+                "phases": {"ship": {"status": "in_progress", "started_at": "2026-05-07T00:00:00Z"}},
+                "skipped": [],
+                "deviations": [],
+                "commits": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Decisions.md DOES NOT EXIST at start; hook must bootstrap it with H1.
+    decisions_path = tmp_path / "decisions.md"
+    assert not decisions_path.exists()
+
+    findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
+    gate, _w, _i = sg.partition_by_article_level(findings, _articles())
+
+    hook = sg.make_acknowledgement_hook(
+        state_path=state_path,
+        decisions_path=decisions_path,
+        gate_findings=gate,
+        articles=_articles(),
+        now=datetime(2026, 5, 7, 12, 0, 0, tzinfo=UTC),
+    )
+    hook(tmp_path)
+
+    text = decisions_path.read_text(encoding="utf-8")
+    assert text.startswith("# Decisions\n"), (
+        f"auto-created decisions.md must lead with `# Decisions` H1, got {text[:64]!r}"
+    )
+    assert "Constitution finding acknowledged at ship" in text
 
 
 def test_ack_hook_raises_ship_gate_error_on_corrupt_state_json(tmp_path: Path) -> None:

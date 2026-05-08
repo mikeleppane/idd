@@ -201,12 +201,14 @@ def _format_decisions_entry(*, today: date, new_version: str, scope: str, body: 
     )
 
 
-def _ensure_decisions_file(decisions_path: Path) -> bool:
-    """Create ``decisions.md`` with the standard header if absent.
+def ensure_decisions_file(decisions_path: Path) -> bool:
+    """Create ``decisions.md`` with the standard ``# Decisions`` H1 header if absent.
 
-    Constitution amends are repo-level decisions and the validator's
-    deviations cross-ref needs a decisions.md to exist. Auto-create on first
-    amend rather than crash mid-lifecycle.
+    Constitution amends and ACK-hook deviation entries are repo-level
+    decisions and the validator's deviations cross-ref needs a decisions.md
+    to exist. Auto-create on first call rather than crash mid-lifecycle.
+    Both the amend lifecycle and the ship-time ACK hook share this helper so
+    a freshly-bootstrapped decisions.md always starts with the same header.
 
     Returns:
         True when the file was created in this call (rollback callers must
@@ -220,16 +222,25 @@ def _ensure_decisions_file(decisions_path: Path) -> bool:
     return True
 
 
-def _atomic_replace(target: Path, body: str) -> None:
+def atomic_replace(target: Path, body: str) -> None:
     """Write ``body`` to ``target`` via ``Path.replace`` from a sibling tempfile.
 
     POSIX semantics: rename within the same directory is atomic, so any
     crash leaves either the old or the new file intact, never a partial.
+    Concurrent retries are safe — the tmpfile name is deterministic from
+    ``target.name + '.tmp'``, so one retry path overwrites the previous
+    tmpfile and the rename remains the single mutation that flips the
+    canonical name.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(target.suffix + ".tmp")
     tmp.write_text(body, encoding="utf-8")
     tmp.replace(target)
+
+
+# Backwards-compatible private aliases for in-module call sites.
+_ensure_decisions_file = ensure_decisions_file
+_atomic_replace = atomic_replace
 
 
 def amend_constitution(
