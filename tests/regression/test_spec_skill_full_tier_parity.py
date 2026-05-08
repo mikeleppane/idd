@@ -96,3 +96,22 @@ def test_spec_skill_focused_standard_domain_unchanged() -> None:
     assert "existing behavior" in _BODY, (
         "SKILL.md Domain bullet must label the focused/standard rule as 'existing behavior'"
     )
+
+
+# ---------------------------------------------------------------------------
+# 7. Placeholder comparator locked (deep-M3): regex form + strip rule
+# ---------------------------------------------------------------------------
+
+
+def test_spec_skill_locks_placeholder_comparator() -> None:
+    assert "^_TBD: filled by /forge:domain_?$" in _BODY, (
+        "SKILL.md must lock the placeholder comparator regex so partial fills "
+        "and whitespace drift are rejected (T11 deep-M3)"
+    )
+    assert "strip leading and trailing whitespace" in _BODY, (
+        "SKILL.md must specify whitespace stripping as part of the comparator"
+    )
+    assert "Backslash-escaped" in _BODY, (
+        "SKILL.md must call out that backslash-escaped placeholder variants do "
+        "not match (deep-M3 drift mode)"
+    )
