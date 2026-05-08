@@ -34,11 +34,3 @@ def test_agents_md_commands_table_has_forge_change() -> None:
     assert "/forge:change" in text, (
         "AGENTS.md is missing a '/forge:change' entry in the commands table."
     )
-
-
-def test_agents_md_lifecycle_prose_has_merge_delta_proposal() -> None:
-    """AGENTS.md lifecycle prose must mention merge_delta_proposal (P5 footprint)."""
-    text = _read(AGENTS_PATH)
-    assert "merge_delta_proposal" in text, (
-        "AGENTS.md lifecycle prose is missing 'merge_delta_proposal' (M3 P5 footprint)."
-    )

@@ -47,7 +47,7 @@ Install the plugin (see below), then drive a feature through the lifecycle with 
 
 `/forge:do` runs preflights, scans for capability conflicts, picks a tier, and seeds the per-feature folder under `.forge/features/<id>/`. It then dispatches the next slash command in the chosen tier.
 
-Prefer to drive each phase manually? Each phase has its own slash command (`/forge:refine`, `/forge:spec`, `/forge:domain`, `/forge:scenarios`, `/forge:plan`, `/forge:crucible`, `/forge:review`, `/forge:execute`, `/forge:verify`, `/forge:ship`) — research is currently inline within `/forge:spec` preflight. Each command refuses to run unless the previous phase is complete — the on-disk state machine is the source of truth.
+Prefer to drive each phase manually? Each phase has its own slash command (`/forge:refine`, `/forge:spec`, `/forge:domain`, `/forge:scenarios`, `/forge:plan`, `/forge:crucible`, `/forge:review`, `/forge:execute`, `/forge:verify`, `/forge:ship`) — research is currently skipped (recorded in `state.json.skipped`); manual research before spec is acceptable. Each command refuses to run unless the previous phase is complete — the on-disk state machine is the source of truth.
 
 ---
 

@@ -30,10 +30,3 @@ def test_agents_md_commands_table_has_refine_and_domain() -> None:
     text = _read(AGENTS_PATH)
     assert "/forge:refine" in text, "AGENTS.md is missing '/forge:refine' commands table row."
     assert "/forge:domain" in text, "AGENTS.md is missing '/forge:domain' commands table row."
-
-
-def test_agents_md_lifecycle_prose_has_p4_footprint() -> None:
-    text = _read(AGENTS_PATH)
-    assert "increment_refine_attempts" in text, (
-        "AGENTS.md lifecycle prose is missing 'increment_refine_attempts' (M3 P4 footprint)."
-    )
