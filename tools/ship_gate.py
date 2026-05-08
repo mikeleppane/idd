@@ -59,6 +59,11 @@ _HEADER_RE = re.compile(r"^\|\s*ID\s*\|", re.IGNORECASE)
 # unrelated `| ID | ... |` tables in the preamble cannot disarm the parser.
 _FINDINGS_HEADING_RE = re.compile(r"^#\s+Findings\s*$", re.IGNORECASE)
 _VALID_STATUS_VALUES: frozenset[str] = frozenset({"open", "resolved", "accepted-risk"})
+# Closed 4-value enum from the REVIEW.md template. Keeping severity as a
+# closed vocabulary makes routing decisions deterministic and makes typos
+# loud — a `severity='Lo'` on a CRITICAL-tagged row otherwise silently bypassed
+# the gate via the old `severity in {BLOCK,HIGH,MEDIUM}` short-circuit.
+_VALID_SEVERITY_VALUES: frozenset[str] = frozenset({"BLOCK", "HIGH", "MEDIUM", "LOW"})
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -102,7 +107,10 @@ def parse_review_findings(path: Path) -> list[ShipFinding]:
     authored before the column was added still surfaces findings. An
     unrecognized Status cell value (anything outside
     ``{open, resolved, accepted-risk}``, case-insensitive) raises
-    ``ShipGateError`` so a typo cannot silently filter the row.
+    ``ShipGateError`` so a typo cannot silently filter the row. Severity
+    cells must come from the closed ``{BLOCK, HIGH, MEDIUM, LOW}`` vocabulary
+    (REVIEW.md template); typos and case mismatches raise ``ShipGateError``
+    instead of silently bypassing the gate.
 
     Args:
         path: Path to REVIEW.code.md.
@@ -112,7 +120,8 @@ def parse_review_findings(path: Path) -> list[ShipFinding]:
         entry per tag in each matching row.
 
     Raises:
-        ShipGateError: When a row's Status cell holds an unrecognized value.
+        ShipGateError: When a row's Status or Severity cell holds an
+            unrecognized value.
     """
     if not path.exists():
         return []
@@ -185,6 +194,11 @@ def _findings_from_row(
             raise ShipGateError(f"unrecognized Status value: {cells[status_col]!r} in {source}")
         if row_status != "open":
             return []
+    # Severity vocabulary is a closed 4-value enum from the REVIEW.md template.
+    # Validating here (instead of in the partitioner) makes typos loud and
+    # lets `partition_by_article_level` route purely on article level.
+    if severity not in _VALID_SEVERITY_VALUES:
+        raise ShipGateError(f"unrecognized Severity value: {severity!r} in {source}")
     # findall keeps every tag in declaration order; one ShipFinding per tag
     # so each routes through partition_by_article_level on its own merits.
     tag_ids = _TAG_RE.findall(message)
@@ -203,7 +217,16 @@ def partition_by_article_level(
     findings: Iterable[ShipFinding],
     articles: list[Article],
 ) -> tuple[list[ShipFinding], list[ShipFinding], list[ShipFinding]]:
-    """Bucket findings into (gate, warn, info).
+    """Bucket findings into (gate, warn, info) by ARTICLE LEVEL alone.
+
+    Severity is treated as advisory metadata at this layer — the SKILL
+    contract is "CRITICAL article -> gate, SHOULD article -> warn, MAY
+    article -> info" regardless of the reviewer-assigned severity. Routing
+    purely on article level closes a hole where a `severity='LOW'` cell on a
+    CRITICAL article silently bypassed the gate via an old short-circuit.
+    The closed severity vocabulary itself is enforced upstream in
+    ``parse_review_findings`` so unrecognized values cannot reach the
+    partitioner.
 
     Args:
         findings: Iterable of parsed ``ShipFinding`` rows.
@@ -211,12 +234,10 @@ def partition_by_article_level(
 
     Returns:
         Tuple ``(gate, warn, info)``:
-            - ``gate``: severity in ``{BLOCK, HIGH, MEDIUM}`` AND article level
-              == ``CRITICAL``.
-            - ``warn``: severity in ``{BLOCK, HIGH, MEDIUM}`` AND article level
-              == ``SHOULD``.
-            - ``info``: everything else with a known article id, plus findings
-              whose article id is not in ``articles``.
+            - ``gate``: article level == ``CRITICAL``.
+            - ``warn``: article level == ``SHOULD``.
+            - ``info``: article level == ``MAY``, plus findings whose
+              article id is not present in ``articles`` (unknown article).
     """
     by_id = {a.id: a for a in articles}
     gate: list[ShipFinding] = []
@@ -225,10 +246,6 @@ def partition_by_article_level(
     for f in findings:
         article = by_id.get(f.article_id) if f.article_id else None
         if article is None:
-            info.append(f)
-            continue
-        meets_severity = f.severity in {"BLOCK", "HIGH", "MEDIUM"}
-        if not meets_severity:
             info.append(f)
             continue
         if article.level == "CRITICAL":

@@ -88,9 +88,17 @@ def test_partition_by_article_level_uses_loaded_articles() -> None:
     assert info == []
 
 
-def test_partition_filters_below_medium() -> None:
+def test_partition_routes_by_article_level_independent_of_severity() -> None:
+    """Article level is the routing key; severity is advisory metadata.
+
+    Forcing F-2 to LOW must STILL route to warn because A4 is SHOULD; F-1
+    stays in gate because A1 is CRITICAL. Pre-H2-fix this test asserted the
+    opposite contract (severity bucketed BLOCK/HIGH/MEDIUM into gate/warn,
+    LOW into info) — that contract violated the SKILL "CRITICAL article ->
+    gate" guarantee whenever the reviewer typed a low severity for a
+    CRITICAL-tagged finding.
+    """
     findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
-    # Force F-2 to LOW for this test
     forced = [
         sg.ShipFinding(
             article_id=f.article_id,
@@ -101,7 +109,10 @@ def test_partition_filters_below_medium() -> None:
         for f in findings
     ]
     gate, warn, _info = sg.partition_by_article_level(forced, _articles())
-    assert all(f.severity != "LOW" for f in gate + warn)
+    assert {f.article_id for f in gate} == {"A1"}, "CRITICAL-article finding must gate"
+    assert {f.article_id for f in warn} == {"A4"}, (
+        "SHOULD-article finding routes to warn even at LOW severity"
+    )
 
 
 def test_render_gate_prompt_lists_each_finding() -> None:
@@ -349,6 +360,68 @@ cycles: 1
     findings = sg.parse_review_findings(src)
     assert len(findings) == 1
     assert findings[0].article_id == "A1"
+
+
+def test_parse_review_findings_raises_on_unknown_severity_value(tmp_path: Path) -> None:
+    """H2 — Severity must come from the closed `{BLOCK,HIGH,MEDIUM,LOW}` vocabulary.
+
+    Pre-fix, severity was passed through verbatim. A row with a typo
+    (`severity='Lo'`) or a stray case (`severity='High'`) for a
+    CRITICAL-tagged article would route to info because the partition
+    short-circuited on `severity in {BLOCK,HIGH,MEDIUM}` — silently bypassing
+    the gate. The parser now treats severity vocabulary as a closed enum and
+    surfaces a ShipGateError on any unrecognized value.
+    """
+    bad = tmp_path / "review_bad_severity.md"
+    bad.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|----------|---------|-----------------|--------|
+| F-1 | High | open | src/x.py:1 | [constitution:A1] case-typo | fix | self |
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(sg.ShipGateError, match="unrecognized Severity"):
+        sg.parse_review_findings(bad)
+
+
+def test_partition_routes_low_severity_critical_finding_to_gate() -> None:
+    """H2/L2 — A CRITICAL article must gate REGARDLESS of severity cell value.
+
+    Pre-fix `partition_by_article_level` short-circuited on
+    `severity in {BLOCK,HIGH,MEDIUM}` so a `severity='LOW'` finding tagged to
+    a CRITICAL article fell through to info — gate empty, ship proceeded.
+    The contract from the SKILL is that CRITICAL article level alone routes
+    to the gate; severity is an advisory cell, not a routing key.
+    """
+    findings = [
+        sg.ShipFinding(article_id="A1", severity="LOW", location="src/x.py:1", message="m"),
+    ]
+    gate, warn, info = sg.partition_by_article_level(findings, _articles())
+    assert {f.article_id for f in gate} == {"A1"}, "CRITICAL article must gate at any severity"
+    assert warn == [] and info == []
+
+
+def test_partition_routes_block_severity_should_finding_to_warn() -> None:
+    """L2 — A BLOCK severity finding on a SHOULD article must route to warn.
+
+    After H2 lands and severity drops out of the partition logic, BLOCK on a
+    SHOULD article belongs in warn (article level decides), not info or gate.
+    """
+    findings = [
+        sg.ShipFinding(article_id="A4", severity="BLOCK", location="src/x.py:1", message="m"),
+    ]
+    gate, warn, info = sg.partition_by_article_level(findings, _articles())
+    assert gate == [] and info == []
+    assert {f.article_id for f in warn} == {"A4"}
 
 
 def test_parse_review_findings_returns_empty_when_no_findings_section(tmp_path: Path) -> None:
