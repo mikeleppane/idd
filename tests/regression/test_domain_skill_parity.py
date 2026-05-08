@@ -154,3 +154,19 @@ def test_domain_command_exists_with_argument_hint() -> None:
     assert "--feature" in text, (
         "commands/domain.md frontmatter argument-hint must mention '--feature'"
     )
+
+
+# ---------------------------------------------------------------------------
+# 11. Body documents fence-aware section detection (T11 H1 / deep-H3 lesson)
+# ---------------------------------------------------------------------------
+
+
+def test_domain_skill_documents_fence_aware_section_scan() -> None:
+    text = _read(SKILL_PATH)
+    assert "fence-aware" in text.lower() or "mask" in text.lower(), (
+        "SKILL.md must instruct fence-aware section scanning when locating "
+        "# Intent / # Scenarios / # Domain headers (per P5 T11 H1 lesson)"
+    )
+    assert "fenced" in text.lower(), (
+        "SKILL.md must explicitly mention fenced code blocks in the H1-shadowing rule"
+    )

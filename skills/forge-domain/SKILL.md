@@ -35,6 +35,13 @@ tiers fill `# Domain` at spec time and never enter this phase.
    completes")`.
 3. **Read SPEC.** Open `SPEC.md`. Extract the `# Intent` and `# Scenarios`
    sections verbatim (read-only). Do not mutate the spec yet.
+   **Fence-aware section scan (per P5 T11 H1 lesson):** when locating
+   `# Intent`, `# Scenarios`, or `# Domain` headers, mask out fenced code
+   blocks (` ``` ` and ` ~~~ ` delimited regions) before matching — fenced
+   examples that contain literal `# Header` lines must not shadow real H1
+   sections. Mirror the masking helper in `tools.validate.spec_structural`
+   (see `_strip_code` / `_mask_fenced_lines`) rather than rolling a naive
+   `re.search(r"^# Domain", ...)` regex.
 4. **Project signals.** Read `pyproject.toml` (or `package.json`) for
    ecosystem hints — language, framework, declared dependencies. These bias
    which terms count as "generic" vs "domain" (e.g., `request` is generic in
@@ -75,7 +82,10 @@ tiers fill `# Domain` at spec time and never enter this phase.
 
 - **`# Domain` section missing in SPEC.md.** The spec template ships the
   section; if absent, abort with
-  `"SPEC.md is missing # Domain section — re-run /forge:spec"`.
+  `"SPEC.md is missing # Domain section — re-run /forge:spec"`. Detection
+  must use the fence-aware scan from Step 3 — a `# Domain` line inside a
+  fenced code block (e.g., a Mermaid diagram caption or a quoted spec
+  template excerpt) does NOT count as the real section.
 - **Unresolvable terms in interactive mode.** Halt; ask the user which term
   is canonical and what the definition should be.
 - **`current_phase != "domain"`.** Surface
