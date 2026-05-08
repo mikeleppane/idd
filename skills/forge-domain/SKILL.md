@@ -30,9 +30,14 @@ tiers fill `# Domain` at spec time and never enter this phase.
 
 1. **Resolve feature.** Read `--feature <id>` or apply the single-active rule
    to find `.forge/features/<id>/`. Read `state.json`.
-2. **Guard phase.** Require `current_phase == "domain"`. Otherwise abort with
-   `StateError("domain phase only valid on full tier after /forge:spec
-   completes")`.
+2. **Guard phase and tier.** Require `current_phase == "domain"`. Otherwise
+   abort with `StateError("domain phase only valid on full tier after
+   /forge:spec completes")`. **Tier guard:** also require
+   `state.json.tier == "full"`. Although `start_phase` accepts `domain` for
+   any tier, this skill is full-tier only — focused and standard tiers fill
+   `# Domain` at spec time. If `tier != "full"`, abort with
+   `StateError("/forge:domain is full-tier only; current tier is '<X>' — "
+   "fill # Domain at /forge:spec time instead")` and do NOT mutate SPEC.md.
 3. **Read SPEC.** Open `SPEC.md`. Extract the `# Intent` and `# Scenarios`
    sections verbatim (read-only). Do not mutate the spec yet.
    **Fence-aware section scan (per P5 T11 H1 lesson):** when locating

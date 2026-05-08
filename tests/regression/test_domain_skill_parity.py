@@ -161,6 +161,16 @@ def test_domain_command_exists_with_argument_hint() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_domain_skill_documents_full_tier_guard() -> None:
+    text = _read(SKILL_PATH)
+    assert "full-tier only" in text or "full tier only" in text, (
+        "SKILL.md must guard against running on focused/standard tiers"
+    )
+    assert 'tier == "full"' in text or "tier is 'full'" in text, (
+        "SKILL.md must spell out the explicit tier == 'full' check"
+    )
+
+
 def test_domain_skill_documents_fence_aware_section_scan() -> None:
     text = _read(SKILL_PATH)
     assert "fence-aware" in text.lower() or "mask" in text.lower(), (
