@@ -20,7 +20,6 @@ Coverage target: AC #6, #7, #11 from the M3 P6.1 plan.
 
 from __future__ import annotations
 
-import json
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -371,31 +370,11 @@ def test_record_routing_decision_failure_leaves_no_orphan(
 
 
 # ---------------------------------------------------------------------------
-# 6. --full seeds normally with current_phase="refine" (P6.2 contract)
+# Full-tier smoke moved to tests/smoke/test_do_routing_full_tier_smoke.py
+# (P6.2 owns the end-to-end seed → refine → spec → domain walk plus
+# refined_idea persistence, capability-scan locking, and full-tier
+# post-seed cleanup. This file owns focused/standard only.)
 # ---------------------------------------------------------------------------
-
-
-def test_full_tier_seeds_refine_phase_via_smoke(tmp_path: Path) -> None:
-    """``final_tier='full'`` seeds a folder with ``current_phase='refine'``.
-
-    P6.2 lifted the P6.1 ``NotImplementedError`` raise.  Full-tier seed now
-    enters at refine; the ``/forge:do --full`` skill renders
-    ``Next: /forge:refine --feature <feature_id>`` from this folder.
-    Dedicated full-tier walk smoke (T6) lives in a separate file.
-    """
-    repo = _stage_repo(tmp_path)
-
-    folder = seed_routed_feature(
-        repo,
-        idea="rebuild orchestrator",
-        final_tier="full",
-        today=TODAY,
-    )
-
-    payload = json.loads((folder / "state.json").read_text(encoding="utf-8"))
-    assert payload["tier"] == "full"
-    assert payload["current_phase"] == "refine"
-    assert payload["phases"]["refine"]["status"] == "in_progress"
 
 
 # ---------------------------------------------------------------------------
@@ -406,11 +385,11 @@ def test_full_tier_seeds_refine_phase_via_smoke(tmp_path: Path) -> None:
 def test_schema_path_enforcement_refuses_bogus_tier_before_seed(tmp_path: Path) -> None:
     """Unknown tier raises ValueError BEFORE any disk mutation.
 
-    The validation order in ``seed_routed_feature`` (steps 1-2 of the
-    docstring) catches ``full`` first (NotImplementedError) and any other
-    invalid tier next (ValueError) — both BEFORE the slug compute, the
-    collision check, or any folder creation.  This test asserts the
-    second branch: no partial folder is left behind.
+    The validation order in ``seed_routed_feature`` (step 1 of the
+    docstring) catches any tier outside ``VALID_TIERS`` and refuses
+    BEFORE the slug compute, the collision check, or any folder
+    creation.  As of P6.2 ``full`` is a legitimate tier and seeds
+    normally; only genuinely invalid values land here.
     """
     repo = _stage_repo(tmp_path)
 

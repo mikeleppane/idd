@@ -47,9 +47,9 @@ seed completes.
    lightweight subset of `python -m tools.validate --target health`.
    Surface any `BLOCK` or `HIGH` findings (orphan folders, capability
    collisions, schema drift) and offer the user the option to abort.
-   Default behavior on findings is to halt and ask the user. The
-   `--force` flag that bypasses `WARN`-level findings is documented as
-   P6.2 territory — not implemented in P6.1.
+   Default behavior on findings is to halt and ask the user. A
+   `--force` flag that bypasses `WARN`-level findings is not exposed
+   today; halt-and-ask is the only path.
 4. **Capability scan (per spec §5.3.5 + P5 lock).** Call
    `tools.archive.scan_existing_capabilities(repo_root)`. Compute a slug
    via `tools.archive.slug_from_idea(idea)`. If the slug clashes with an
@@ -84,8 +84,8 @@ seed completes.
 6. **Print proposal as numbered checkbox list.** Render the LLM's
    tier + phase list as a numbered checkbox list in the terminal. Ask
    the user to confirm with `y` or override by re-invoking with
-   `--focused` / `--standard`. P6.1 does not yet expose a `--phases`
-   freeform override; tier flag is the only override.
+   `--focused` / `--standard` / `--full`. Tier flag is the only
+   override; no `--phases` freeform override exists today.
 7. **Resolve final tier.** The override flag wins over the LLM
    proposal. The resolved tier is one of `focused` / `standard` / `full`
    and is passed verbatim to `seed_routed_feature` as `final_tier=`.

@@ -176,9 +176,10 @@ def test_refine_skill_disable_model_invocation_true() -> None:
 def test_refine_command_argument_hint_includes_idea() -> None:
     """Plan T2 specifies `/forge:refine [--feature <id>] [<idea>]`.
 
-    Until /forge:do --full ships in P6.2, the CLI <idea> arg is the
-    documented direct-invocation path. Without it the README's 'standalone
-    usable' claim has no normal bootstrap.
+    The CLI ``<idea>`` arg backs the direct-invocation fallback path
+    (re-running refine on an existing feature whose ``current_phase`` is
+    already ``refine``). The canonical entry path is ``/forge:do --full``,
+    but the positional must remain available for standalone invocation.
     """
     text = _read(COMMAND_PATH)
     assert "[<idea>]" in text, (
@@ -204,15 +205,24 @@ def test_refine_skill_documents_cli_idea_fallback() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 14. Skill documents bootstrap caveat (until P6.2)
+# 14. Skill names /forge:do --full as the canonical entry path
 # ---------------------------------------------------------------------------
 
 
-def test_refine_skill_documents_bootstrap_caveat() -> None:
+def test_refine_skill_names_canonical_entry_path() -> None:
+    """SKILL.md must name ``/forge:do --full`` as the canonical entry path.
+
+    Replaces the P6.1 'bootstrap caveat (until P6.2)' assertion: now that
+    P6.2 has shipped, the only invariant left is that the skill points
+    callers at ``/forge:do --full`` rather than at hand-bootstrapping a
+    refine-tier feature folder.
+    """
     text = _read(SKILL_PATH)
-    assert "P6.2" in text or "/forge:do --full" in text, (
-        "SKILL.md must reference the P6.2 bootstrap caveat — refine cannot "
-        "create the feature folder; /forge:spec or /forge:do --full must precede"
+    assert "/forge:do --full" in text, (
+        "SKILL.md must name `/forge:do --full` as the canonical entry path"
+    )
+    assert "canonical entry" in text.lower(), (
+        "SKILL.md must label `/forge:do --full` as the 'canonical entry' path"
     )
 
 

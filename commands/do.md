@@ -33,7 +33,7 @@ list, confirms with the user, seeds the feature folder under
    disambiguating slug suffix (proceed-as-new is NOT offered).
 5. Pure LLM call proposes tier + phase list with one-sentence rationale.
 6. Renders the proposal as a numbered checkbox list; user confirms with
-   `y` or overrides via `--focused` / `--standard`.
+   `y` or overrides via `--focused` / `--standard` / `--full`.
 7. Seeds the feature folder via `tools.routing.seed_routed_feature`
    (composes `create_feature_folder` + `record_routing_decision` with
    schema validation).

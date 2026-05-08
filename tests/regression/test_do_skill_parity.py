@@ -509,3 +509,40 @@ def test_skill_drops_full_excluded_refusal_prose() -> None:
         "SKILL.md must NOT carry the P6.1 'excludes full from the proposal "
         "space' restriction — P6.2 widens the proposal space"
     )
+
+
+# ---------------------------------------------------------------------------
+# 21. Confirm-UI prose enumerates --full as a valid override
+# ---------------------------------------------------------------------------
+
+
+def test_skill_confirm_ui_lists_full_as_override() -> None:
+    """Step-6 confirm-UI prose must list ``--full`` alongside ``--focused`` /
+    ``--standard`` as a valid override.
+
+    P6.2 made ``full`` a legitimate proposal and override target. If the
+    confirm-UI guidance enumerates only ``--focused`` / ``--standard``, an
+    LLM-proposes-standard path silently blocks the user from overriding to
+    full at confirm time. This test pins the three-tier override list so a
+    future edit cannot drop ``--full`` again.
+    """
+    text = _read(SKILL_PATH)
+    assert "`--focused` / `--standard` / `--full`" in text, (
+        "SKILL.md step 6 must enumerate `--focused` / `--standard` / `--full` "
+        "as the override flag list — P6.2 made full a legitimate override target"
+    )
+
+
+def test_command_confirm_ui_lists_full_as_override() -> None:
+    """commands/do.md step 6 must list ``--full`` alongside ``--focused`` /
+    ``--standard`` as a valid override.
+
+    Mirrors the SKILL.md parity assertion: command-file prose is the
+    surface a user grepping for valid flags hits first, so it must stay
+    in sync with the skill body and the documented argument-hint.
+    """
+    text = _read(COMMAND_PATH)
+    assert "`--focused` / `--standard` / `--full`" in text, (
+        "commands/do.md step 6 must enumerate `--focused` / `--standard` / `--full` "
+        "as the override flag list — P6.2 made full a legitimate override target"
+    )
