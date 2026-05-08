@@ -162,6 +162,29 @@ def test_section_header_with_trailing_whitespace_matches(tmp_path: Path) -> None
     assert findings == []
 
 
+def test_validate_capability_spec_sections_ignores_fenced_h2_headers(tmp_path: Path) -> None:
+    """All seven H2 headers fenced inside a code block must not satisfy the
+    section-presence check — fenced content is documentation, not structure."""
+    spec = tmp_path / "SPEC.md"
+    spec.write_text(
+        "```markdown\n"
+        "## Intent\n"
+        "## Scope\n"
+        "## Domain\n"
+        "## Scenarios\n"
+        "## Acceptance Criteria\n"
+        "## Negative Requirements\n"
+        "## Decisions\n"
+        "```\n"
+        "\n"
+        "(no real sections present — all headers are inside the fence)\n",
+        encoding="utf-8",
+    )
+    findings = validate_capability_spec_sections(spec)
+    assert len(findings) == 7  # one BLOCK per missing required section
+    assert all(f.severity == "BLOCK" for f in findings)
+
+
 def test_body_content_under_section_is_irrelevant(tmp_path: Path) -> None:
     """Rich body content under each H2 → still returns no findings."""
     content = """\

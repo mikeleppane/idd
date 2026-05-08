@@ -127,7 +127,7 @@ def validate_capability_spec_sections(path: Path) -> list[Finding]:
         )
         return findings
 
-    present = frozenset(_CAPABILITY_SPEC_SECTION_RE.findall(text))
+    present = frozenset(_CAPABILITY_SPEC_SECTION_RE.findall(_strip_code(text)))
     missing = _CAPABILITY_SPEC_REQUIRED_SECTIONS - present
     findings.extend(
         Finding(
