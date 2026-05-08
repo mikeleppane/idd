@@ -24,6 +24,8 @@ This file lets non-Claude tools (Cursor, Aider, Codex) discover the same FORGE s
 | `forge-constitution`        | `skills/forge-constitution/SKILL.md`        | doc-only | Documents the loader+filter contract. Phase skills invoke `tools.constitution.load_and_filter` directly; this skill has `disable-model-invocation: true`. |
 | `forge-amend-constitution`  | `skills/forge-amend-constitution/SKILL.md`  | explicit | $EDITOR-driven Constitution edits with atomic-pair (Constitution + decisions.md) write, semver bump; `--bootstrap` mode seeds a starter Constitution from project signals. |
 | `forge-change`              | `skills/forge-change/SKILL.md`              | explicit | Author a delta proposal against a canonical capability spec; routed from `/forge:spec` capability scan or invoked directly via `/forge:change`. |
+| `forge-refine`              | `skills/forge-refine/SKILL.md`              | explicit | Socratic vague-idea collapse before `/forge:spec`. Pre-spec phase for full-tier features; max 5 rounds, persists `state.json.refined_idea` and increments `routing.refine_attempts`. |
+| `forge-domain`              | `skills/forge-domain/SKILL.md`              | explicit | Glossary table + optional Mermaid sketch for full-tier feature SPEC.md. Runs after `/forge:spec` on full tier; populates `# Domain` section in-place. |
 
 "Default" auto-load = Claude Code may invoke based on description match. "Explicit" = `disable-model-invocation: true` in frontmatter; only invoked through commands or by name.
 
@@ -40,6 +42,8 @@ This file lets non-Claude tools (Cursor, Aider, Codex) discover the same FORGE s
 | `/forge:verify`    | `commands/verify.md`    | Run the verify phase against the active feature. |
 | `/forge:ship`      | `commands/ship.md`      | Run the ship phase: write the canonical capability SPEC.md and archive the feature. First-ship only in M2; `--change <id>` merges an approved delta proposal (M3+). |
 | `/forge:change`    | `commands/change.md`    | Author a delta proposal for an existing canonical capability. Args: `[--capability <slug>] [<description>]`. |
+| `/forge:refine`    | `commands/refine.md`    | Socratic vague-idea collapse before `/forge:spec`. Pre-spec phase for full-tier features. Args: `[--feature <id>]`. |
+| `/forge:domain`    | `commands/domain.md`    | Glossary table + optional Mermaid sketch for full-tier feature SPEC.md. Runs after `/forge:spec` on full tier. Args: `[--feature <id>]`. |
 | `/forge:next`      | `commands/next.md`      | Show or run the next phase command for the active feature. Flags: `--feature <id>`, `--run`. |
 | `/forge:status`    | `commands/status.md`    | One-line feature status: phase, tier, last commit. Flags: `--feature <id>`, `--verbose`. |
 | `/forge:validate`  | `commands/validate.md`  | Run the structural and semantic validator. Flags: `--target <spec\|plan\|delta\|constitution\|ship\|health\|scenarios\|anchors\|spec-semantic\|plan-tasks\|verified-deps\|deviations\|all>`, optional path, `--repo-root <path>`, `--check-registries` (off by default; live registry probes for `verified-deps` / `all`). Exit 0 / 1 (BLOCK\|HIGH) / 2 (usage). |
@@ -75,6 +79,8 @@ The `hooks/` directory contains a `PreToolUse` hook that enforces the FORGE suba
 The PreToolUse budget hook is permissive on the optional `articles[]` field carrying filtered Constitution articles for subagent context (M3 P3). Tests in `tests/hooks/test_check_budget_articles.py` pin this permissiveness.
 
 **M3 P5 — Delta proposals.** `tools.archive.slug_from_idea` is the single source of truth for capability slug semantics; all slug derivation routes through it. `scan_existing_capabilities` feeds the `/forge:spec` capability scan: when the derived slug already matches a canonical spec, the scan routes to `/forge:change` before any feature folder is created. `merge_delta_proposal` is a transactional helper (snapshot → apply → validate → hook → atomic-write → archive-move, with rollback at every step) for applying approved delta proposals to canonical capability specs; `ship_feature` is unchanged — `--change <id>` on `/forge:ship` invokes the new helper instead. See `skills/forge-change/SKILL.md` for the full authoring lifecycle.
+
+**M3 P4 — Pre-spec phases.** Full-tier pipeline gains two new phases: `/forge:refine` (Socratic vague-idea collapse, max 5 rounds, persists `state.json.refined_idea` and increments `routing.refine_attempts` via `tools.state.increment_refine_attempts`) and `/forge:domain` (glossary table + optional Mermaid sketch, in-place edit of SPEC.md `# Domain` section). The full-tier walk is `do → refine → spec → domain → scenarios → plan → ...`. `/forge:spec` consumes `state.json.refined_idea` as Intent draft when present; on full tier, leaving `# Domain` as the placeholder `_TBD: filled by /forge:domain_` is acceptable at spec exit — `/forge:domain` populates it next. Adaptive routing for `/forge:do --full` ships in M3 P6.2; until then full-tier phases run via direct slash-command invocation.
 
 ## Tool Mapping
 

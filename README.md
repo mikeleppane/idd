@@ -95,7 +95,7 @@ Each command refuses to run unless the previous phase is complete (state machine
 
 - **`/forge:ship` is first-ship only.** If `.forge/specs/<capability>/SPEC.md` already exists for the capability slug, ship aborts with a "delta proposal required" message. Delta proposals (`/forge:change`) land in M3+.
 - **`/forge:review --cross-ai` is not implemented.** Cross-AI review (Claude ↔ GPT second-opinion pass) is M4 territory; the flag errors out today.
-- **Refine, research, and domain phases are M3+.** The `--full` pipeline isn't ready yet — pick `--standard` for now even on broader features.
+- **Refine and domain phases ship in M3 P4; research is deferred to M4.** The `/forge:refine` and `/forge:domain` slash commands are available standalone; full-tier adaptive routing via `/forge:do --full` lands in M3 P6.2.
 
 ---
 
@@ -158,6 +158,8 @@ NOT a machine BLOCK gate (D-4 / D-4a):
   the agent-side gap.
 
 **Delta proposals (M3).** Once a capability has shipped, change it via `/forge:change` instead of forking a new feature. The skill drafts a proposal under `.forge/changes/<id>/`, validates the structural shape via `/forge:validate --target delta`, and the user flips frontmatter to `status: approved`. Merging the change happens at `/forge:ship --change <id>`, which delegates to `tools.archive.merge_delta_proposal` — a transactional helper that snapshots the canonical SPEC.md and the proposal, applies the ADD/REMOVE/MODIFY ops in memory, validates the merged body against the capability-spec contract, runs a status-flip hook, atomic-writes the merged canonical, and archives the change folder. Any failure rolls back via the snapshots. `/forge:spec` runs a capability scan on every idea and routes to `/forge:change` when the slug already exists.
+
+**Pre-spec phases (M3 P4).** Full-tier features get two phases ahead of `/forge:spec`: `/forge:refine` runs a Socratic vague-idea collapse (max 5 rounds), persists the synthesized paragraph to `state.json.refined_idea`, and increments `routing.refine_attempts`; `/forge:domain` runs after spec to populate the `# Domain` glossary in-place from SPEC.md Intent + Scenarios. `/forge:spec` consumes `state.json.refined_idea` as Intent draft when present and accepts a `_TBD: filled by /forge:domain_` placeholder in `# Domain` for full-tier features. The full-tier walk is `do → refine → spec → domain → scenarios → plan → ...`. Adaptive routing for `/forge:do --full` ships in M3 P6.2; until then run the slash commands directly.
 
 ---
 
