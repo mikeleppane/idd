@@ -24,7 +24,7 @@ from tools.state import (
     feature_folder_exists,
     write_state,
 )
-from tools.validate._feature_layout import _ORPHAN_FEATURE_FILES
+from tools.validate._feature_layout import _ORPHAN_FEATURE_FILES, _ORPHAN_SEED_PHASES
 from tools.validate._finding import EXIT_NONZERO_SEVERITIES, Finding
 from tools.validate.delta import validate_delta
 from tools.validate.spec_structural import (
@@ -167,12 +167,11 @@ def scan_existing_capabilities(repo_root: Path) -> list[str]:
     return sorted(d.name for d in specs_dir.iterdir() if d.is_dir() and (d / "SPEC.md").is_file())
 
 
-# Phases that mark a never-advanced seed feature.  The predicate accepts BOTH
-# the original P5 refine-tier path (cleanup_orphan_feature) AND the new
-# P6.1 focused/standard pre-seed path written by /forge:do
-# (cleanup_seeded_feature).  Both are removable when commits == [] and folder
-# contents are a strict subset of _ORPHAN_FEATURE_FILES.
-_ORPHAN_SEED_PHASES: frozenset[str] = frozenset({"refine", "spec"})
+# _ORPHAN_SEED_PHASES is sourced from tools/validate/_feature_layout.py so the
+# orphan predicate stays in lock-step with health.py (M3 P6.1 T7 finding
+# p6-1-M1).  The set covers BOTH the original P5 refine-tier path
+# (cleanup_orphan_feature) AND the P6.1 focused/standard pre-seed path
+# written by /forge:do (cleanup_seeded_feature).
 
 
 def _orphan_conditions_met(folder: Path) -> bool:  # noqa: PLR0911

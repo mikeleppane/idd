@@ -18,7 +18,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from tools import archive as archive_mod
 from tools.archive import cleanup_orphan_feature
+from tools.validate import _feature_layout as layout_mod
+from tools.validate import health as health_mod
 from tools.validate import validate_health
 
 # ---------------------------------------------------------------------------
@@ -35,13 +38,42 @@ def test_both_modules_import_orphan_set_from_feature_layout() -> None:
     """
     archive_src = Path(__file__).resolve().parents[2] / "tools" / "archive.py"
     health_src = Path(__file__).resolve().parents[2] / "tools" / "validate" / "health.py"
-    needle = "from ._feature_layout import _ORPHAN_FEATURE_FILES"
-    archive_needle = needle.replace("from ._feature_layout", "from tools.validate._feature_layout")
-    assert archive_needle in archive_src.read_text(encoding="utf-8"), (
-        "tools/archive.py must import _ORPHAN_FEATURE_FILES from tools.validate._feature_layout"
+    archive_text = archive_src.read_text(encoding="utf-8")
+    health_text = health_src.read_text(encoding="utf-8")
+    assert "from tools.validate._feature_layout import" in archive_text, (
+        "tools/archive.py must import from tools.validate._feature_layout"
     )
-    assert needle in health_src.read_text(encoding="utf-8"), (
-        "tools/validate/health.py must import _ORPHAN_FEATURE_FILES from ._feature_layout"
+    assert "_ORPHAN_FEATURE_FILES" in archive_text, (
+        "tools/archive.py must reference _ORPHAN_FEATURE_FILES"
+    )
+    assert "from ._feature_layout import" in health_text, (
+        "tools/validate/health.py must import from ._feature_layout"
+    )
+    assert "_ORPHAN_FEATURE_FILES" in health_text, (
+        "tools/validate/health.py must reference _ORPHAN_FEATURE_FILES"
+    )
+
+
+def test_orphan_seed_phases_shared_via_feature_layout() -> None:
+    """archive.py and health.py both bind the SAME _ORPHAN_SEED_PHASES object.
+
+    Identity check (via the canonical module) ensures a future change to one
+    predicate's phase set cannot silently desync from the other.  M3 P6.1 T7
+    finding p6-1-M1.
+    """
+    canonical = layout_mod._ORPHAN_SEED_PHASES
+    archive_attr = getattr(archive_mod, "_ORPHAN_SEED_PHASES")  # noqa: B009
+    health_attr = getattr(health_mod, "_ORPHAN_SEED_PHASES")  # noqa: B009
+    assert archive_attr is canonical, (
+        "tools.archive._ORPHAN_SEED_PHASES must be the SAME object as "
+        "tools.validate._feature_layout._ORPHAN_SEED_PHASES"
+    )
+    assert health_attr is canonical, (
+        "tools.validate.health._ORPHAN_SEED_PHASES must be the SAME object as "
+        "tools.validate._feature_layout._ORPHAN_SEED_PHASES"
+    )
+    assert canonical == frozenset({"refine", "spec"}), (
+        f"_ORPHAN_SEED_PHASES drifted from documented contract: {canonical!r}"
     )
 
 
