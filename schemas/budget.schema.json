@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://forge.local/schemas/budget.schema.json",
   "title": "FORGE subagent dispatch context_budget block",
-  "description": "Documentation + test fixture only. Hooks/check_budget.py does NOT import this schema (stdlib-only per M7 Decision 2). Drift between this enum and the hook's frozen literal is caught by tests.",
+  "description": "Documentation + test fixture only. hooks/check_budget.py stays stdlib-only and does NOT import this schema; it carries an independent frozen literal of the phase value it enforces. Drift between this enum and the hook's frozen literal is caught by tests.",
   "type": "object",
   "required": ["files_in_scope", "forbidden"],
   "properties": {

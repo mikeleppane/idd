@@ -57,7 +57,7 @@ context_budget:
 
 ## Whitelisted commit roles
 
-Only two roles skip the test/impl pairing requirement (per Decision 18 of the M7 plan):
+Only two roles skip the test/impl pairing requirement:
 
 - **`commit_role: "docs"`** — pure prose / comment-only. Diff must touch only `docs/**`, `*.md` outside production paths, `*.rst`, OR comment-only changes inside production paths. If a `docs` commit modifies any `.py`, `.json` schema, `.toml`, or hook file beyond comment-only changes, the validator emits a `LOW`-severity finding and (for substantive production-code changes) downgrades to `BLOCK`.
 - **`commit_role: "chore"`** — build / dependency only (Makefile churn, dep bumps, repo scaffolding). Diff must touch zero `.py` and zero `.json` schema content.

@@ -42,7 +42,7 @@ The hook validates `files_in_scope` (non-empty array of bounded globs), `forbidd
 
 ## Phase discriminator and TDD scope fields
 
-Three fields drive execute-phase TDD enforcement (M7 Decision 2). Schema reference: [`schemas/budget.schema.json`](../../schemas/budget.schema.json) — documentation only; the hook keeps a stdlib-only frozen literal copy of the phase value it cares about (`"execute"`).
+Three fields drive execute-phase TDD enforcement. Schema reference: [`schemas/budget.schema.json`](../../schemas/budget.schema.json) — documentation only; the hook keeps a stdlib-only frozen literal copy of the phase value it cares about (`"execute"`).
 
 - **`phase`** *(optional but recommended)* — the FORGE phase under which this dispatch runs. Enum mirrors `current_phase` in `schemas/state.schema.json` (`refine`, `research`, `spec`, `domain`, `scenarios`, `plan`, `crucible`, `review`, `execute`, `verify`, `ship`, `harden`). Required to opt into execute-phase enforcement; absent or non-`execute` values leave `tests_in_scope` optional.
 - **`tests_in_scope`** *(string array)* — test files the subagent will create or modify. **Mandatory and non-empty when `phase == "execute"`**, unless `tdd_exception_ref` is set. The hook denies execute-phase dispatches that lack the field, set it to a non-array, or leave it empty without an exception. For non-execute phases the field is optional (but if present it must still be a list of strings).

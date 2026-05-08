@@ -40,10 +40,10 @@ _BARE_EXTENSION_GLOB = re.compile(r"^\*\.[a-zA-Z0-9]+$")
 
 # Phase enum frozen literal. Canonical source: schemas/state.schema.json
 # (current_phase + phases.propertyNames + commits[].phase + skipped[].phase
-# + deviations[].phase). Per Decision 2 of M7 plan, this hook stays
-# stdlib-only — no jsonschema import, no tools.* import. Drift between
-# this set and the canonical schema is caught by the schema enum tests
-# in tests/tools/. Only "execute" triggers tests_in_scope enforcement.
+# + deviations[].phase). The hook stays stdlib-only — no jsonschema import,
+# no tools.* import — so drift between this set and the canonical schema is
+# caught by the schema enum tests in tests/tools/. Only "execute" triggers
+# tests_in_scope enforcement.
 _EXECUTE_PHASE = "execute"
 
 _MARKER = "context_budget:"
@@ -176,7 +176,7 @@ def _validate_tests_in_scope_shape(tests: Any) -> str | None:
 def _validate_tests_in_scope(budget: dict[str, Any]) -> str | None:
     """Return a deny reason when execute-phase budget lacks tests_in_scope, else None.
 
-    Rules (M7 P0.2 / Decision 2):
+    Rules:
     - When ``phase == "execute"``: ``tests_in_scope`` MUST be a non-empty
       list of strings, UNLESS the budget block also declares
       ``tdd_exception_ref: "<ADR-id>"``.
