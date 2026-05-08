@@ -13,7 +13,41 @@ from collections.abc import Callable
 from pathlib import Path
 
 _CAPABILITY_RE = re.compile(r"^[a-z0-9-]+$")
+# Schema-aligned slug: must start with alnum, at least 3 chars total.
+# Matches schemas/capability-spec-frontmatter.schema.json and
+# delta-proposal-frontmatter.schema.json:affects_capability.
+_CAPABILITY_SLUG_SCHEMA_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,}$")
 _FEATURE_ID_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9-]+$")
+
+# Minimum token length to survive the content-word filter (step 5 of slug_from_idea).
+_SLUG_MIN_TOKEN_LEN: int = 2
+
+_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "of",
+        "to",
+        "with",
+        "for",
+        "from",
+        "by",
+        "in",
+        "on",
+        "at",
+        "as",
+        "is",
+        "be",
+        "that",
+        "this",
+        "my",
+        "our",
+        "we",
+    }
+)
 # Pattern matches `[constitution:A<n>]` tags inside REVIEW.code.md cells.
 # Used by the advisory `_emit_constitution_skip_warning` helper.
 _CONSTITUTION_TAG_RE = re.compile(r"\[constitution:A\d+\]")
@@ -21,6 +55,58 @@ _CONSTITUTION_TAG_RE = re.compile(r"\[constitution:A\d+\]")
 
 class ArchiveError(RuntimeError):
     """Raised when archival or canonical spec writes cannot proceed."""
+
+
+def slug_from_idea(text: str, *, max_words: int = 5) -> str:
+    """Derive a capability slug from a free-text idea description.
+
+    The algorithm is deterministic and requires no NLP or external calls.
+
+    Steps:
+        1. Lowercase the input.
+        2. Replace any character outside ``[a-z0-9 ]`` with a single space.
+        3. Tokenize on whitespace.
+        4. Drop stopwords from ``_STOPWORDS``.
+        5. Drop tokens of length < 2.
+        6. Take the first ``max_words`` distinct tokens (preserve insertion
+           order, deduplicate).
+        7. Hyphen-join.  The result must match
+           ``^[a-z0-9][a-z0-9-]{2,}$`` (≥ 3 chars, alnum-leading).
+
+    Args:
+        text: Free-text idea description from the user.
+        max_words: Maximum number of distinct content tokens to use.
+                   Keyword-only; defaults to 5.
+
+    Returns:
+        A valid capability slug string.
+
+    Raises:
+        ArchiveError: When the final slug is empty (message contains the
+            verbatim ``text``), or shorter than 3 characters (message
+            contains both the computed slug and the verbatim ``text``).
+    """
+    lowered = text.lower()
+    cleaned = re.sub(r"[^a-z0-9 ]", " ", lowered)
+    tokens = cleaned.split()
+    # Drop stopwords and tokens that are too short (length < _SLUG_MIN_TOKEN_LEN)
+    content = [t for t in tokens if t not in _STOPWORDS and len(t) >= _SLUG_MIN_TOKEN_LEN]
+    # Take first max_words distinct tokens (deduplicate, preserve order)
+    seen: set[str] = set()
+    distinct: list[str] = []
+    for token in content:
+        if token not in seen:
+            seen.add(token)
+            distinct.append(token)
+        if len(distinct) == max_words:
+            break
+    slug = "-".join(distinct)
+    # Validate final slug matches the schema-aligned pattern
+    if not slug or not _CAPABILITY_SLUG_SCHEMA_RE.fullmatch(slug):
+        if not slug:
+            raise ArchiveError(f"slug computed from idea is empty: {text}")
+        raise ArchiveError(f"slug computed from idea is too short: {slug} ({text})")
+    return slug
 
 
 def _validate_capability(capability: str) -> None:
