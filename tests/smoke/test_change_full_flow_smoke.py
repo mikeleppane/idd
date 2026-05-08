@@ -193,8 +193,8 @@ def test_retry_after_archive_exists(tmp_path: Path) -> None:
     post_merge_canonical = canonical_path.read_text(encoding="utf-8")
 
     # Second attempt fails at preflight: proposal.md was moved into the archive
-    # folder, so the "proposal not found" check fires (preflight step 3).
-    with pytest.raises(ArchiveError):
+    # folder; the archive dir exists, so the "already merged" check fires (L2 fix).
+    with pytest.raises(ArchiveError, match="already merged"):
         merge_delta_proposal(repo, _CHANGE_ID, _CAPABILITY)
 
     # Canonical was NOT touched on the retry

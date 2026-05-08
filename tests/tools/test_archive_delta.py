@@ -796,3 +796,37 @@ def test_concurrent_merge_raises_clear_error(tmp_path: Path) -> None:
         pytest.raises(ArchiveError, match="in flight"),
     ):
         merge_delta_proposal(tmp_path, change_id, "my-cap")
+
+
+# ---------------------------------------------------------------------------
+# L2 — Already-merged retry surfaces informative error (deep-L2)
+# ---------------------------------------------------------------------------
+
+
+def _setup_post_merge_state(tmp_path: Path) -> tuple[Path, str, str]:
+    """Create a post-merge fixture: archive dir exists, live change folder gone.
+
+    Returns (repo_root, change_id, capability).
+    """
+    change_id = "2026-05-08-add-criterion"
+    capability = "my-cap"
+
+    # Build archive folder (simulates successful prior merge)
+    archive_dir = tmp_path / ".forge" / "changes" / "archive" / change_id
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    # Put a stub proposal.md in the archive (content doesn't matter for this check)
+    (archive_dir / "proposal.md").write_text("status: merged\n", encoding="utf-8")
+
+    # Canonical still exists (was updated by prior merge)
+    _make_canonical(tmp_path, capability)
+
+    # Live change folder and proposal.md are ABSENT (moved to archive)
+    return tmp_path, change_id, capability
+
+
+def test_preflight_already_merged_message_is_clear(tmp_path: Path) -> None:
+    """When the proposal is missing AND the archive exists, the user gets
+    a clear 'already merged' message rather than a misleading 'proposal not found'."""
+    repo, change_id, capability = _setup_post_merge_state(tmp_path)
+    with pytest.raises(ArchiveError, match="already merged"):
+        merge_delta_proposal(repo, change_id, capability)

@@ -709,8 +709,13 @@ def _preflight_merge(
 
     change_folder = repo_root / ".forge" / "changes" / change_id
     proposal_path = change_folder / "proposal.md"
+    archive_target_early = repo_root / ".forge" / "changes" / "archive" / change_id
 
     if not proposal_path.is_file():
+        if archive_target_early.is_dir():
+            raise ArchiveError(
+                f"change {change_id!r} was already merged; see archive at {archive_target_early}"
+            )
         raise ArchiveError(f"proposal not found: {proposal_path}")
 
     fm = _read_proposal_frontmatter(proposal_path)
