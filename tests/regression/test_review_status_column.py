@@ -10,7 +10,13 @@ TEMPLATE = Path("templates/feature/REVIEW.md")
 
 def test_review_template_has_status_column() -> None:
     text = TEMPLATE.read_text(encoding="utf-8")
-    header = next(line for line in text.splitlines() if line.startswith("| ID |"))
+    header = next(
+        (line for line in text.splitlines() if line.startswith("| ID |")),
+        None,
+    )
+    assert header is not None, (
+        "REVIEW.md template missing the Findings table header row starting `| ID |`"
+    )
     columns = [c.strip() for c in header.strip("|").split("|")]
     assert "Status" in columns, (
         "REVIEW.md Findings table must have a Status column "
