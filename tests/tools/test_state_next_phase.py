@@ -41,7 +41,9 @@ def test_next_phase_focused_tier(phase: str, expected: str | None) -> None:
 @pytest.mark.parametrize(
     "phase,expected",
     [
-        ("refine", "/forge:spec"),
+        # 'refine' is full-tier only; standard tier never enters refine
+        # so it is intentionally absent from the standard-tier next map
+        # (deep-M-A2). See test_standard_next_does_not_route_through_refine.
         ("spec", "/forge:scenarios"),
         ("scenarios", "/forge:plan"),
         ("plan", "/forge:crucible"),
@@ -53,6 +55,16 @@ def test_next_phase_focused_tier(phase: str, expected: str | None) -> None:
 )
 def test_next_phase_standard_tier(phase: str, expected: str | None) -> None:
     assert state.next_phase_command(_state("standard", phase)) == expected
+
+
+def test_next_phase_standard_tier_refine_returns_none() -> None:
+    """Refine is full-tier only; querying it on standard-tier yields no next.
+
+    Pinning this explicitly makes the deep-M-A2 cleanup self-evident in the
+    test surface: the misroute that previously claimed standard tier could
+    advance refine -> /forge:spec is gone.
+    """
+    assert state.next_phase_command(_state("standard", "refine")) is None
 
 
 def test_next_phase_full_tier_inserts_domain_after_spec() -> None:

@@ -9,8 +9,7 @@ Three walks (per plan T6):
   1. Happy walk: refine increments + refined_idea persistence + phase
      transitions; next_phase_command returns the right slash at each
      boundary; routing.refine_attempts ends at 3 with all sibling fields
-     preserved; refined_idea persisted; SPEC.md `# Domain` placeholder
-     accepted at spec exit.
+     preserved; refined_idea persisted.
   2. Round-cap deviation: 5 increments + auto-mode deviation logged to
      state.json.deviations; advance to spec without halt.
   3. Interactive halt: 5 increments + simulated halt; state.json shows
@@ -18,7 +17,10 @@ Three walks (per plan T6):
 
 The smoke does NOT invoke the LLM-driven SKILL.md prose; it exercises
 only the deterministic state helpers + next-step map that the skills
-contract against.
+contract against. The Domain placeholder regex is covered separately
+by ``tests/regression/test_spec_skill_full_tier_parity.py`` (deep-M-A4
+adds executable regex tests that run the comparator against canonical,
+no-trailing-underscore, backslash-escaped, and whitespace-padded inputs).
 """
 
 from __future__ import annotations
@@ -230,3 +232,24 @@ def test_full_tier_state_round_trips_through_disk(tmp_path: Path) -> None:
     assert raw["refined_idea"] == "Refined paragraph."
     assert raw["current_phase"] == "refine"
     assert raw["tier"] == "full"
+
+
+# ---------------------------------------------------------------------------
+# 6. Terminal-None: current_phase='done' yields no next command (deep-L-A4)
+# ---------------------------------------------------------------------------
+
+
+def test_next_phase_command_returns_none_when_current_phase_is_done() -> None:
+    """Once the feature reaches the 'done' terminal phase, no more routing is
+    appropriate — `next_phase_command` must return None for every tier.
+    """
+    payload = {
+        "feature_id": "2026-05-08-rollout-percent",
+        "tier": "full",
+        "current_phase": "done",
+        "phases": {"ship": {"status": "done"}},
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+    assert next_phase_command(payload) is None

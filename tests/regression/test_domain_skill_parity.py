@@ -204,9 +204,10 @@ def test_domain_skill_disable_model_invocation_true() -> None:
 
 def test_domain_skill_references_existing_strip_code_helper() -> None:
     """`_strip_code` lives in `tools.validate._frontmatter` and is imported by
-    `tools.validate.spec_structural`. `_mask_fenced_lines` does NOT exist in
-    `tools.validate` (it lives in `tools.delta_merge`). The skill must point
-    at the real helper to avoid future agents inventing a new section parser.
+    `tools.validate.spec_structural`. `_mask_fenced_lines` lives in
+    `tools.delta_merge` (a different module, different purpose). The skill
+    must point at the real home of each helper to avoid future agents
+    inventing a new section parser or reaching for the wrong primitive.
     """
     text = _read(SKILL_PATH)
     assert "_strip_code" in text, "SKILL.md must reference the canonical `_strip_code` helper"
@@ -214,8 +215,20 @@ def test_domain_skill_references_existing_strip_code_helper() -> None:
         "SKILL.md must locate `_strip_code` in tools.validate._frontmatter — the "
         "module where it actually lives — rather than tools.validate.spec_structural"
     )
-    assert "_mask_fenced_lines" not in text, (
-        "SKILL.md must NOT reference `_mask_fenced_lines` in tools.validate — that "
-        "helper does not exist there; the only `_mask_fenced_lines` lives in "
-        "tools.delta_merge for an unrelated purpose"
-    )
+    # `_mask_fenced_lines` is a real symbol in `tools.delta_merge`. The skill
+    # is allowed to mention it ONLY when paired with its real home, and only
+    # to warn against mistaking it for the section-scan helper. The original
+    # blanket ban from deep-H3 has been relaxed (deep-H-A2): a precise
+    # citation is more useful than a phantom ban.
+    if "_mask_fenced_lines" in text:
+        assert "tools.delta_merge" in text, (
+            "SKILL.md may mention `_mask_fenced_lines` only when paired with its "
+            "real home `tools.delta_merge` — never imply it lives under `tools.validate`"
+        )
+        assert "tools.validate._mask_fenced_lines" not in text, (
+            "SKILL.md must never claim `_mask_fenced_lines` lives under tools.validate"
+        )
+        assert "tools.validate.spec_structural._mask_fenced_lines" not in text, (
+            "SKILL.md must never claim `_mask_fenced_lines` lives under "
+            "tools.validate.spec_structural"
+        )

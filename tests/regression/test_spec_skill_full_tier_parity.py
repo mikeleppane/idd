@@ -12,6 +12,7 @@ Locks the M3 P4 T4 narrative additions to ``skills/forge-spec/SKILL.md``:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -163,3 +164,37 @@ def test_spec_skill_full_tier_next_phase_is_domain() -> None:
     assert '"domain"' in _BODY, (
         'SKILL.md Step 8 must literally name `"domain"` as the resolved next_phase for full tier'
     )
+
+
+# ---------------------------------------------------------------------------
+# 9. Executable placeholder-regex tests (deep-M-A4)
+# ---------------------------------------------------------------------------
+#
+# The SKILL.md prose locks the comparator regex
+# ``^_TBD: filled by /forge:domain_?$`` (test_spec_skill_locks_placeholder_comparator).
+# These tests run that regex against the documented inputs so the comparator
+# is empirically protected, not just textually mentioned.
+
+_DOMAIN_PLACEHOLDER_RE = re.compile(r"^_TBD: filled by /forge:domain_?$")
+
+
+def test_full_tier_domain_placeholder_canonical_form_matches() -> None:
+    body = "_TBD: filled by /forge:domain_"
+    assert _DOMAIN_PLACEHOLDER_RE.match(body) is not None
+
+
+def test_full_tier_domain_placeholder_no_trailing_underscore_matches() -> None:
+    body = "_TBD: filled by /forge:domain"
+    assert _DOMAIN_PLACEHOLDER_RE.match(body) is not None
+
+
+def test_full_tier_domain_placeholder_backslash_escaped_does_not_match() -> None:
+    body = "\\_TBD: filled by /forge:domain\\_"
+    assert _DOMAIN_PLACEHOLDER_RE.match(body) is None
+
+
+def test_full_tier_domain_placeholder_with_leading_trailing_whitespace_matches_after_strip() -> (
+    None
+):
+    body = "   _TBD: filled by /forge:domain_  \n"
+    assert _DOMAIN_PLACEHOLDER_RE.match(body.strip()) is not None
