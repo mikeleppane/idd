@@ -261,7 +261,7 @@ def amend_constitution(
     See module docstring for bump rules.
     """
     today = today or date.today()
-    constitution = repo_root / ".idd" / "CONSTITUTION.md"
+    constitution = repo_root / ".forge" / "CONSTITUTION.md"
     if not constitution.exists():
         raise AmendError(f"Constitution not found at {constitution}")
     before = constitution.read_text(encoding="utf-8")
@@ -269,7 +269,7 @@ def amend_constitution(
 
     # Open editor on a temp working copy so the original survives editor crash.
     with tempfile.NamedTemporaryFile(
-        prefix="idd-constitution-",
+        prefix="forge-constitution-",
         suffix=".md",
         delete=False,
         mode="w",
@@ -297,7 +297,7 @@ def amend_constitution(
 
     # Validate via the structural validator. No disk mutation yet.
     with tempfile.NamedTemporaryFile(
-        prefix="idd-constitution-validated-",
+        prefix="forge-constitution-validated-",
         suffix=".md",
         delete=False,
         mode="w",
@@ -489,22 +489,22 @@ def bootstrap_constitution(
     review_proposal: Callable[[ProposedArticle], tuple[str, ProposedArticle | None]],
     today: date | None = None,
 ) -> Path:
-    """Seed ``.idd/CONSTITUTION.md`` from project signals.
+    """Seed ``.forge/CONSTITUTION.md`` from project signals.
 
     ``review_proposal(proposal)`` returns ``("accept", proposal)`` |
     ``("edit", proposal')`` | ``("drop", None)``. Caller-supplied; the test
     suite drives it deterministically.
 
-    Refuses if ``.idd/CONSTITUTION.md`` already exists. Refuses if the user
+    Refuses if ``.forge/CONSTITUTION.md`` already exists. Refuses if the user
     drops every proposal (zero accepted articles is not a valid Constitution).
 
     Returns the path to the new Constitution.
     """
     today = today or date.today()
-    constitution = repo_root / ".idd" / "CONSTITUTION.md"
+    constitution = repo_root / ".forge" / "CONSTITUTION.md"
     if constitution.exists():
         raise AmendError(
-            f"Constitution already exists at {constitution}; use plain /idd:amend-constitution"
+            f"Constitution already exists at {constitution}; use plain /forge:amend-constitution"
         )
 
     proposals = propose_starter_articles(repo_root=repo_root)
@@ -529,7 +529,7 @@ def bootstrap_constitution(
 
     # Validate via the structural validator before any disk mutation.
     with tempfile.NamedTemporaryFile(
-        prefix="idd-constitution-bootstrap-",
+        prefix="forge-constitution-bootstrap-",
         suffix=".md",
         delete=False,
         mode="w",

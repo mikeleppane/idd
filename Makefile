@@ -18,7 +18,7 @@ help: ## Show this help (auto-generated from doc-comment annotations)
 	      /^[a-zA-Z][a-zA-Z0-9_-]*:.*##/ { printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2 }' \
 	      $(MAKEFILE_LIST)
 
-install: ## Create venv (if missing) and install idd-tools with dev extras
+install: ## Create venv (if missing) and install forge-tools with dev extras
 	@test -d $(VENV) || python3.12 -m venv $(VENV) || python3 -m venv $(VENV)
 	@$(PIP) install --upgrade pip $(PIP_INDEX)
 	@$(PIP) install -e ".[dev]" $(PIP_INDEX)
@@ -46,7 +46,7 @@ test: ## Run pytest
 cov: ## Run pytest with coverage
 	@$(PYTEST) --cov=tools --cov-report=term-missing
 
-validate-health: ## Run /idd:validate --target health on the current repo
+validate-health: ## Run /forge:validate --target health on the current repo
 	@$(PY) -m tools.validate --target health
 
 check: format-check lint typecheck test validate-health ## Full local quality gate — run before every commit

@@ -43,7 +43,7 @@ Out of scope:
 
 ## Scenarios
 
-(emitted by /idd:scenarios — markdown Gherkin here, executable .feature mirror at tests/features/feature_flag.feature)
+(emitted by /forge:scenarios — markdown Gherkin here, executable .feature mirror at tests/features/feature_flag.feature)
 
 ```gherkin
 Scenario: Disabled flag blocks payments  (criterion: c-1)

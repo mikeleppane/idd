@@ -141,7 +141,7 @@ def parse_constitution_text(text: str) -> list[Article]:
 
 
 def parse_constitution(path: Path) -> list[Article]:
-    """Read .idd/CONSTITUTION.md and return parsed Article records.
+    """Read .forge/CONSTITUTION.md and return parsed Article records.
 
     Trusts the structural validator (``tools.validate.validate_constitution``)
     to gate frontmatter + numbering + Rule/Exception presence. This parser
@@ -509,10 +509,10 @@ def load_and_filter(
 ) -> tuple[list[Article], list[str]]:
     """One-shot: parse + filter against scope signals derived from ``repo_root``.
 
-    Returns ``([], [])`` when ``.idd/CONSTITUTION.md`` is absent.
+    Returns ``([], [])`` when ``.forge/CONSTITUTION.md`` is absent.
 
     Args:
-        repo_root: Repository root containing ``.idd/CONSTITUTION.md``.
+        repo_root: Repository root containing ``.forge/CONSTITUTION.md``.
         idea_text: Free-form idea / spec intent text fed into the scope
             keyword extractor.
         files_in_scope: Paths to include as scope signals.
@@ -521,7 +521,7 @@ def load_and_filter(
         Tuple of (kept_articles, dropped_article_ids). Empty pair when the
         Constitution file does not exist.
     """
-    constitution_path = repo_root / ".idd" / "CONSTITUTION.md"
+    constitution_path = repo_root / ".forge" / "CONSTITUTION.md"
     if not constitution_path.exists():
         return [], []
     articles = parse_constitution(constitution_path)

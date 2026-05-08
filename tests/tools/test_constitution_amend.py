@@ -107,8 +107,8 @@ def test_amend_constitution_writes_bumped_version_and_decisions_entry(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
-    (repo / ".idd").mkdir(parents=True)
-    constitution = repo / ".idd" / "CONSTITUTION.md"
+    (repo / ".forge").mkdir(parents=True)
+    constitution = repo / ".forge" / "CONSTITUTION.md"
     constitution.write_text(
         (FIXTURES / "passing.md").read_text(encoding="utf-8"),
         encoding="utf-8",
@@ -148,8 +148,8 @@ def test_amend_constitution_aborts_when_validator_rejects(tmp_path: Path) -> Non
     Constitution and decisions.md must end at pre-amend state.
     """
     repo = tmp_path / "repo"
-    (repo / ".idd").mkdir(parents=True)
-    constitution = repo / ".idd" / "CONSTITUTION.md"
+    (repo / ".forge").mkdir(parents=True)
+    constitution = repo / ".forge" / "CONSTITUTION.md"
     original = (FIXTURES / "passing.md").read_text(encoding="utf-8")
     constitution.write_text(original, encoding="utf-8")
     decisions_path = repo / "decisions.md"
@@ -177,8 +177,8 @@ def test_amend_constitution_rolls_back_constitution_on_decisions_append_failure(
     """Validator passes + Constitution written + decisions append fails →
     Constitution must be restored to pre-amend state. Atomic-pair contract."""
     repo = tmp_path / "repo"
-    (repo / ".idd").mkdir(parents=True)
-    constitution = repo / ".idd" / "CONSTITUTION.md"
+    (repo / ".forge").mkdir(parents=True)
+    constitution = repo / ".forge" / "CONSTITUTION.md"
     original = (FIXTURES / "passing.md").read_text(encoding="utf-8")
     constitution.write_text(original, encoding="utf-8")
     decisions_path = repo / "decisions.md"
@@ -227,8 +227,8 @@ def test_amend_constitution_creates_missing_decisions_file(tmp_path: Path) -> No
     """Repo-level decisions.md may not exist yet on first amend. Skill must
     create it with the standard header rather than crash mid-lifecycle."""
     repo = tmp_path / "repo"
-    (repo / ".idd").mkdir(parents=True)
-    constitution = repo / ".idd" / "CONSTITUTION.md"
+    (repo / ".forge").mkdir(parents=True)
+    constitution = repo / ".forge" / "CONSTITUTION.md"
     constitution.write_text(
         (FIXTURES / "passing.md").read_text(encoding="utf-8"),
         encoding="utf-8",
@@ -258,8 +258,8 @@ def test_amend_constitution_creates_missing_decisions_file(tmp_path: Path) -> No
 
 def test_amend_constitution_rejects_empty_decisions_body(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    (repo / ".idd").mkdir(parents=True)
-    constitution = repo / ".idd" / "CONSTITUTION.md"
+    (repo / ".forge").mkdir(parents=True)
+    constitution = repo / ".forge" / "CONSTITUTION.md"
     original = (FIXTURES / "passing.md").read_text(encoding="utf-8")
     constitution.write_text(original, encoding="utf-8")
     decisions_path = repo / "decisions.md"
@@ -291,8 +291,8 @@ def test_amend_rollback_removes_decisions_file_when_we_created_it(
     a decisions-append failure must remove the auto-created file along with
     rolling back the Constitution. Otherwise the bare header file lingers."""
     repo = tmp_path / "repo"
-    (repo / ".idd").mkdir(parents=True)
-    constitution = repo / ".idd" / "CONSTITUTION.md"
+    (repo / ".forge").mkdir(parents=True)
+    constitution = repo / ".forge" / "CONSTITUTION.md"
     original = (FIXTURES / "passing.md").read_text(encoding="utf-8")
     constitution.write_text(original, encoding="utf-8")
     decisions_path = repo / "decisions.md"
@@ -332,8 +332,8 @@ def test_amend_rollback_removes_decisions_file_when_we_created_it(
 def test_amend_constitution_replaces_existing_updated_field(tmp_path: Path) -> None:
     """Cover the _replace_or_append_frontmatter replace branch (every amend after the first)."""
     repo = tmp_path / "repo"
-    (repo / ".idd").mkdir(parents=True)
-    constitution = repo / ".idd" / "CONSTITUTION.md"
+    (repo / ".forge").mkdir(parents=True)
+    constitution = repo / ".forge" / "CONSTITUTION.md"
     decisions_path = repo / "decisions.md"
     decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
 
@@ -415,7 +415,7 @@ def test_propose_starter_articles_no_orm_no_test_only_minimum(tmp_path: Path) ->
 
 def test_bootstrap_constitution_writes_starter_file(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    (repo / ".idd").mkdir(parents=True)
+    (repo / ".forge").mkdir(parents=True)
     (repo / "pyproject.toml").write_text(
         '[project]\nname = "demo"\ndependencies = ["pytest>=8.0"]\n',
         encoding="utf-8",
@@ -431,7 +431,7 @@ def test_bootstrap_constitution_writes_starter_file(tmp_path: Path) -> None:
         today=date(2026, 5, 7),
     )
 
-    final = (repo / ".idd" / "CONSTITUTION.md").read_text(encoding="utf-8")
+    final = (repo / ".forge" / "CONSTITUTION.md").read_text(encoding="utf-8")
     assert "version: 0.1.0" in final
     assert "## Article 1 — " in final
     assert "Constitution bootstrap: v0.1.0" in decisions_path.read_text(encoding="utf-8")
@@ -439,8 +439,8 @@ def test_bootstrap_constitution_writes_starter_file(tmp_path: Path) -> None:
 
 def test_bootstrap_constitution_refuses_when_file_exists(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    (repo / ".idd").mkdir(parents=True)
-    (repo / ".idd" / "CONSTITUTION.md").write_text(
+    (repo / ".forge").mkdir(parents=True)
+    (repo / ".forge" / "CONSTITUTION.md").write_text(
         '---\nversion: 0.1.0\ncreated: "2026-01-01"\n---\n', encoding="utf-8"
     )
     decisions_path = repo / "decisions.md"
@@ -459,7 +459,7 @@ def test_bootstrap_constitution_refuses_when_file_exists(tmp_path: Path) -> None
 
 def test_bootstrap_drop_removes_proposal(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
-    (repo / ".idd").mkdir(parents=True)
+    (repo / ".forge").mkdir(parents=True)
     (repo / "pyproject.toml").write_text(
         '[project]\nname = "demo"\ndependencies = ["pytest>=8.0", "sqlalchemy>=2.0"]\n',
         encoding="utf-8",
@@ -479,7 +479,7 @@ def test_bootstrap_drop_removes_proposal(tmp_path: Path) -> None:
         today=date(2026, 5, 7),
     )
 
-    final = (repo / ".idd" / "CONSTITUTION.md").read_text(encoding="utf-8")
+    final = (repo / ".forge" / "CONSTITUTION.md").read_text(encoding="utf-8")
     assert "secrets" not in final.lower()
     # At least one article (repository or test coverage) remains.
     assert "## Article 1 —" in final
@@ -491,7 +491,7 @@ def test_bootstrap_constitution_rolls_back_on_validator_failure(
 ) -> None:
     """Validator rejects the assembled body -> Constitution stays absent, decisions clean."""
     repo = tmp_path / "repo"
-    (repo / ".idd").mkdir(parents=True)
+    (repo / ".forge").mkdir(parents=True)
     (repo / "pyproject.toml").write_text(
         '[project]\nname = "demo"\ndependencies = ["pytest>=8.0"]\n',
         encoding="utf-8",
@@ -515,7 +515,7 @@ def test_bootstrap_constitution_rolls_back_on_validator_failure(
             today=date(2026, 5, 7),
         )
 
-    assert not (repo / ".idd" / "CONSTITUTION.md").exists()
+    assert not (repo / ".forge" / "CONSTITUTION.md").exists()
     assert "Constitution bootstrap" not in decisions_path.read_text(encoding="utf-8")
 
 
@@ -525,7 +525,7 @@ def test_bootstrap_constitution_rolls_back_constitution_on_decisions_append_fail
 ) -> None:
     """Decisions append fails -> freshly-written Constitution is deleted; pair stays atomic."""
     repo = tmp_path / "repo"
-    (repo / ".idd").mkdir(parents=True)
+    (repo / ".forge").mkdir(parents=True)
     (repo / "pyproject.toml").write_text(
         '[project]\nname = "demo"\ndependencies = ["pytest>=8.0"]\n',
         encoding="utf-8",
@@ -553,7 +553,7 @@ def test_bootstrap_constitution_rolls_back_constitution_on_decisions_append_fail
         )
 
     # Constitution must be gone; decisions log unchanged.
-    assert not (repo / ".idd" / "CONSTITUTION.md").exists()
+    assert not (repo / ".forge" / "CONSTITUTION.md").exists()
     assert decisions_path.read_text(encoding="utf-8") == "# Decisions\n\n"
 
 
@@ -565,7 +565,7 @@ def test_bootstrap_rollback_removes_decisions_file_when_we_created_it(
     pre-existing decisions.md must delete BOTH the freshly-written
     Constitution AND the decisions.md auto-created in this call."""
     repo = tmp_path / "repo"
-    (repo / ".idd").mkdir(parents=True)
+    (repo / ".forge").mkdir(parents=True)
     (repo / "pyproject.toml").write_text(
         '[project]\nname = "demo"\ndependencies = ["pytest>=8.0"]\n',
         encoding="utf-8",
@@ -592,7 +592,7 @@ def test_bootstrap_rollback_removes_decisions_file_when_we_created_it(
             today=date(2026, 5, 7),
         )
 
-    assert not (repo / ".idd" / "CONSTITUTION.md").exists()
+    assert not (repo / ".forge" / "CONSTITUTION.md").exists()
     assert not decisions_path.exists(), (
         "decisions.md was created by _ensure_decisions_file but never written; "
         "rollback must remove it to keep the atomic-pair contract"

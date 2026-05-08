@@ -1,4 +1,4 @@
-"""IDD validator package.
+"""FORGE validator package.
 
 Per M3 spec §5.3.6 D-8, P2a structural validators (frontmatter, capability
 uniqueness, Constitution shape, delta shape, NR placement, repo health) and

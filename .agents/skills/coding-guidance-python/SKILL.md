@@ -1,11 +1,11 @@
 ---
 name: coding-guidance-python
-description: Write, modify, and review Python tooling for the IDD plugin (state machine, frontmatter linter, schema validator) under strict ruff and mypy. Use when editing anything under tools/ or tests/, when adding a new tool module, or when reviewing a Python diff in this repo. The bar is high and small; this skill encodes it.
+description: Write, modify, and review Python tooling for the FORGE plugin (state machine, frontmatter linter, schema validator) under strict ruff and mypy. Use when editing anything under tools/ or tests/, when adding a new tool module, or when reviewing a Python diff in this repo. The bar is high and small; this skill encodes it.
 ---
 
-# Python Coding Guidance (IDD)
+# Python Coding Guidance (FORGE)
 
-IDD is a Claude Code plugin written in markdown, with a small Python tooling library that the lifecycle skills shell out to. The Python surface is intentionally tiny: pure functions, sync I/O, frozen domain enums, schema-validated JSON. The codebase rewards code that reads like it was written once on purpose. This skill is the rulebook.
+FORGE is a Claude Code plugin written in markdown, with a small Python tooling library that the lifecycle skills shell out to. The Python surface is intentionally tiny: pure functions, sync I/O, frozen domain enums, schema-validated JSON. The codebase rewards code that reads like it was written once on purpose. This skill is the rulebook.
 
 ## Sources of truth, in order
 
@@ -36,7 +36,7 @@ Modules stay small and flat. There is no `tools/state/__init__.py` package; ther
 
 ## Workflow
 
-1. **Read first.** The module you are touching, its tests, the schemas it depends on, and the relevant section of `docs/specs/2026-05-02-idd-design.md`.
+1. **Read first.** The module you are touching, its tests, the schemas it depends on, and the relevant section of `docs/specs/2026-05-02-forge-design.md`.
 2. **Pick the narrowest change** that keeps contracts, error types, and public function signatures explicit.
 3. **Tighten types as you go.** Never loosen. If mypy complains, the code is wrong, not mypy.
 4. **Update or add tests** in the same commit. See `../test-driven-development/SKILL.md` for the test discipline; this skill governs the production code.
@@ -70,15 +70,15 @@ Annotate every function. Mypy strict + `disallow_untyped_defs` will reject anyth
 
 ```python
 def feature_folder_exists(repo_root: Path, feature_id: str) -> bool:
-    """Return True when .idd/features/<feature_id>/ exists under repo_root."""
-    return (repo_root / ".idd" / "features" / feature_id).is_dir()
+    """Return True when .forge/features/<feature_id>/ exists under repo_root."""
+    return (repo_root / ".forge" / "features" / feature_id).is_dir()
 ```
 
 That signature tells the caller everything: it takes a `Path` and an id, returns a bool, has no side effects, and the docstring confirms the predicate. No `Optional` hedge, no `Any`, no comment explaining what `True` means.
 
 ### Domain enums are tuples, not loose strings
 
-The canonical "make illegal states unrepresentable" pattern in IDD:
+The canonical "make illegal states unrepresentable" pattern in FORGE:
 
 ```python
 VALID_LIFECYCLE_PHASES = (
@@ -172,7 +172,7 @@ Notes on the pattern:
 Ruff `PTH` enforces this. There is no excuse for `os.path` in 2026. Build paths with `/`:
 
 ```python
-features_dir = repo_root / ".idd" / "features" / feature_id
+features_dir = repo_root / ".forge" / "features" / feature_id
 schema_path = schemas_dir / "state.schema.json"
 ```
 
@@ -284,7 +284,7 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         Exit code: 0 on success, 1 on any validation failure.
     """
-    parser = argparse.ArgumentParser(description="Lint IDD skill/command frontmatter.")
+    parser = argparse.ArgumentParser(description="Lint FORGE skill/command frontmatter.")
     parser.add_argument("--schema", required=True, type=Path)
     parser.add_argument("paths", nargs="+", type=Path)
     args = parser.parse_args(argv)
@@ -333,10 +333,10 @@ Cross-module imports stay shallow. `tools/check_schemas.py` should not import fr
 If you find yourself typing one of these, stop and ask whether you're in the right repo:
 
 - Data-validation libraries that wrap JSON Schema — schemas live in JSON, validators live in `jsonschema`. Nothing more.
-- Anything from the async stack — `asyncio`, `await`, async HTTP or MQTT clients. IDD is sync.
+- Anything from the async stack — `asyncio`, `await`, async HTTP or MQTT clients. FORGE is sync.
 - Structured-logging frameworks or stdlib `logging` configured at module scope — CLI tools print, tests assert. Add logging only when there's a clear caller asking for it.
 - `os.path`, `os.getcwd()` — `pathlib.Path` and explicit args.
-- `Protocol` + dependency injection — IDD tools are pure functions; pass values, not seams.
+- `Protocol` + dependency injection — FORGE tools are pure functions; pass values, not seams.
 - `subprocess` with `shell=True` — ruff `S` will reject it. Always the list form, always `check=True`.
 
 ---
@@ -351,7 +351,7 @@ If you find yourself typing one of these, stop and ask whether you're in the rig
 | `Any` showing up in a public signature | Stop. Find the type. `dict[str, Any]` for opaque JSON payloads is the only acceptable case, and even then keep it at the boundary. |
 | Touching > 3 modules in one change | Stop and re-plan. The change is bigger than it looks. |
 | Reaching for a third-party dep | Check `pyproject.toml`. If it isn't there, the bar is high — does the stdlib + jsonschema + PyYAML actually fail to cover this? |
-| Considering async | You are not. IDD is sync. |
+| Considering async | You are not. FORGE is sync. |
 
 ## Anti-patterns (with why)
 

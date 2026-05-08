@@ -230,5 +230,5 @@ def test_main_denies_agent_payload_with_modern_pretooluse_shape() -> None:
     assert output["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
     assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert output["hookSpecificOutput"]["permissionDecisionReason"].startswith(
-        "IDD context-budget hook:"
+        "FORGE context-budget hook:"
     )

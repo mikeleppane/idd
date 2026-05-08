@@ -128,8 +128,8 @@ def _ac_token_pattern(idx: int) -> re.Pattern[str]:
 def validate_scenarios(path: Path) -> list[Finding]:
     """Check scenario↔acceptance mapping in a SPEC.md.
 
-    Migrates the ``idd-scenarios`` self-review block
-    (``skills/idd-scenarios/SKILL.md:36-40``).
+    Migrates the ``forge-scenarios`` self-review block
+    (``skills/forge-scenarios/SKILL.md:36-40``).
 
     Rules:
         1. SPEC must declare ``# Scenarios`` (BLOCK if absent).
@@ -137,7 +137,7 @@ def validate_scenarios(path: Path) -> list[Finding]:
            ``# Acceptance Criteria`` section only) has ≥1 scenario block whose
            title or body contains ``crit-N`` / ``criterion-N`` /
            ``criterion: N`` / ``Scenario N`` (HIGH). ACs ending with
-           ``(measurable)`` are exempt per ``skills/idd-spec/SKILL.md:34``.
+           ``(measurable)`` are exempt per ``skills/forge-spec/SKILL.md:34``.
         3. Every scenario block references ≥1 Acceptance criterion (HIGH;
            orphan).
         4. No scenario block (title OR Given/When/Then body) contains the
@@ -167,7 +167,7 @@ def validate_scenarios(path: Path) -> list[Finding]:
 
     for idx, is_measurable in ac_entries:
         if is_measurable:
-            continue  # exempt per skills/idd-spec/SKILL.md:34
+            continue  # exempt per skills/forge-spec/SKILL.md:34
         pat = _ac_token_pattern(idx)
         if not any(pat.search(title) or pat.search(body) for title, body in blocks):
             findings.append(
@@ -207,7 +207,7 @@ def validate_scenarios(path: Path) -> list[Finding]:
 def validate_anchors(path: Path, *, repo_root: Path) -> list[Finding]:
     """Resolve ``path:Symbol`` rows in SPEC ``# Codebase Anchors`` against repo_root.
 
-    Migrates ``skills/idd-spec/SKILL.md:30`` — Codebase Anchors must point at
+    Migrates ``skills/forge-spec/SKILL.md:30`` — Codebase Anchors must point at
     real files and (where supplied) real symbols.
 
     Rules:

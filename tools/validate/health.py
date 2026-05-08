@@ -1,4 +1,4 @@
-"""Repo-wide IDD health validator (M3 §5.3.6 D-HEALTH)."""
+"""Repo-wide FORGE health validator (M3 §5.3.6 D-HEALTH)."""
 
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ def _check_feature_payload(
                 "health",
                 entry,
                 f"feature {entry.name!r} is at current_phase=done but not "
-                f"archived; run /idd:ship or tools.archive.archive_feature",
+                f"archived; run /forge:ship or tools.archive.archive_feature",
             ),
         )
         return findings
@@ -195,7 +195,7 @@ def _check_change_entry(entry: Path, canonical_root: Path) -> list[Finding]:
                 "health",
                 proposal,
                 f"change {entry.name!r} is approved but not merged; "
-                f"run /idd:ship --change {entry.name}",
+                f"run /forge:ship --change {entry.name}",
             ),
         )
     return findings
@@ -229,7 +229,7 @@ def _check_canonical_entry(entry: Path) -> list[Finding]:
 
 
 def validate_health(repo_root: Path) -> list[Finding]:
-    """Repo-wide IDD health scan per M3 spec §5.3.6 D-HEALTH.
+    """Repo-wide FORGE health scan per M3 spec §5.3.6 D-HEALTH.
 
     Read-only. Each finding has severity + remediation hint embedded in message.
     Severities mirror the spec table directly:
@@ -250,7 +250,7 @@ def validate_health(repo_root: Path) -> list[Finding]:
         | Constitution article count >=16                                | BLOCK    |
 
     Args:
-        repo_root: Repository root containing the .idd/ tree.
+        repo_root: Repository root containing the .forge/ tree.
 
     Returns:
         List of Finding records. Empty list means all checks clean.
@@ -260,32 +260,32 @@ def validate_health(repo_root: Path) -> list[Finding]:
         `validate_constitution` carry their source validator's `target` field
         (e.g. ``"capability-uniqueness"``, ``"constitution"``) rather than
         ``"health"``. This preserves provenance so the user knows which
-        sub-validator produced each finding when ``/idd:validate --target
+        sub-validator produced each finding when ``/forge:validate --target
         health`` aggregates results.
     """
     findings: list[Finding] = []
-    idd_root = repo_root / ".idd"
-    if not idd_root.is_dir():
+    forge_root = repo_root / ".forge"
+    if not forge_root.is_dir():
         return findings
 
     findings.extend(validate_capability_uniqueness(repo_root))
 
-    constitution = idd_root / "CONSTITUTION.md"
+    constitution = forge_root / "CONSTITUTION.md"
     if constitution.exists():
         findings.extend(validate_constitution(constitution))
 
     state_schema = _load_schema("state.schema.json")
     state_validator = _build_validator(state_schema)
 
-    features_root = idd_root / "features"
+    features_root = forge_root / "features"
     if features_root.is_dir():
         for entry in sorted(features_root.iterdir()):
             if not entry.is_dir() or entry.name == "archive":
                 continue
             findings.extend(_check_feature_entry(entry, state_validator))
 
-    canonical_root = idd_root / "specs"
-    changes_root = idd_root / "changes"
+    canonical_root = forge_root / "specs"
+    changes_root = forge_root / "changes"
     if changes_root.is_dir():
         for entry in sorted(changes_root.iterdir()):
             if not entry.is_dir() or entry.name == "archive":

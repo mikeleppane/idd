@@ -1,6 +1,6 @@
-# AGENTS.md — IDD Discovery Manifest
+# AGENTS.md — FORGE Discovery Manifest
 
-This file lets non-Claude tools (Cursor, Aider, Codex) discover the same IDD skills and commands the Claude Code plugin uses. The skills and commands are pure markdown — no build step, no codegen.
+This file lets non-Claude tools (Cursor, Aider, Codex) discover the same FORGE skills and commands the Claude Code plugin uses. The skills and commands are pure markdown — no build step, no codegen.
 
 > **Status:** Cursor/Aider/Codex compatibility is documented intent in M1; live verification ships in M5.
 
@@ -8,21 +8,21 @@ This file lets non-Claude tools (Cursor, Aider, Codex) discover the same IDD ski
 
 | Name | Path | Auto-load | Purpose |
 |---|---|---|---|
-| `idd-spec`              | `skills/idd-spec/SKILL.md`              | default | Author a feature SPEC.md following the IDD template. |
-| `idd-scenarios`         | `skills/idd-scenarios/SKILL.md`         | explicit | Standard-tier scenarios: expand SPEC.md § Scenarios into rigorous Gherkin and emit `.feature` files when a BDD framework is detected. |
-| `idd-plan`              | `skills/idd-plan/SKILL.md`              | explicit | Standard-tier plan: file-bound, acceptance-mapped slice + wave PLAN.md with a Verified Dependencies section. |
-| `idd-crucible`          | `skills/idd-crucible/SKILL.md`          | explicit | Standard-tier crucible ritual: assumptions inversion → adversarial Q&A → pre-mortem, producing UNDERSTANDING.md. |
-| `idd-review`            | `skills/idd-review/SKILL.md`            | explicit | Standard-tier review: cheap self-review + optional heavy subagent pass + convergence loop on HIGH+ findings (max 3 cycles). Targets PLAN.md or code diff. |
-| `idd-execute`           | `skills/idd-execute/SKILL.md`           | explicit | Run the execute phase. Focused tier drives directly from SPEC.md acceptance criteria; standard / full tiers drive slice-by-slice from PLAN.md with wave parallelism and per-subagent context budgets. |
-| `idd-verify`            | `skills/idd-verify/SKILL.md`            | explicit | Three-layer verification: code-audit + Layer 2 scenario execution (when a BDD framework is detected via `tools.bdd_detect`) + conversational UAT. |
-| `idd-ship`              | `skills/idd-ship/SKILL.md`              | explicit | Standard-tier ship: write the canonical capability SPEC.md and archive the feature folder. M2 supports first-ship only; delta proposals are M3+. |
-| `idd-next`              | `skills/idd-next/SKILL.md`              | explicit | Resolve and print or dispatch the next phase command from `state.json`. Read-only. |
-| `idd-status`            | `skills/idd-status/SKILL.md`            | explicit | One-line status of the active feature: phase, tier, last commit. Read-only. |
-| `idd-validate`          | `skills/idd-validate/SKILL.md`          | explicit | Run the structural and semantic validator over IDD artifacts. Per-file targets: `spec`, `plan`, `delta`, `scenarios`, `anchors`, `spec-semantic`, `plan-tasks`, `verified-deps`. Per-folder: `deviations`. Repo-wide: `constitution`, `ship`, `health`, `all`. `--check-registries` opt-in for live registry probes (offline default). Read-only. |
-| `idd-context-budget`    | `skills/idd-context-budget/SKILL.md`    | default | Refuse subagent dispatches that lack a context-budget block. |
-| `idd-subagent-dispatch` | `skills/idd-subagent-dispatch/SKILL.md` | default | Helper rules for dispatching context-bounded subagents. |
-| `idd-constitution`        | `skills/idd-constitution/SKILL.md`        | doc-only | Documents the loader+filter contract. Phase skills invoke `tools.constitution.load_and_filter` directly; this skill has `disable-model-invocation: true`. |
-| `idd-amend-constitution`  | `skills/idd-amend-constitution/SKILL.md`  | explicit | $EDITOR-driven Constitution edits with atomic-pair (Constitution + decisions.md) write, semver bump; `--bootstrap` mode seeds a starter Constitution from project signals. |
+| `forge-spec`              | `skills/forge-spec/SKILL.md`              | default | Author a feature SPEC.md following the FORGE template. |
+| `forge-scenarios`         | `skills/forge-scenarios/SKILL.md`         | explicit | Standard-tier scenarios: expand SPEC.md § Scenarios into rigorous Gherkin and emit `.feature` files when a BDD framework is detected. |
+| `forge-plan`              | `skills/forge-plan/SKILL.md`              | explicit | Standard-tier plan: file-bound, acceptance-mapped slice + wave PLAN.md with a Verified Dependencies section. |
+| `forge-crucible`          | `skills/forge-crucible/SKILL.md`          | explicit | Standard-tier crucible ritual: assumptions inversion → adversarial Q&A → pre-mortem, producing UNDERSTANDING.md. |
+| `forge-review`            | `skills/forge-review/SKILL.md`            | explicit | Standard-tier review: cheap self-review + optional heavy subagent pass + convergence loop on HIGH+ findings (max 3 cycles). Targets PLAN.md or code diff. |
+| `forge-execute`           | `skills/forge-execute/SKILL.md`           | explicit | Run the execute phase. Focused tier drives directly from SPEC.md acceptance criteria; standard / full tiers drive slice-by-slice from PLAN.md with wave parallelism and per-subagent context budgets. |
+| `forge-verify`            | `skills/forge-verify/SKILL.md`            | explicit | Three-layer verification: code-audit + Layer 2 scenario execution (when a BDD framework is detected via `tools.bdd_detect`) + conversational UAT. |
+| `forge-ship`              | `skills/forge-ship/SKILL.md`              | explicit | Standard-tier ship: write the canonical capability SPEC.md and archive the feature folder. M2 supports first-ship only; delta proposals are M3+. |
+| `forge-next`              | `skills/forge-next/SKILL.md`              | explicit | Resolve and print or dispatch the next phase command from `state.json`. Read-only. |
+| `forge-status`            | `skills/forge-status/SKILL.md`            | explicit | One-line status of the active feature: phase, tier, last commit. Read-only. |
+| `forge-validate`          | `skills/forge-validate/SKILL.md`          | explicit | Run the structural and semantic validator over FORGE artifacts. Per-file targets: `spec`, `plan`, `delta`, `scenarios`, `anchors`, `spec-semantic`, `plan-tasks`, `verified-deps`. Per-folder: `deviations`. Repo-wide: `constitution`, `ship`, `health`, `all`. `--check-registries` opt-in for live registry probes (offline default). Read-only. |
+| `forge-context-budget`    | `skills/forge-context-budget/SKILL.md`    | default | Refuse subagent dispatches that lack a context-budget block. |
+| `forge-subagent-dispatch` | `skills/forge-subagent-dispatch/SKILL.md` | default | Helper rules for dispatching context-bounded subagents. |
+| `forge-constitution`        | `skills/forge-constitution/SKILL.md`        | doc-only | Documents the loader+filter contract. Phase skills invoke `tools.constitution.load_and_filter` directly; this skill has `disable-model-invocation: true`. |
+| `forge-amend-constitution`  | `skills/forge-amend-constitution/SKILL.md`  | explicit | $EDITOR-driven Constitution edits with atomic-pair (Constitution + decisions.md) write, semver bump; `--bootstrap` mode seeds a starter Constitution from project signals. |
 
 "Default" auto-load = Claude Code may invoke based on description match. "Explicit" = `disable-model-invocation: true` in frontmatter; only invoked through commands or by name.
 
@@ -30,18 +30,18 @@ This file lets non-Claude tools (Cursor, Aider, Codex) discover the same IDD ski
 
 | Slash | Path | Purpose |
 |---|---|---|
-| `/idd:spec`      | `commands/spec.md`      | Run the spec phase: write `.idd/features/<id>/SPEC.md`. |
-| `/idd:scenarios` | `commands/scenarios.md` | Run the scenarios phase: expand SPEC.md § Scenarios into Gherkin and (when supported) `.feature` files. Standard/full tier only. |
-| `/idd:plan`      | `commands/plan.md`      | Run the plan phase: author PLAN.md with vertical slices, waves, and Verified Dependencies. Standard/full tier only. |
-| `/idd:crucible`  | `commands/crucible.md`  | Run the crucible phase: three-step adversarial ritual producing UNDERSTANDING.md. Standard/full tier only. |
-| `/idd:review`    | `commands/review.md`    | Run the review phase against the active feature. `--target plan` (default after crucible) or `--target code` (default after execute). Cross-AI review is M4 territory. |
-| `/idd:execute`   | `commands/execute.md`   | Run the execute phase against the active feature. |
-| `/idd:verify`    | `commands/verify.md`    | Run the verify phase against the active feature. |
-| `/idd:ship`      | `commands/ship.md`      | Run the ship phase: write the canonical capability SPEC.md and archive the feature. First-ship only in M2; delta proposals are M3+. |
-| `/idd:next`      | `commands/next.md`      | Show or run the next phase command for the active feature. Flags: `--feature <id>`, `--run`. |
-| `/idd:status`    | `commands/status.md`    | One-line feature status: phase, tier, last commit. Flags: `--feature <id>`, `--verbose`. |
-| `/idd:validate`  | `commands/validate.md`  | Run the structural and semantic validator. Flags: `--target <spec\|plan\|delta\|constitution\|ship\|health\|scenarios\|anchors\|spec-semantic\|plan-tasks\|verified-deps\|deviations\|all>`, optional path, `--repo-root <path>`, `--check-registries` (off by default; live registry probes for `verified-deps` / `all`). Exit 0 / 1 (BLOCK\|HIGH) / 2 (usage). |
-| `/idd:amend-constitution` | `commands/amend-constitution.md` | Open `.idd/CONSTITUTION.md` in $EDITOR for atomic edit + semver bump + decisions.md ADR entry. Pass `--bootstrap` to seed an initial Constitution from project signals. |
+| `/forge:spec`      | `commands/spec.md`      | Run the spec phase: write `.forge/features/<id>/SPEC.md`. |
+| `/forge:scenarios` | `commands/scenarios.md` | Run the scenarios phase: expand SPEC.md § Scenarios into Gherkin and (when supported) `.feature` files. Standard/full tier only. |
+| `/forge:plan`      | `commands/plan.md`      | Run the plan phase: author PLAN.md with vertical slices, waves, and Verified Dependencies. Standard/full tier only. |
+| `/forge:crucible`  | `commands/crucible.md`  | Run the crucible phase: three-step adversarial ritual producing UNDERSTANDING.md. Standard/full tier only. |
+| `/forge:review`    | `commands/review.md`    | Run the review phase against the active feature. `--target plan` (default after crucible) or `--target code` (default after execute). Cross-AI review is M4 territory. |
+| `/forge:execute`   | `commands/execute.md`   | Run the execute phase against the active feature. |
+| `/forge:verify`    | `commands/verify.md`    | Run the verify phase against the active feature. |
+| `/forge:ship`      | `commands/ship.md`      | Run the ship phase: write the canonical capability SPEC.md and archive the feature. First-ship only in M2; delta proposals are M3+. |
+| `/forge:next`      | `commands/next.md`      | Show or run the next phase command for the active feature. Flags: `--feature <id>`, `--run`. |
+| `/forge:status`    | `commands/status.md`    | One-line feature status: phase, tier, last commit. Flags: `--feature <id>`, `--verbose`. |
+| `/forge:validate`  | `commands/validate.md`  | Run the structural and semantic validator. Flags: `--target <spec\|plan\|delta\|constitution\|ship\|health\|scenarios\|anchors\|spec-semantic\|plan-tasks\|verified-deps\|deviations\|all>`, optional path, `--repo-root <path>`, `--check-registries` (off by default; live registry probes for `verified-deps` / `all`). Exit 0 / 1 (BLOCK\|HIGH) / 2 (usage). |
+| `/forge:amend-constitution` | `commands/amend-constitution.md` | Open `.forge/CONSTITUTION.md` in $EDITOR for atomic edit + semver bump + decisions.md ADR entry. Pass `--bootstrap` to seed an initial Constitution from project signals. |
 
 ## Templates
 
@@ -68,14 +68,14 @@ Subagent dispatches that touch Python code MUST cite all four in the dispatch br
 
 ## Hooks
 
-The `hooks/` directory contains a `PreToolUse` hook that enforces the IDD subagent context-budget contract. In Claude Code it is wired automatically via `.claude-plugin/plugin.json`. In other tools, run `python3 hooks/check_budget.py` manually before each subagent dispatch.
+The `hooks/` directory contains a `PreToolUse` hook that enforces the FORGE subagent context-budget contract. In Claude Code it is wired automatically via `.claude-plugin/plugin.json`. In other tools, run `python3 hooks/check_budget.py` manually before each subagent dispatch.
 
 The PreToolUse budget hook is permissive on the optional `articles[]` field carrying filtered Constitution articles for subagent context (M3 P3). Tests in `tests/hooks/test_check_budget_articles.py` pin this permissiveness.
 
 ## Tool Mapping
 
 - **Claude Code:** `.claude-plugin/plugin.json` is the canonical loader; commands appear as slash commands and skills load via Claude Code's skill discovery.
-- **Cursor:** reference skills via `@skills/idd-spec/SKILL.md` etc. Commands are documented prompts; copy the body of `commands/spec.md` when running.
+- **Cursor:** reference skills via `@skills/forge-spec/SKILL.md` etc. Commands are documented prompts; copy the body of `commands/spec.md` when running.
 - **Aider:** load `skills/<name>/SKILL.md` as system prompts; run commands by pasting their contents.
 - **Codex CLI:** use `--system` to load a chosen skill, then prompt with the command body.
 

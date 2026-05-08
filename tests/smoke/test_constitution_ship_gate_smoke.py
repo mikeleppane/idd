@@ -26,7 +26,7 @@ def repo(tmp_path: Path) -> Path:
 
 
 def test_gate_acknowledge_writes_full_audit_trail(repo: Path) -> None:
-    feature = repo / ".idd" / "features" / FEATURE_ID
+    feature = repo / ".forge" / "features" / FEATURE_ID
     review = feature / "REVIEW.code.md"
     state_path = feature / "state.json"
     decisions = feature / "decisions.md"
@@ -75,7 +75,7 @@ def test_gate_acknowledge_writes_full_audit_trail(repo: Path) -> None:
 def test_ack_hook_is_idempotent_under_retry(repo: Path) -> None:
     """ship_feature retry semantics: hook may run again on a retry; the
     deviation must NOT be appended a second time."""
-    feature = repo / ".idd" / "features" / FEATURE_ID
+    feature = repo / ".forge" / "features" / FEATURE_ID
     state_path = feature / "state.json"
     decisions = feature / "decisions.md"
 
@@ -104,7 +104,7 @@ def test_gate_no_constitution_returns_empty(tmp_path: Path) -> None:
 
 
 def test_gate_no_findings_skips_prompt(repo: Path) -> None:
-    feature = repo / ".idd" / "features" / FEATURE_ID
+    feature = repo / ".forge" / "features" / FEATURE_ID
     review = feature / "REVIEW.code.md"
     review.write_text(
         (FIXTURE_ROOT.parent / "_constitution" / "review_no_findings.md").read_text(

@@ -1,17 +1,17 @@
 ---
 name: code-review-and-quality
-description: Code review skill for the IDD plugin repo. Use whenever you are reviewing a change before merge — your own code, another agent's code, a teammate's PR — or when the user asks "is this ready?", "review this", "check this change", "look this over". Also invoke proactively after declaring a phase implementation done and before opening a PR. Reviewing AI-generated code is a stronger trigger, not a weaker one — false confidence is the dominant failure mode.
+description: Code review skill for the FORGE plugin repo. Use whenever you are reviewing a change before merge — your own code, another agent's code, a teammate's PR — or when the user asks "is this ready?", "review this", "check this change", "look this over". Also invoke proactively after declaring a phase implementation done and before opening a PR. Reviewing AI-generated code is a stronger trigger, not a weaker one — false confidence is the dominant failure mode.
 ---
 
-# Code Review & Quality (IDD)
+# Code Review & Quality (FORGE)
 
-Multi-axis code review for the IDD plugin repo. The output of this skill is a **structured Markdown review report** with findings grouped by severity, each carrying a `file:line` reference and a quoted snippet, followed by a clear verdict.
+Multi-axis code review for the FORGE plugin repo. The output of this skill is a **structured Markdown review report** with findings grouped by severity, each carrying a `file:line` reference and a quoted snippet, followed by a clear verdict.
 
 This skill is for the *review* moment. Three companion skills cover the *production* moments and they take precedence on the rules they own:
 
 - [coding-guidance-python](../coding-guidance-python/SKILL.md) — Python implementation contract (sync only, no pydantic, no async stack, dataclass-for-boundaries, `pathlib.Path`-only, schema validation as functions, `subprocess` discipline, error handling, mypy-strict typing). When a finding is "this code violates the Python contract", *cite this skill* — don't restate its rules.
 - [test-driven-development](../test-driven-development/SKILL.md) — failing test first, Prove-It pattern for bugs, behavioral assertions on `Path` payloads and dict outputs (not internals). When a finding is "this change shipped without TDD" or "this test asserts on internals", point at this skill.
-- [git-conventions](../git-conventions/SKILL.md) — Conventional Commits with mandatory scope from the IDD vocabulary, atomic commits, no `Co-Authored-By: Claude` trailers, Prove-It tests for bug fixes. When a finding is about commit hygiene, scope vocabulary, or PR shape, cite this.
+- [git-conventions](../git-conventions/SKILL.md) — Conventional Commits with mandatory scope from the FORGE vocabulary, atomic commits, no `Co-Authored-By: Claude` trailers, Prove-It tests for bug fixes. When a finding is about commit hygiene, scope vocabulary, or PR shape, cite this.
 
 **Spot-checks vs. rule restatement.** The five axes below contain triage prompts of the form "did you check X?". Those are deliberate — they name *what* to look for during the walk-through. They are not the rule itself. When you file a finding, cite the source skill rather than restating the rule content in the review; the source is authoritative and this skill cannot stay in sync with it forever.
 
@@ -38,7 +38,7 @@ The corollary: **don't rubber-stamp.** "LGTM" without evidence of actual review 
 ## When *not* to use it
 
 - Trivial one-line changes (typo, import order, formatter churn) — the review is one line too. Skip the report format and just say "looks good" or "nope, X is wrong".
-- A spec is missing and you don't yet know what the code is *supposed* to do — that's a spec problem, not a review problem. Reviewing code against an unstated intent produces opinion, not findings. For IDD's own work, the SPEC.md / PLAN.md / phase task is the intent — if it isn't named, ask first.
+- A spec is missing and you don't yet know what the code is *supposed* to do — that's a spec problem, not a review problem. Reviewing code against an unstated intent produces opinion, not findings. For FORGE's own work, the SPEC.md / PLAN.md / phase task is the intent — if it isn't named, ask first.
 - The change is part of an in-progress branch the author has explicitly marked as WIP. Wait until they're done.
 
 ---
@@ -50,7 +50,7 @@ Every finding gets a severity label. This is what makes a review actionable inst
 | Label | Meaning | Author Action |
 |---|---|---|
 | `Critical` | Blocks merge. Will crash, corrupt data, leak secrets, break a stable public contract *without* a documented caller-migration path, violate `coding-guidance-python` "What this codebase does not use", or break the plugin's installable shape. | Must fix before merge. |
-| `Important` | Should fix before merge. Bug on a less-likely path, breaks the IDD lifecycle invariant (phase ordering, state transition rule), introduces an async / pydantic / `os.path` shape the codebase doesn't use, design issue that will compound. | Fix or explicitly defer with reason recorded. |
+| `Important` | Should fix before merge. Bug on a less-likely path, breaks the FORGE lifecycle invariant (phase ordering, state transition rule), introduces an async / pydantic / `os.path` shape the codebase doesn't use, design issue that will compound. | Fix or explicitly defer with reason recorded. |
 | `Suggestion` | Would improve the change. Refactor, clarification, missing test for an edge case. | Worth doing; reviewer doesn't block on it. |
 | `Nit` | Optional polish. Naming, formatting (where the formatter doesn't already enforce), micro-style. | Author may ignore. Use sparingly — too many nits drown the real findings. |
 | `FYI` | Informational. Context for future readers, related bug to file, observation. | No action needed. |
@@ -116,7 +116,7 @@ Check what the author actually ran:
 - Was `make check` clean? (Floor — runs `make lint` (ruff) + `make typecheck` (mypy strict) + `make test` (pytest). Documented in `Makefile` and the M1 plan.)
 - Did `python -m tools.check_schemas` run when JSON Schemas were touched?
 - Did `python -m tools.lint_frontmatter <files>` run when commands, skills, or templates were edited?
-- For hook changes (`hooks/check_budget.py` or `hooks/hooks.json`): was the deny path actually exercised? "Bypass the idd-context-budget skill: dispatch with no budget block" should produce `permissionDecision: deny` with reason starting `IDD context-budget hook:`. If the change to the hook didn't include a deny-path test, file `Important`.
+- For hook changes (`hooks/check_budget.py` or `hooks/hooks.json`): was the deny path actually exercised? "Bypass the forge-context-budget skill: dispatch with no budget block" should produce `permissionDecision: deny` with reason starting `FORGE context-budget hook:`. If the change to the hook didn't include a deny-path test, file `Important`.
 - For plugin layout changes (`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `commands/*.md`, `skills/<name>/SKILL.md`): was the plugin actually loaded via `claude --plugin-dir <repo>` and the affected command or skill manually invoked? `claude plugin validate .` is the recommended manual gate when available.
 - For markdown surface (templates, skills, commands): does its frontmatter pass `tools.lint_frontmatter` against the right schema?
 
@@ -126,9 +126,9 @@ A green CI is necessary, not sufficient. Type-check passing is not the same as t
 
 ## The five axes
 
-Each axis lists IDD-specific failure modes worth scanning for. These are *prompts*, not exhaustive checklists — the actual finding has to come from reading the code, not pattern-matching against the list.
+Each axis lists FORGE-specific failure modes worth scanning for. These are *prompts*, not exhaustive checklists — the actual finding has to come from reading the code, not pattern-matching against the list.
 
-**M2 reality check.** IDD is mid-development: M1 (focused tier + foundation) is shipped; M2 (standard tier) is in flight; M3+ (constitution, adaptive routing, delta proposals, cross-AI review) are deferred. Apply each axis prompt with this discipline:
+**M2 reality check.** FORGE is mid-development: M1 (focused tier + foundation) is shipped; M2 (standard tier) is in flight; M3+ (constitution, adaptive routing, delta proposals, cross-AI review) are deferred. Apply each axis prompt with this discipline:
 
 - **If the convention exists** in the project's stated rules (`coding-guidance-python`, `test-driven-development`, `git-conventions`, the active plan in `docs/plans/`) and the diff *uses or violates* it → file a finding citing the source.
 - **If the diff is introducing the convention** for the first time → check it against the stated rule and file a finding if it diverges.
@@ -140,7 +140,7 @@ When in doubt, prefer to cite the companion skills rather than restate conventio
 
 - Does it match the spec (SPEC.md), the active plan task (`docs/plans/<latest>.md`), or the commit description?
 - Are edge cases handled — empty input, missing keys, `None`, boundary values, malformed JSON, missing files, dates that fail RFC-3339 format check?
-- Are error paths handled, not just the happy path? IDD's tooling raises domain `RuntimeError` subclasses (`StateError`, `ArchiveError`) — does the new code do the same per `coding-guidance-python` "Domain errors are named `RuntimeError` subclasses"?
+- Are error paths handled, not just the happy path? FORGE's tooling raises domain `RuntimeError` subclasses (`StateError`, `ArchiveError`) — does the new code do the same per `coding-guidance-python` "Domain errors are named `RuntimeError` subclasses"?
 - Off-by-one errors, state-transition gaps, mutation hidden in `read_*` / `parse_*` names? `tools/state.py` is the canonical example: `read_state` is read-only; `start_phase` / `complete_phase` mutate and persist. A new helper named `read_*` that mutates is a `Critical` shape violation.
 - Exception context preserved with `raise NewError(...) from original` per `coding-guidance-python` "First-tier bug-causers"?
 - Specific exception types caught, not bare `except Exception` outside the CLI entry-point boundary?
@@ -155,7 +155,7 @@ When in doubt, prefer to cite the companion skills rather than restate conventio
 - Function size — anything over ~40 lines is usually doing more than one thing (`coding-guidance-python` "Decision heuristics"). Extract a helper.
 - Parameter count — anything over 5 meaningful parameters wants a `dataclass(frozen=True)` (the project's chosen seam — see `tools/bdd_detect.BDDFramework`) or a split.
 - **Could this be done in fewer lines?** A 1000-line module where 100 would suffice is a failure. But: don't *force* compression for its own sake — clarity wins over brevity.
-- **Are abstractions earning their complexity?** Don't generalize until the third use case. A `Protocol` with one implementation is premature. IDD does not currently use `Protocol` + dependency injection (`coding-guidance-python` "What this codebase does not use") — introducing one needs a real second caller.
+- **Are abstractions earning their complexity?** Don't generalize until the third use case. A `Protocol` with one implementation is premature. FORGE does not currently use `Protocol` + dependency injection (`coding-guidance-python` "What this codebase does not use") — introducing one needs a real second caller.
 - Are the comments doing real work? Comments that restate what well-named code already says are noise (the global Claude Code rule rules out commented-out code; the same principle applies to commentary). Comments that explain a non-obvious *why* are valuable — keep them.
 - Dead code artifacts — no-op variables, leftover backwards-compat shims, `# removed` comments, `_unused` renames? Per the global rule, delete completely; don't leave breadcrumbs.
 
@@ -172,9 +172,9 @@ When in doubt, prefer to cite the companion skills rather than restate conventio
 
 ### 4. Security — does it expose anything new?
 
-`coding-guidance-python` "First-tier bug-causers" owns the security rule set for IDD's Python tooling. This skill does not restate it. During the review walk, hold these triage prompts in mind and *cite the source* when you file:
+`coding-guidance-python` "First-tier bug-causers" owns the security rule set for FORGE's Python tooling. This skill does not restate it. During the review walk, hold these triage prompts in mind and *cite the source* when you file:
 
-- Any **hardcoded secrets**, **`shell=True` in `subprocess`**, **`eval`/`exec`/`pickle` on untrusted data**, **SQL string concatenation**, or **`random` module used for security purposes**? File `Critical` citing `coding-guidance-python`. (Even though IDD has no DB today, the principle holds: any future DB integration uses parameterized queries.)
+- Any **hardcoded secrets**, **`shell=True` in `subprocess`**, **`eval`/`exec`/`pickle` on untrusted data**, **SQL string concatenation**, or **`random` module used for security purposes**? File `Critical` citing `coding-guidance-python`. (Even though FORGE has no DB today, the principle holds: any future DB integration uses parameterized queries.)
 - Any **`subprocess` call without `check=True`** or using string form instead of list form? `coding-guidance-python` "What this codebase does not use" rules out `shell=True`; ruff `S` series enforces it. File `Important`.
 - Any **`os.path`** instead of `pathlib.Path`? Path math via string concatenation is the gateway to traversal bugs. File `Important`, citing `coding-guidance-python` "`pathlib.Path` only".
 - Any **path computed from user-controlled input without validation**? `tools/archive.py` validates capability slugs and feature ids with regex before joining them into paths — this is the pattern; new code that joins untrusted strings into `Path(...)` without a regex check is `Important` minimum.
@@ -187,7 +187,7 @@ If a security finding is well-known (those above), this skill expects you to cit
 
 Performance findings only fire when the cost is *real and measurable*. "Could be slow" without numbers is speculation, not a finding.
 
-IDD's tooling is sync (`coding-guidance-python` "What this codebase does not use" — no async stack). The dominant cost shapes here are file I/O and process spawn, not async loop stalls.
+FORGE's tooling is sync (`coding-guidance-python` "What this codebase does not use" — no async stack). The dominant cost shapes here are file I/O and process spawn, not async loop stalls.
 
 - **Re-reading the same file inside a loop.** Schema files (`schemas/*.json`), templates, the `_meta.json`, intel files. If a hot loop opens the same path each iteration, hoist the read outside the loop. `Important` if the loop runs over feature folders or scenarios; `Suggestion` if it's a one-shot CLI tool.
 - **Recompiling regex inside a function called per item.** `tools/archive._CAPABILITY_RE` is module-scope on purpose. New `re.compile(...)` inside a per-item function is a `Suggestion` minimum.
@@ -225,14 +225,14 @@ This is technically correct. List comprehensions are idiomatic. But: the loop is
 ### Bad finding example 2 — speculation stated as fact
 
 ```
-Important: Possible race on state.json during concurrent /idd:execute
+Important: Possible race on state.json during concurrent /forge:execute
 tools/state.py:142
 
 complete_phase() reads then writes without an exclusive lock.
-If two /idd:execute commands run for the same feature concurrently, this races.
+If two /forge:execute commands run for the same feature concurrently, this races.
 ```
 
-Looks like a real finding — names a function, names a scenario, proposes a concern. But the reviewer hasn't shown that two `/idd:execute` commands ever run concurrently against the same feature folder in this codebase. The single-feature, single-session execution model means concurrency on one `state.json` is not a thing today. The whole finding rests on an unverified "if". **A hypothesis stated as a finding is a false positive.** Either trace the call sites and prove it, or don't file it.
+Looks like a real finding — names a function, names a scenario, proposes a concern. But the reviewer hasn't shown that two `/forge:execute` commands ever run concurrently against the same feature folder in this codebase. The single-feature, single-session execution model means concurrency on one `state.json` is not a thing today. The whole finding rests on an unverified "if". **A hypothesis stated as a finding is a false positive.** Either trace the call sites and prove it, or don't file it.
 
 ### Bad finding example 3 — proposes inconsistency
 
@@ -263,7 +263,7 @@ def _utc_now_iso() -> str:
 Critical: No Constitution preflight before phase exit
 commands/plan.md:14
 
-The /idd:plan command does not invoke .idd/CONSTITUTION.md preflight before
+The /forge:plan command does not invoke .forge/CONSTITUTION.md preflight before
 calling start_phase(). This violates the design spec §6.7 "Phase entry gates".
 ```
 
@@ -325,10 +325,10 @@ Skip the section if you genuinely have nothing positive — fabricated strengths
 
 ## Reviewing AI-generated code
 
-This is the dominant case in IDD right now. Treat it as a *stronger* trigger for this skill, not a weaker one. The failure modes:
+This is the dominant case in FORGE right now. Treat it as a *stronger* trigger for this skill, not a weaker one. The failure modes:
 
 - **False confidence.** AI-generated code reads as authoritative. It uses the right vocabulary, follows the right shape, looks plausible. *Plausible-looking code that's subtly wrong is the dominant defect.*
-- **Pattern transplant.** The model may import a pattern from another codebase that doesn't match IDD's conventions — `pydantic.BaseModel` where IDD uses `dataclass(frozen=True)` + JSON Schema; `asyncio` where IDD is sync; `os.path.join` where IDD uses `pathlib`; `requests` where IDD uses stdlib only inside hooks; `loguru` where IDD prints from CLI tools and asserts in tests. Each is `Critical` per `coding-guidance-python` "What this codebase does not use".
+- **Pattern transplant.** The model may import a pattern from another codebase that doesn't match FORGE's conventions — `pydantic.BaseModel` where FORGE uses `dataclass(frozen=True)` + JSON Schema; `asyncio` where FORGE is sync; `os.path.join` where FORGE uses `pathlib`; `requests` where FORGE uses stdlib only inside hooks; `loguru` where FORGE prints from CLI tools and asserts in tests. Each is `Critical` per `coding-guidance-python` "What this codebase does not use".
 - **Hallucinated APIs.** Method names that look right but don't exist, kwargs that the library doesn't accept, fields the schema doesn't have. Always verify import paths and method signatures against the actual file. For external libraries (`jsonschema`, `PyYAML`), Context7 MCP is the right tool to verify current syntax.
 - **Hallucinated paths.** A finding that references `tools/foo.py` when the file is `tools/foo_helpers.py` is a sign the agent is recalling a pattern, not reading the diff. Re-grep before sending.
 - **Test theater.** Tests that assert what the implementation *does*, not what the contract *should* be. They pass, prove nothing, and lock the implementation in place. `test-driven-development` rules out asserting on internals; cite it.
@@ -369,7 +369,7 @@ Splitting strategies (from `git-conventions`):
 - `Important: New runtime dependency added — was this discussed?` Even if the answer is yes, the answer needs to appear in the PR description.
 - Is the dependency on the "does not use" list (`pydantic`, async stack, structured-logging frameworks, data-validation libs that wrap JSON Schema)? `Critical` if so — the rule is explicit.
 - Is it actively maintained? Last release date, open-issue count.
-- License compatible with MIT (the IDD plugin license)?
+- License compatible with MIT (the FORGE plugin license)?
 - Does the existing stack solve this? (`jsonschema` covers schema validation; `PyYAML` covers YAML; `tomllib` (stdlib) covers TOML reads; `re` covers slug validation. The answer is almost always *use what's already here*.)
 - For hook dependencies: hooks must run on stdlib only. A dep that the hook directly or transitively imports is `Critical` regardless of how nice it is.
 
@@ -517,7 +517,7 @@ Before delivering the report, sanity-check it against this list. Each item is so
 - [ ] No finding fails the future-change filter (would this cost the team next time?).
 - [ ] No finding proposes inconsistency with the surrounding file's patterns.
 - [ ] No finding is restated under two different axes — pick one place to file it.
-- [ ] No finding fires `Critical` for a deferred-milestone pattern (Constitution, `/idd:do`, delta proposals, cross-AI review are M3+/M4).
+- [ ] No finding fires `Critical` for a deferred-milestone pattern (Constitution, `/forge:do`, delta proposals, cross-AI review are M3+/M4).
 
 **Coverage:**
 
@@ -557,7 +557,7 @@ The thoughts that lead to a bad review. Notice them, reverse course.
 
 ---
 
-## Anti-patterns in IDD reviews
+## Anti-patterns in FORGE reviews
 
 Things that have been wrong in the past or are easy to get wrong here. Add to this list when a real review miss happens.
 
@@ -565,13 +565,13 @@ Things that have been wrong in the past or are easy to get wrong here. Add to th
 - **Approving a new template without checking schema parity** — every `templates/feature/<X>.md` should have a matching `schemas/<x>-frontmatter.schema.json` AND a route in `tools.lint_frontmatter`. Three-way drift is silent until a real spec hits the linter.
 - **Approving a hook change that imports anything beyond stdlib** — the hook subprocess won't have the venv, so the deny path silently no-ops. Always verify the hook still runs as `python3 hooks/check_budget.py` from a clean shell.
 - **Approving a `pydantic` import** — `coding-guidance-python` "What this codebase does not use" rules it out. The fix is `dataclass(frozen=True)` + a JSON Schema if the boundary needs validation.
-- **Approving an `asyncio` / `await` introduction** — IDD is sync. Same skill, same rule.
+- **Approving an `asyncio` / `await` introduction** — FORGE is sync. Same skill, same rule.
 - **Approving a `subprocess` call without `check=True` or with string-form `cmd=`** — ruff `S` rules will reject the latter; the former is a defect class.
 - **Approving a path computed from user-controlled input** without a regex validation step — `tools/archive.py` is the canonical pattern; new code that joins untrusted strings into `Path(...)` without `_FEATURE_ID_RE`-style guard is path-traversal-prone.
 - **Letting a commit through with `Co-Authored-By: Claude` trailer** — `git-conventions` rules it out; this is a hard repo policy.
 - **Approving a frontmatter change without running `tools.lint_frontmatter`** — the schema-quality bar (description specificity, allowed fields) catches issues CI will fail on minutes later.
 - **Approving a `.claude-plugin/plugin.json` or `marketplace.json` change without manually loading the plugin** in Claude Code — manifest typos are silent until install time.
-- **Filing `Critical` for a missing M3+ pattern** (Constitution preflight, delta proposals, `/idd-validate`, cross-AI review) — the M2 reality check rules these out as scope creep, not as defects.
+- **Filing `Critical` for a missing M3+ pattern** (Constitution preflight, delta proposals, `/forge-validate`, cross-AI review) — the M2 reality check rules these out as scope creep, not as defects.
 
 ---
 
@@ -594,18 +594,18 @@ Adds `tools/bdd_detect.py` with a single `detect(repo_root) -> BDDFramework | No
 
 ### Suggestion
 
-**Suggestion: Cache the `.idd/config.json` read across calls in a single CLI invocation**
+**Suggestion: Cache the `.forge/config.json` read across calls in a single CLI invocation**
 `tools/bdd_detect.py:34`
 
 ```python
-def _read_idd_config_override(repo_root: Path) -> BDDFramework | None:
-    config_path = repo_root / ".idd" / "config.json"
+def _read_forge_config_override(repo_root: Path) -> BDDFramework | None:
+    config_path = repo_root / ".forge" / "config.json"
     if not config_path.is_file():
         return None
     ...
 ```
 
-`detect()` is called from at least two skills (`idd-scenarios`, `idd-verify`) that may both run within one feature pass. If the override path is taken, the same JSON is read twice. A module-level `@functools.lru_cache(maxsize=8)` keyed on `repo_root` would amortize this for free.
+`detect()` is called from at least two skills (`forge-scenarios`, `forge-verify`) that may both run within one feature pass. If the override path is taken, the same JSON is read twice. A module-level `@functools.lru_cache(maxsize=8)` keyed on `repo_root` would amortize this for free.
 
 Not a defect — current latency is fine for one-shot CLI calls; this is a forward-proofing call once skills start chaining.
 

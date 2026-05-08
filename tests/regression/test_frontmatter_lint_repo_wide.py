@@ -2,7 +2,7 @@
 
 The `tools.lint_frontmatter` linter is normally invoked via Makefile against
 curated file lists. New surfaces (e.g. P3 added `commands/amend-constitution.md`
-and `skills/idd-constitution/SKILL.md`) shipped with frontmatter that failed
+and `skills/forge-constitution/SKILL.md`) shipped with frontmatter that failed
 the linter's "Use when ..." rule because no test exercised the linter against
 the discovered set. This regression closes that gap by globbing every
 `commands/*.md` and `skills/*/SKILL.md` and asserting the linter passes on

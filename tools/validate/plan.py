@@ -2,7 +2,7 @@ r"""Semantic validators for PLAN.md (M3 §5.3.6 D-8, P2b).
 
 Two validators live here:
 
-``validate_plan_tasks`` — migrates ``skills/idd-plan/SKILL.md:35-37`` self-review
+``validate_plan_tasks`` — migrates ``skills/forge-plan/SKILL.md:35-37`` self-review
 rules:
 
 - Every numbered AC index in the paired SPEC's ``# Acceptance Criteria`` body
@@ -12,7 +12,7 @@ rules:
 - Every slice declares an ``**Acceptance:**`` line (HIGH if missing).
 
 ``validate_verified_deps`` — migrates the M2 plan-skill placeholder
-("Validator (M3+) will check registry presence" — ``skills/idd-plan/SKILL.md:33``).
+("Validator (M3+) will check registry presence" — ``skills/forge-plan/SKILL.md:33``).
 Validates ``## Verified Dependencies`` table shape per master design §7.3.
 Live registry probe is opt-in via ``check_registries=True``; offline by default
 to keep CI deterministic.

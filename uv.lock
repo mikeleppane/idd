@@ -109,7 +109,7 @@ wheels = [
 ]
 
 [[package]]
-name = "idd-tools"
+name = "forge-tools"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

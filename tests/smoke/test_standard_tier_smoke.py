@@ -37,7 +37,7 @@ M2_COMMANDS = [
 
 M2_SKILLS = [
     REPO_ROOT / "skills" / name / "SKILL.md"
-    for name in ("idd-scenarios", "idd-plan", "idd-crucible", "idd-review", "idd-ship")
+    for name in ("forge-scenarios", "forge-plan", "forge-crucible", "forge-review", "forge-ship")
 ]
 
 # The standard-tier flow visits `review` twice — once after crucible
@@ -107,7 +107,7 @@ def test_bdd_detect_returns_not_detected_for_empty_repo(tmp_path: Path) -> None:
 
 def test_state_machine_accepts_full_standard_tier_flow_with_dual_review(tmp_path: Path) -> None:
     feature_id = "2026-05-04-feature-flag-killswitch"
-    feature_dir = tmp_path / ".idd" / "features" / feature_id
+    feature_dir = tmp_path / ".forge" / "features" / feature_id
     feature_dir.mkdir(parents=True)
     state_path = feature_dir / "state.json"
     state_path.write_text(
@@ -155,7 +155,7 @@ def test_state_machine_accepts_full_standard_tier_flow_with_dual_review(tmp_path
 def test_archive_round_trip(tmp_path: Path) -> None:
     feature_id = "2026-05-04-feature-flag-killswitch"
     capability = "feature-flag"
-    seed = tmp_path / ".idd" / "features" / feature_id
+    seed = tmp_path / ".forge" / "features" / feature_id
     seed.mkdir(parents=True)
     (seed / "SPEC.md").write_text("# spec\n", encoding="utf-8")
     (seed / "state.json").write_text("{}\n", encoding="utf-8")
@@ -177,7 +177,7 @@ def test_archive_round_trip(tmp_path: Path) -> None:
 def test_ship_feature_transactional_round_trip(tmp_path: Path) -> None:
     feature_id = "2026-05-04-feature-flag-killswitch"
     capability = "feature-flag"
-    seed = tmp_path / ".idd" / "features" / feature_id
+    seed = tmp_path / ".forge" / "features" / feature_id
     seed.mkdir(parents=True)
     (seed / "SPEC.md").write_text("# spec\n", encoding="utf-8")
 
@@ -189,7 +189,7 @@ def test_ship_feature_transactional_round_trip(tmp_path: Path) -> None:
     )
     assert spec.is_file()
     assert archived.is_dir()
-    assert not (tmp_path / ".idd" / "features" / feature_id).exists()
+    assert not (tmp_path / ".forge" / "features" / feature_id).exists()
 
 
 @pytest.mark.parametrize(

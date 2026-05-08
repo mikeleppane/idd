@@ -1,13 +1,13 @@
 {
-  "name": "idd",
+  "name": "forge",
   "version": "0.1.0",
   "description": "Lightweight-but-thorough spec-driven development lifecycle. Intent is the source. Spec is the contract. Verification reconciles reality.",
   "author": {
     "name": "Mikko Leppänen",
     "email": "mleppan23@gmail.com"
   },
-  "homepage": "https://github.com/mikelep/idd",
-  "repository": "https://github.com/mikelep/idd",
+  "homepage": "https://github.com/mikelep/forge",
+  "repository": "https://github.com/mikelep/forge",
   "license": "MIT",
   "keywords": ["spec-driven", "tdd", "claude-code", "workflow"],
   "skills": "./skills/",

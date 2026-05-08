@@ -28,7 +28,7 @@ Four pure functions:
         failures raise ArchiveError before the hook ever runs (no ghost
         deviation for an aborted ship).
 
-The skill orchestrator (idd-ship) decides what to do with each partition:
+The skill orchestrator (forge-ship) decides what to do with each partition:
     gate  -> render_gate_prompt(...) + prompt user; on ACKNOWLEDGE compose
              ack_hook with _mark_done and pass to ship_feature. On 'a' or
              'b' the orchestrator halts and surfaces remediation.
@@ -326,7 +326,7 @@ def render_gate_prompt(
     lines.extend(
         [
             "To proceed, you must do ONE of:",
-            "  (a) Resolve the finding (edit code, re-run /idd:review --target code, /idd:verify, /idd:ship).",
+            "  (a) Resolve the finding (edit code, re-run /forge:review --target code, /forge:verify, /forge:ship).",
             "  (b) Log a Constitution exception in decisions.md (template printed below) and re-run.",
             "  (c) Type 'ACKNOWLEDGE' to ship anyway. The acknowledgement is recorded in",
             "      state.json.deviations[] and decisions.md, both persisting into the archive.",
@@ -401,7 +401,7 @@ def make_acknowledgement_hook(
     never ends up with a header-less decisions.md that downstream
     validators reject.
 
-    Combine with ``_mark_done`` in idd-ship via::
+    Combine with ``_mark_done`` in forge-ship via::
 
         def composed(source: Path) -> None:
             ack_hook(source)
@@ -468,7 +468,7 @@ def make_acknowledgement_hook(
         # without a matching state.json deviation is silent under
         # `validate_deviations` (the validator keys on deviations[]), whereas
         # the reverse — state.json deviation without the decisions heading —
-        # is a non-recoverable BLOCK on the next /idd:validate run.
+        # is a non-recoverable BLOCK on the next /forge:validate run.
         if not already_in_decisions:
             # Bootstrap decisions.md with `# Decisions` H1 if absent so a
             # fresh feature folder ends up with the same shape the amend

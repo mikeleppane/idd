@@ -258,7 +258,7 @@ def record_routing_decision(
         final_tier: Tier the user confirmed (focused/standard/full).
         proposed_tier: Tier the router proposed before user override.
         rationale: One-sentence reason from the router or user.
-        constitution_present: True when .idd/CONSTITUTION.md was loaded at routing time.
+        constitution_present: True when .forge/CONSTITUTION.md was loaded at routing time.
         schema_path: Optional schema for read+write validation.
         now: Optional ISO 8601 timestamp; defaults to UTC now.
 
@@ -400,25 +400,25 @@ def complete_review_target(
 
 
 def feature_folder_exists(repo_root: Path, feature_id: str) -> bool:
-    """Return True when .idd/features/<feature_id>/ exists under repo_root."""
-    return (repo_root / ".idd" / "features" / feature_id).is_dir()
+    """Return True when .forge/features/<feature_id>/ exists under repo_root."""
+    return (repo_root / ".forge" / "features" / feature_id).is_dir()
 
 
 def find_active_feature(
     repo_root: Path,
     feature_id: str | None = None,
 ) -> Path:
-    """Resolve which .idd/features/<id>/ to act on. Read-only.
+    """Resolve which .forge/features/<id>/ to act on. Read-only.
 
     Precedence (D-S6 in M3 spec):
         1. Explicit `feature_id` arg wins.
         2. Else single active feature (state.json.current_phase != 'done').
         3. Else: zero active -> StateError; multiple active -> StateError listing them.
 
-    Excludes any folder under `.idd/features/archive/`.
+    Excludes any folder under `.forge/features/archive/`.
 
     Args:
-        repo_root: Repository root containing the .idd/ tree.
+        repo_root: Repository root containing the .forge/ tree.
         feature_id: Optional explicit feature id (matches folder name).
 
     Returns:
@@ -428,7 +428,7 @@ def find_active_feature(
         StateError: when no feature matches, multiple active without explicit id,
             or the explicit id has no matching folder/state.json.
     """
-    features_root = repo_root / ".idd" / "features"
+    features_root = repo_root / ".forge" / "features"
     if feature_id is not None:
         if not _FEATURE_ID_RE.fullmatch(feature_id):
             raise StateError(f"invalid feature id: {feature_id!r}")
@@ -438,7 +438,7 @@ def find_active_feature(
         return candidate
 
     if not features_root.is_dir():
-        raise StateError("no active feature: .idd/features/ does not exist")
+        raise StateError("no active feature: .forge/features/ does not exist")
 
     active: list[Path] = []
     for entry in sorted(features_root.iterdir()):
@@ -465,26 +465,26 @@ def find_active_feature(
 
 
 _FOCUSED_NEXT: dict[str, str | None] = {
-    "spec": "/idd:execute",
-    "execute": "/idd:verify",
+    "spec": "/forge:execute",
+    "execute": "/forge:verify",
     "verify": None,
 }
 
 _STANDARD_NEXT: dict[str, str | None] = {
-    "refine": "/idd:spec",
-    "spec": "/idd:scenarios",
-    "scenarios": "/idd:plan",
-    "plan": "/idd:crucible",
-    "crucible": "/idd:review --target plan",
-    "execute": "/idd:review --target code",
-    "verify": "/idd:ship",
+    "refine": "/forge:spec",
+    "spec": "/forge:scenarios",
+    "scenarios": "/forge:plan",
+    "plan": "/forge:crucible",
+    "crucible": "/forge:review --target plan",
+    "execute": "/forge:review --target code",
+    "verify": "/forge:ship",
     "ship": None,
 }
 
 _FULL_NEXT: dict[str, str | None] = {
     **_STANDARD_NEXT,
-    "spec": "/idd:domain",
-    "domain": "/idd:scenarios",
+    "spec": "/forge:domain",
+    "domain": "/forge:scenarios",
 }
 
 
@@ -493,10 +493,10 @@ def _next_review_command(state_payload: dict[str, Any]) -> str:
     review = state_payload.get("phases", {}).get("review", {})
     done = review.get("targets_done", [])
     if "plan" not in done:
-        return "/idd:review --target plan"
+        return "/forge:review --target plan"
     if "code" not in done:
-        return "/idd:execute"
-    return "/idd:verify"
+        return "/forge:execute"
+    return "/forge:verify"
 
 
 def next_phase_command(state_payload: dict[str, Any]) -> str | None:
@@ -509,7 +509,7 @@ def next_phase_command(state_payload: dict[str, Any]) -> str | None:
             and `phases`).
 
     Returns:
-        Slash command string (e.g. '/idd:scenarios') or None when at terminal phase.
+        Slash command string (e.g. '/forge:scenarios') or None when at terminal phase.
     """
     tier = state_payload.get("tier")
     phase = state_payload.get("current_phase")

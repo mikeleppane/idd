@@ -1,9 +1,9 @@
-"""CLI entry point for /idd:validate (M3 §5.3.6 D-CLI).
+"""CLI entry point for /forge:validate (M3 §5.3.6 D-CLI).
 
 Wires structural (P2a) and semantic (P2b) validators behind the
-``--target`` flag. ``--target all`` fans out across the full ``.idd``
+``--target`` flag. ``--target all`` fans out across the full ``.forge``
 tree: it runs ``validate_health`` + ``validate_capability_uniqueness``
-once at the repo level, then walks ``.idd/changes/`` and ``.idd/features/``
+once at the repo level, then walks ``.forge/changes/`` and ``.forge/features/``
 applying the appropriate per-artifact validators.
 """
 
@@ -114,7 +114,7 @@ def _dispatch_deviations(args: argparse.Namespace, repo_root: Path) -> list[Find
 
 
 def _dispatch_constitution(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
-    resolved = args.path if args.path is not None else repo_root / ".idd" / "CONSTITUTION.md"
+    resolved = args.path if args.path is not None else repo_root / ".forge" / "CONSTITUTION.md"
     return list(validate_constitution(resolved))
 
 
@@ -133,7 +133,7 @@ def _dispatch_ship(
 
 
 def _dispatch_all(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
-    """Walk the full .idd tree, invoking every applicable validator.
+    """Walk the full .forge tree, invoking every applicable validator.
 
     Layout signals come from a single ``validate_health`` call. Per-feature
     semantic helpers are invoked directly here (they do NOT re-run
@@ -144,18 +144,18 @@ def _dispatch_all(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
     findings.extend(validate_health(repo_root))
     findings.extend(validate_capability_uniqueness(repo_root))
 
-    constitution = repo_root / ".idd" / "CONSTITUTION.md"
+    constitution = repo_root / ".forge" / "CONSTITUTION.md"
     if constitution.is_file():
         findings.extend(validate_constitution(constitution))
 
-    changes_root = repo_root / ".idd" / "changes"
+    changes_root = repo_root / ".forge" / "changes"
     if changes_root.is_dir():
         for change in sorted(changes_root.iterdir()):
             proposal = change / "proposal.md"
             if proposal.is_file():
                 findings.extend(validate_delta(proposal))
 
-    features_root = repo_root / ".idd" / "features"
+    features_root = repo_root / ".forge" / "features"
     if features_root.is_dir():
         for feature in sorted(features_root.iterdir()):
             if not feature.is_dir():
@@ -257,7 +257,7 @@ def _gate_repo_wide(target: str, args: argparse.Namespace) -> list[Finding]:
                 target,
                 args.repo_root,
                 f"--repo-root {str(args.repo_root)!r} is not a directory; "
-                f"point it at the repository root containing the .idd/ tree",
+                f"point it at the repository root containing the .forge/ tree",
             )
         )
         return findings
@@ -269,7 +269,7 @@ def _gate_and_dispatch(target: str, args: argparse.Namespace) -> list[Finding]:
     """Validate path-kind expectations, then run the target's dispatcher.
 
     `constitution` is special: it accepts either a positional path or
-    falls back to ``<repo-root>/.idd/CONSTITUTION.md``. It is dispatched
+    falls back to ``<repo-root>/.forge/CONSTITUTION.md``. It is dispatched
     directly without per-file/per-folder gating.
     """
     if target in _PER_FILE_TARGETS:
@@ -283,10 +283,10 @@ def _gate_and_dispatch(target: str, args: argparse.Namespace) -> list[Finding]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """CLI entry point for /idd:validate. See module-level exit-code contract."""
+    """CLI entry point for /forge:validate. See module-level exit-code contract."""
     parser = argparse.ArgumentParser(
         prog="python -m tools.validate",
-        description="IDD validator (M3 P2a structural + P2b semantic)",
+        description="FORGE validator (M3 P2a structural + P2b semantic)",
     )
     parser.add_argument(
         "--target",

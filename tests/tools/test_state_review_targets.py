@@ -262,7 +262,7 @@ def test_dual_review_pass_completes_without_manual_target_replay(
 ) -> None:
     """End-to-end dual-review flow: target=plan, execute, target=code, complete.
 
-    Reproduces the real /idd:review consumer chain: the second invocation
+    Reproduces the real /forge:review consumer chain: the second invocation
     must NOT manually re-record target=plan to clear the gate; preserved
     targets_done plus the per-target helpers are sufficient.
     """
@@ -332,7 +332,7 @@ def test_state_schema_rejects_review_target_fields_on_non_review_phase(
 def test_start_phase_review_preserves_targets_done_across_restart(
     tmp_path: Path, schemas_dir: Path
 ) -> None:
-    """Second /idd:review pass must not wipe target audit from the first pass."""
+    """Second /forge:review pass must not wipe target audit from the first pass."""
     target = tmp_path / "state.json"
     initial = _payload_with_review(targets_done=["plan"], current_target="plan")
     initial["current_phase"] = "execute"

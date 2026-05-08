@@ -1,16 +1,16 @@
 ---
 name: git-conventions
-description: Structure every git commit in the IDD repo with Conventional Commits and a mandatory scope, atomic commits, imperative-mood subjects, and Prove-It tests for bug fixes. Use when staging changes, writing commit messages, opening PRs, or resolving merge conflicts. Never add Co-Authored-By Claude trailers — even for AI-assisted work.
+description: Structure every git commit in the FORGE repo with Conventional Commits and a mandatory scope, atomic commits, imperative-mood subjects, and Prove-It tests for bug fixes. Use when staging changes, writing commit messages, opening PRs, or resolving merge conflicts. Never add Co-Authored-By Claude trailers — even for AI-assisted work.
 ---
 
-# Git Workflow & Commit Conventions (IDD)
+# Git Workflow & Commit Conventions (FORGE)
 
 > Format: Conventional Commits | Scope: required | Breaking changes: `!` + footer
 > Atomic commits, imperative mood, explain the *why* in the body when it isn't obvious from the diff.
 
 A clean git history is a durable asset. Six months from now, `git log` and `git blame` are the first things anyone reads when diagnosing a regression, tracing a decision, or onboarding. Follow these conventions on *every* commit so history stays useful.
 
-This skill is the **general-purpose git contract** for the IDD repo. Test discipline (Prove-It for bug fixes) lives in [`../test-driven-development/SKILL.md`](../test-driven-development/SKILL.md). Python style and structure live in [`../coding-guidance-python/SKILL.md`](../coding-guidance-python/SKILL.md).
+This skill is the **general-purpose git contract** for the FORGE repo. Test discipline (Prove-It for bug fixes) lives in [`../test-driven-development/SKILL.md`](../test-driven-development/SKILL.md). Python style and structure live in [`../coding-guidance-python/SKILL.md`](../coding-guidance-python/SKILL.md).
 
 ---
 
@@ -131,7 +131,7 @@ Aligns the field name with the SPEC.md frontmatter and removes the
 overload of "status" used elsewhere in the plugin.
 
 BREAKING CHANGE: existing state.json files written by older versions
-must be migrated. Run `idd-tools migrate-state` (or rename the field
+must be migrated. Run `forge-tools migrate-state` (or rename the field
 manually) before invoking the state machine.
 ```
 
@@ -247,7 +247,7 @@ Refs: #123, #456
 
 ---
 
-## Commit Workflow (IDD)
+## Commit Workflow (FORGE)
 
 1. **Review staged changes** — `git diff --staged`. Does the diff match a single logical change? If not, split.
 2. **Pre-commit hygiene:**
@@ -309,7 +309,7 @@ Atomic commits with descriptive messages are what make `git bisect`, `git blame`
 ```bash
 git bisect start && git bisect bad HEAD && git bisect good <commit>
 git log --oneline -20 -- tools/
-git blame -L <start>,<end> tools/idd_tools/state.py
+git blame -L <start>,<end> tools/forge_tools/state.py
 git log --grep="frontmatter" --oneline
 git reflog   # discarded-work recovery, ~90 days
 ```

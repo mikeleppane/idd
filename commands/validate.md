@@ -1,16 +1,16 @@
 ---
 name: validate
-description: Run the IDD structural validator across artifacts and surface findings. Use when the user asks to validate, check, or audit Constitution / delta / spec / repo health structure.
+description: Run the FORGE structural validator across artifacts and surface findings. Use when the user asks to validate, check, or audit Constitution / delta / spec / repo health structure.
 ---
 
-# /idd:validate
+# /forge:validate
 
 Run `python -m tools.validate` and report findings. Read-only.
 
 ## Behavior
 
 1. Parse args: required `--target` (see list below), optional positional `path`, optional `--repo-root <path>`, optional `--check-registries`.
-2. Invoke the `idd-validate` skill (see `skills/idd-validate/SKILL.md`).
+2. Invoke the `forge-validate` skill (see `skills/forge-validate/SKILL.md`).
 3. Skill runs `python -m tools.validate` and prints findings.
 4. Exit code mirrors the underlying validator: `0` (no BLOCK / HIGH), `1` (any BLOCK or HIGH), `2` (usage error).
 
@@ -33,15 +33,15 @@ Run `python -m tools.validate` and report findings. Read-only.
 
 ### Repo-wide (no positional path; uses `--repo-root`)
 
-- `constitution` — Constitution structural check (defaults to `<repo-root>/.idd/CONSTITUTION.md` if no path supplied).
+- `constitution` — Constitution structural check (defaults to `<repo-root>/.forge/CONSTITUTION.md` if no path supplied).
 - `ship` — P2a slice: capability-uniqueness only. Full ship-gate (Constitution acknowledge gate) lands in **P5**.
-- `health` — D-HEALTH layout scan over `.idd/`.
-- `all` — fan-out across the entire `.idd/` tree:
+- `health` — D-HEALTH layout scan over `.forge/`.
+- `all` — fan-out across the entire `.forge/` tree:
   1. `validate_health(repo_root)` — single layout pass.
   2. `validate_capability_uniqueness(repo_root)` — same call as `--target ship`.
-  3. `validate_constitution` over `.idd/CONSTITUTION.md` if present.
-  4. For each `.idd/changes/<change>/proposal.md`: `validate_delta`.
-  5. For each `.idd/features/<feature>/`: `validate_deviations` + (if SPEC.md) `validate_negative_requirements`, `validate_frontmatter(kind=spec)`, `validate_scenarios`, `validate_anchors` + (if PLAN.md) `validate_frontmatter(kind=plan)`, `validate_plan_tasks` (when SPEC.md is also present), `validate_verified_deps`.
+  3. `validate_constitution` over `.forge/CONSTITUTION.md` if present.
+  4. For each `.forge/changes/<change>/proposal.md`: `validate_delta`.
+  5. For each `.forge/features/<feature>/`: `validate_deviations` + (if SPEC.md) `validate_negative_requirements`, `validate_frontmatter(kind=spec)`, `validate_scenarios`, `validate_anchors` + (if PLAN.md) `validate_frontmatter(kind=plan)`, `validate_plan_tasks` (when SPEC.md is also present), `validate_verified_deps`.
 
 > `ship` is preserved for back-compat; `all` is the recommended entry point in M3+.
 
@@ -53,9 +53,9 @@ Run `python -m tools.validate` and report findings. Read-only.
 ## Examples
 
 - Run repo health check: `python -m tools.validate --target health`
-- Validate a SPEC's scenarios: `python -m tools.validate --target scenarios .idd/features/<id>/SPEC.md`
-- Validate a feature folder's deviations: `python -m tools.validate --target deviations .idd/features/<id>`
-- Run every check across the .idd/ tree: `python -m tools.validate --target all`
+- Validate a SPEC's scenarios: `python -m tools.validate --target scenarios .forge/features/<id>/SPEC.md`
+- Validate a feature folder's deviations: `python -m tools.validate --target deviations .forge/features/<id>`
+- Run every check across the .forge/ tree: `python -m tools.validate --target all`
 - Run all + live registry probes: `python -m tools.validate --target all --check-registries`
 
 ## Failure modes

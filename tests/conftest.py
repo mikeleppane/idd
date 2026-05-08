@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for IDD tooling tests."""
+"""Shared pytest fixtures for FORGE tooling tests."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture()
 def repo_root() -> Path:
-    """Absolute path to the IDD repo root."""
+    """Absolute path to the FORGE repo root."""
     return REPO_ROOT
 
 

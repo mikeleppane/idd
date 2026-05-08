@@ -1,4 +1,4 @@
-"""Detect the project's BDD framework per IDD design §6.6.
+"""Detect the project's BDD framework per FORGE design §6.6.
 
 Top-level dependency declarations only — no transitive scan, no lockfile scan.
 False positives are worse than missed escalations: when ambiguous (a partial
@@ -44,7 +44,7 @@ class Ambiguous:
     """A partial signal was detected; the calling skill must ask the user once.
 
     Reasons follow ``"<ecosystem>: <signal-summary>"`` so the skill can surface
-    them to the user verbatim and cache the resolution in ``.idd/config.json``.
+    them to the user verbatim and cache the resolution in ``.forge/config.json``.
     """
 
     reason: str
@@ -76,19 +76,19 @@ def _validate_relative_features_dir(raw: str) -> Path:
     return candidate
 
 
-def _read_idd_config_override(repo_root: Path) -> DetectionResult | None:
+def _read_forge_config_override(repo_root: Path) -> DetectionResult | None:
     """Return None when no override is configured; otherwise a DetectionResult.
 
     Malformed or unsafe overrides surface as ``Ambiguous`` so the user fixes
     config rather than silently falling through to auto-detection.
     """
-    config_path = repo_root / ".idd" / "config.json"
+    config_path = repo_root / ".forge" / "config.json"
     if not config_path.is_file():
         return None
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return Ambiguous(reason="config: .idd/config.json is not valid JSON")
+        return Ambiguous(reason="config: .forge/config.json is not valid JSON")
     bdd = config.get("bdd_framework")
     if not isinstance(bdd, dict):
         return None
@@ -207,12 +207,12 @@ def _detect_go(repo_root: Path) -> DetectionResult | None:
 def detect(repo_root: Path) -> DetectionResult:
     """Resolve the project's BDD framework as ``Detected | Ambiguous | NotDetected``.
 
-    Order: idd config override > python > node > ruby > go.
+    Order: forge config override > python > node > ruby > go.
 
     - ``Detected``: an unambiguous binding to run scenarios against.
     - ``Ambiguous``: a partial signal (e.g., dep declared but features dir
       missing, or config malformed). The calling skill must ask the user once
-      and cache the resolution in ``.idd/config.json``.
+      and cache the resolution in ``.forge/config.json``.
     - ``NotDetected``: no signal of any kind.
 
     Args:
@@ -221,7 +221,7 @@ def detect(repo_root: Path) -> DetectionResult:
     Returns:
         A ``DetectionResult`` describing the binding, ambiguity, or absence.
     """
-    override = _read_idd_config_override(repo_root)
+    override = _read_forge_config_override(repo_root)
     if override is not None:
         return override
     for detector in (_detect_python, _detect_node, _detect_ruby, _detect_go):

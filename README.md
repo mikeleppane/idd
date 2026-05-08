@@ -1,6 +1,6 @@
-# IDD — Intent-Driven Development
+# FORGE — Intent-Driven Development
 
-![IDD logo](images/idd-logo.png)
+![FORGE logo](images/forge-logo.png)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
@@ -14,13 +14,13 @@
 
 A Claude Code plugin that encodes a lightweight-but-thorough Spec-Driven Development lifecycle for working with AI coding agents on real repositories.
 
-IDD is parallel framing to TDD / BDD / DDD / SDD — a methodology, not a tool. It optimizes for **disciplined, resumable** software work over speed-first coding. The workflow may produce several artifacts, but each one earns its place by clarifying intent, preserving context, reducing drift, or verifying reality.
+FORGE is parallel framing to TDD / BDD / DDD / SDD — a methodology, not a tool. It optimizes for **disciplined, resumable** software work over speed-first coding. The workflow may produce several artifacts, but each one earns its place by clarifying intent, preserving context, reducing drift, or verifying reality.
 
 ---
 
-## Why IDD?
+## Why FORGE?
 
-You already have an AI coding agent. IDD adds the missing scaffolding around it:
+You already have an AI coding agent. FORGE adds the missing scaffolding around it:
 
 - **Intent** is treated as the project north-star — the *why* behind any change.
 - **Spec** is the contract for intended behavior — adversarially refined before code is written.
@@ -29,7 +29,7 @@ You already have an AI coding agent. IDD adds the missing scaffolding around it:
 - **Context discipline** keeps your main thread under a hard token budget (~25K for a standard-tier feature) by isolating slices in subagents and preventing context bleed.
 - **Cross-AI review** uses a different model family (Claude ↔ GPT) as a second-opinion reviewer, reinforcing the adversarial shared-understanding goal.
 
-IDD pays off when the cost of building the wrong thing, losing context, drifting from intent, or losing your own mental model of the code is higher than the cost of a disciplined workflow. It is **not** the fastest path to code. It *is* a clear path from intent to verified behavior — without surrendering your understanding of the system along the way.
+FORGE pays off when the cost of building the wrong thing, losing context, drifting from intent, or losing your own mental model of the code is higher than the cost of a disciplined workflow. It is **not** the fastest path to code. It *is* a clear path from intent to verified behavior — without surrendering your understanding of the system along the way.
 
 ---
 
@@ -53,7 +53,7 @@ refine → research → spec → domain → scenarios → plan → crucible → 
 | **verify** | `VERIFICATION.md` | Three layers: code audit + scenario execution + conversational UAT |
 | **ship** | merged change + updated canonical spec or delta proposal | Reconcile feature spec with shipped capability spec |
 
-Phases can be skipped via flags or selected automatically by `/idd-do`, which estimates the right tier and routes accordingly.
+Phases can be skipped via flags or selected automatically by `/forge-do`, which estimates the right tier and routes accordingly.
 
 ---
 
@@ -70,38 +70,38 @@ Phases can be skipped via flags or selected automatically by `/idd-do`, which es
 ### Focused tier (M1)
 
 ```
-/idd:spec --focused → /idd:execute → /idd:verify
+/forge:spec --focused → /forge:execute → /forge:verify
 ```
 
-The shortest path through IDD. Pick this for one-file fixes and surgical changes where scenarios, planning, and crucible would be overhead.
+The shortest path through FORGE. Pick this for one-file fixes and surgical changes where scenarios, planning, and crucible would be overhead.
 
 ### Standard tier (M2)
 
 ```
-/idd:spec --standard
-  → /idd:scenarios
-  → /idd:plan
-  → /idd:crucible
-  → /idd:review                  # target plan (default after crucible)
-  → /idd:execute
-  → /idd:review --target code    # target code diff against PLAN.md
-  → /idd:verify
-  → /idd:ship
+/forge:spec --standard
+  → /forge:scenarios
+  → /forge:plan
+  → /forge:crucible
+  → /forge:review                  # target plan (default after crucible)
+  → /forge:execute
+  → /forge:review --target code    # target code diff against PLAN.md
+  → /forge:verify
+  → /forge:ship
 ```
 
-Each command refuses to run unless the previous phase is complete (state machine guard). The `idd-context-budget` and `idd-subagent-dispatch` skills enforce the per-subagent token budget at every dispatch.
+Each command refuses to run unless the previous phase is complete (state machine guard). The `forge-context-budget` and `forge-subagent-dispatch` skills enforce the per-subagent token budget at every dispatch.
 
 **M2 limitations (called out so you don't trip on them):**
 
-- **`/idd:ship` is first-ship only.** If `.idd/specs/<capability>/SPEC.md` already exists for the capability slug, ship aborts with a "delta proposal required" message. Delta proposals (`/idd:change`) land in M3+.
-- **`/idd:review --cross-ai` is not implemented.** Cross-AI review (Claude ↔ GPT second-opinion pass) is M4 territory; the flag errors out today.
+- **`/forge:ship` is first-ship only.** If `.forge/specs/<capability>/SPEC.md` already exists for the capability slug, ship aborts with a "delta proposal required" message. Delta proposals (`/forge:change`) land in M3+.
+- **`/forge:review --cross-ai` is not implemented.** Cross-AI review (Claude ↔ GPT second-opinion pass) is M4 territory; the flag errors out today.
 - **Refine, research, and domain phases are M3+.** The `--full` pipeline isn't ready yet — pick `--standard` for now even on broader features.
 
 ---
 
 ## Per-feature artifacts
 
-Every IDD feature lives in `.idd/features/<id>/` with a small set of contracts:
+Every FORGE feature lives in `.forge/features/<id>/` with a small set of contracts:
 
 - `SPEC.md` — the behavior contract
 - `RESEARCH.md` — optional, for research tier and above
@@ -110,17 +110,17 @@ Every IDD feature lives in `.idd/features/<id>/` with a small set of contracts:
 - `REVIEW.plan.md` / `REVIEW.code.md` — per-target review findings and convergence cycles (the standard-tier flow runs review twice; each pass writes its own file)
 - `VERIFICATION.md` — three-layer verification record
 - `decisions.md` — running log of decisions and rationale
-- `state.json` — phase/slice/wave state for `/idd-resume`
+- `state.json` — phase/slice/wave state for `/forge-resume`
 
-Canonical capability specs live in `.idd/specs/<capability>/SPEC.md`. Feature specs are working artifacts and are merged or archived against canonical specs at ship time. Changes to shipped specs flow through OpenSpec-style delta proposals in `.idd/changes/<id>/proposal.md`.
+Canonical capability specs live in `.forge/specs/<capability>/SPEC.md`. Feature specs are working artifacts and are merged or archived against canonical specs at ship time. Changes to shipped specs flow through OpenSpec-style delta proposals in `.forge/changes/<id>/proposal.md`.
 
-A project-wide `.idd/CONSTITUTION.md` carries CRITICAL / SHOULD / MAY articles enforced at every phase entry.
+A project-wide `.forge/CONSTITUTION.md` carries CRITICAL / SHOULD / MAY articles enforced at every phase entry.
 
 ---
 
 ## The crucible
 
-The crucible is IDD's most opinionated piece — an adversarial ritual run *after* planning and *before* execution:
+The crucible is FORGE's most opinionated piece — an adversarial ritual run *after* planning and *before* execution:
 
 1. **Assumptions inversion.** Every load-bearing assumption is inverted: "what if this is wrong?"
 2. **Adversarial Q&A.** The agent argues against the plan, surfacing the strongest objections.
@@ -142,14 +142,14 @@ A feature ships only after all three layers pass.
 
 ### M3 Constitution limitations
 
-The project Constitution (`.idd/CONSTITUTION.md`) ships in M3 as **advisory
+The project Constitution (`.forge/CONSTITUTION.md`) ships in M3 as **advisory
 context plus a reviewer severity hint plus a ship-time user gate**. It is
 NOT a machine BLOCK gate (D-4 / D-4a):
 
 - Reviewer subagents tag findings with `[constitution:A<n>]` and map
   severity per the Constitution article level (CRITICAL→HIGH,
   SHOULD→MEDIUM, MAY→LOW).
-- `/idd:ship` shows a mandatory gate prompt for any unresolved CRITICAL
+- `/forge:ship` shows a mandatory gate prompt for any unresolved CRITICAL
   finding; user must resolve, log a written exception, or type
   `ACKNOWLEDGE` exactly. `ACKNOWLEDGE` proceeds with audit trail in
   `decisions.md` + `state.json.deviations[]` + ship summary banner.
@@ -165,7 +165,7 @@ _Full plugin install is coming after M1 ships._ Until then:
 
 1. Clone this repo somewhere local.
 2. Reference it via your Claude Code plugin path (see [Claude Code plugin docs](https://code.claude.com/docs/en/plugins-reference)).
-3. The slash commands `/idd:spec`, `/idd:execute`, `/idd:verify` light up once the plugin is loaded.
+3. The slash commands `/forge:spec`, `/forge:execute`, `/forge:verify` light up once the plugin is loaded.
 
 A formal install path (`claude plugins install …`) ships with M1.
 
@@ -179,7 +179,7 @@ A formal install path (`claude plugins install …`) ships with M1.
 
 ## Configuration
 
-Per-feature state lives in `.idd/features/<id>/state.json` (created by `/idd:spec`). Project-wide configuration (default tier, cross-AI provider, context-budget overrides, auto-escalation rules) is planned for a later milestone — not present in M1.
+Per-feature state lives in `.forge/features/<id>/state.json` (created by `/forge:spec`). Project-wide configuration (default tier, cross-AI provider, context-budget overrides, auto-escalation rules) is planned for a later milestone — not present in M1.
 
 The tooling itself (state machine, frontmatter linter, schema validator) is a small Python package shipped in `tools/`.
 
@@ -188,11 +188,11 @@ The tooling itself (state machine, frontmatter linter, schema validator) is a sm
 ## Project layout
 
 ```
-idd/
+forge/
 ├── .claude-plugin/plugin.json   Claude Code manifest
 ├── AGENTS.md                    portable discovery manifest
 ├── README.md                    you are here
-├── commands/                    /idd:* slash commands
+├── commands/                    /forge:* slash commands
 ├── skills/                      ambient + invokable skills
 ├── hooks/                       PreToolUse hooks (real budget enforcement)
 ├── templates/feature/           per-feature artifact templates
@@ -205,7 +205,7 @@ idd/
 
 ## Contributing
 
-IDD is in early active development. Issues and feedback are welcome. Pull requests are accepted once the M1 reference fixture lands — the fixture defines the contract for what "passing" means.
+FORGE is in early active development. Issues and feedback are welcome. Pull requests are accepted once the M1 reference fixture lands — the fixture defines the contract for what "passing" means.
 
 ---
 

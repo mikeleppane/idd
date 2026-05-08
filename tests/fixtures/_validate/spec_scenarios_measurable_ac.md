@@ -8,7 +8,7 @@ capability: scenarios-measurable
 
 # Intent
 
-An AC ending with `(measurable)` is exempt from scenario-mapping per skills/idd-spec/SKILL.md:34.
+An AC ending with `(measurable)` is exempt from scenario-mapping per skills/forge-spec/SKILL.md:34.
 
 # Scenarios (BDD)
 

@@ -1,4 +1,4 @@
-"""Lint markdown frontmatter for IDD skills and commands."""
+"""Lint markdown frontmatter for FORGE skills and commands."""
 
 from __future__ import annotations
 
@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         Exit code: 0 on success, 1 on any validation failure.
     """
-    parser = argparse.ArgumentParser(description="Lint IDD skill/command frontmatter.")
+    parser = argparse.ArgumentParser(description="Lint FORGE skill/command frontmatter.")
     parser.add_argument(
         "--schema",
         required=True,

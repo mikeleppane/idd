@@ -12,14 +12,14 @@ from tools import lint_frontmatter as lint
 def test_parse_extracts_yaml_block_from_top(tmp_path: Path) -> None:
     md = tmp_path / "skill.md"
     md.write_text(
-        "---\nname: idd-spec\ndescription: Author a feature SPEC.md. Use when starting a new feature.\n---\n\n# body\n",
+        "---\nname: forge-spec\ndescription: Author a feature SPEC.md. Use when starting a new feature.\n---\n\n# body\n",
         encoding="utf-8",
     )
 
     result = lint.parse_frontmatter(md)
 
     assert result == {
-        "name": "idd-spec",
+        "name": "forge-spec",
         "description": "Author a feature SPEC.md. Use when starting a new feature.",
     }
 
@@ -33,7 +33,7 @@ def test_parse_returns_none_when_no_frontmatter(tmp_path: Path) -> None:
 
 def test_parse_raises_on_unclosed_block(tmp_path: Path) -> None:
     md = tmp_path / "broken.md"
-    md.write_text("---\nname: idd-spec\n# missing closing fence\n", encoding="utf-8")
+    md.write_text("---\nname: forge-spec\n# missing closing fence\n", encoding="utf-8")
 
     with pytest.raises(lint.FrontmatterError, match="unclosed"):
         lint.parse_frontmatter(md)
@@ -48,10 +48,10 @@ def test_parse_raises_on_invalid_yaml(tmp_path: Path) -> None:
 
 
 def test_validate_passes_for_valid_skill_with_use_when(tmp_path: Path, schemas_dir: Path) -> None:
-    md = tmp_path / "skills" / "idd-spec" / "SKILL.md"
+    md = tmp_path / "skills" / "forge-spec" / "SKILL.md"
     md.parent.mkdir(parents=True)
     md.write_text(
-        "---\nname: idd-spec\ndescription: Author a feature SPEC.md following the IDD template. Use when the user asks to start a new IDD feature or refine an existing spec.\n---\n\nbody\n",
+        "---\nname: forge-spec\ndescription: Author a feature SPEC.md following the FORGE template. Use when the user asks to start a new FORGE feature or refine an existing spec.\n---\n\nbody\n",
         encoding="utf-8",
     )
 
@@ -63,10 +63,10 @@ def test_validate_passes_for_valid_skill_with_use_when(tmp_path: Path, schemas_d
 def test_validate_rejects_description_missing_use_when_clause(
     tmp_path: Path, schemas_dir: Path
 ) -> None:
-    md = tmp_path / "skills" / "idd-spec" / "SKILL.md"
+    md = tmp_path / "skills" / "forge-spec" / "SKILL.md"
     md.parent.mkdir(parents=True)
     md.write_text(
-        "---\nname: idd-spec\ndescription: Author a feature SPEC.md following the IDD template, period and that is all.\n---\n\nbody\n",
+        "---\nname: forge-spec\ndescription: Author a feature SPEC.md following the FORGE template, period and that is all.\n---\n\nbody\n",
         encoding="utf-8",
     )
 
@@ -78,10 +78,10 @@ def test_validate_rejects_description_missing_use_when_clause(
 def test_validate_rejects_description_without_imperative_first_word(
     tmp_path: Path, schemas_dir: Path
 ) -> None:
-    md = tmp_path / "skills" / "idd-spec" / "SKILL.md"
+    md = tmp_path / "skills" / "forge-spec" / "SKILL.md"
     md.parent.mkdir(parents=True)
     md.write_text(
-        "---\nname: idd-spec\ndescription: this skill helps with specs eventually. Use when the user starts.\n---\n\nbody\n",
+        "---\nname: forge-spec\ndescription: this skill helps with specs eventually. Use when the user starts.\n---\n\nbody\n",
         encoding="utf-8",
     )
 
@@ -92,7 +92,7 @@ def test_validate_rejects_description_without_imperative_first_word(
 
 def test_validate_rejects_missing_required(tmp_path: Path, schemas_dir: Path) -> None:
     md = tmp_path / "skill.md"
-    md.write_text("---\nname: idd-spec\n---\n\nbody\n", encoding="utf-8")
+    md.write_text("---\nname: forge-spec\n---\n\nbody\n", encoding="utf-8")
 
     errors = lint.validate_file(md, schemas_dir / "frontmatter.schema.json")
 
@@ -100,10 +100,10 @@ def test_validate_rejects_missing_required(tmp_path: Path, schemas_dir: Path) ->
 
 
 def test_main_returns_zero_when_all_files_valid(tmp_path: Path, schemas_dir: Path) -> None:
-    target = tmp_path / "skills" / "idd-spec" / "SKILL.md"
+    target = tmp_path / "skills" / "forge-spec" / "SKILL.md"
     target.parent.mkdir(parents=True)
     target.write_text(
-        "---\nname: idd-spec\ndescription: Author a feature SPEC.md following the IDD template. Use when starting a new IDD feature.\n---\n",
+        "---\nname: forge-spec\ndescription: Author a feature SPEC.md following the FORGE template. Use when starting a new FORGE feature.\n---\n",
         encoding="utf-8",
     )
 
@@ -153,7 +153,7 @@ def test_parse_coerces_unquoted_yaml_datetime_to_iso_string(tmp_path: Path) -> N
     """ISO datetimes are coerced to string so JSON-Schema `format: date-time` works."""
     md = tmp_path / "skill.md"
     md.write_text(
-        "---\nname: idd-spec\ndescription: do things. Use when foo.\nlogged_at: 2026-05-04T10:00:00Z\n---\n\nbody\n",
+        "---\nname: forge-spec\ndescription: do things. Use when foo.\nlogged_at: 2026-05-04T10:00:00Z\n---\n\nbody\n",
         encoding="utf-8",
     )
 
@@ -180,42 +180,42 @@ def test_validate_passes_for_unquoted_yaml_date_in_spec_frontmatter(
     assert errors == [], errors
 
 
-def test_idd_next_skill_passes_lint(repo_root: Path) -> None:
-    skill = repo_root / "skills" / "idd-next" / "SKILL.md"
+def test_forge_next_skill_passes_lint(repo_root: Path) -> None:
+    skill = repo_root / "skills" / "forge-next" / "SKILL.md"
     schema = repo_root / "schemas" / "frontmatter.schema.json"
     errors = lint.validate_file(skill, schema)
     assert errors == [], errors
 
 
-def test_idd_next_command_passes_lint(repo_root: Path) -> None:
+def test_forge_next_command_passes_lint(repo_root: Path) -> None:
     cmd = repo_root / "commands" / "next.md"
     schema = repo_root / "schemas" / "frontmatter.schema.json"
     errors = lint.validate_file(cmd, schema)
     assert errors == [], errors
 
 
-def test_idd_status_skill_passes_lint(repo_root: Path) -> None:
-    skill = repo_root / "skills" / "idd-status" / "SKILL.md"
+def test_forge_status_skill_passes_lint(repo_root: Path) -> None:
+    skill = repo_root / "skills" / "forge-status" / "SKILL.md"
     schema = repo_root / "schemas" / "frontmatter.schema.json"
     errors = lint.validate_file(skill, schema)
     assert errors == [], errors
 
 
-def test_idd_status_command_passes_lint(repo_root: Path) -> None:
+def test_forge_status_command_passes_lint(repo_root: Path) -> None:
     cmd = repo_root / "commands" / "status.md"
     schema = repo_root / "schemas" / "frontmatter.schema.json"
     errors = lint.validate_file(cmd, schema)
     assert errors == [], errors
 
 
-def test_idd_validate_skill_passes_lint(repo_root: Path) -> None:
-    skill = repo_root / "skills" / "idd-validate" / "SKILL.md"
+def test_forge_validate_skill_passes_lint(repo_root: Path) -> None:
+    skill = repo_root / "skills" / "forge-validate" / "SKILL.md"
     schema = repo_root / "schemas" / "frontmatter.schema.json"
     errors = lint.validate_file(skill, schema)
     assert errors == [], errors
 
 
-def test_idd_validate_command_passes_lint(repo_root: Path) -> None:
+def test_forge_validate_command_passes_lint(repo_root: Path) -> None:
     cmd = repo_root / "commands" / "validate.md"
     schema = repo_root / "schemas" / "frontmatter.schema.json"
     errors = lint.validate_file(cmd, schema)

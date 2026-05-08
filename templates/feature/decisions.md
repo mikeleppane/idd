@@ -12,7 +12,7 @@
 
 **Alternatives considered:** <list, with one-line rationale for rejection>
 
-<!-- Constitution amendment template (used by /idd:amend-constitution):
+<!-- Constitution amendment template (used by /forge:amend-constitution):
 ## YYYY-MM-DD — Constitution amendment: vX.Y.Z
 **Context:** <one paragraph>
 **Change:** <patch|minor|major> bump — <Article N added|modified|removed|level loosened|level tightened>.

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://idd.dev/schemas/review-frontmatter.schema.json",
-  "title": "IDD REVIEW.md frontmatter",
+  "$id": "https://forge.dev/schemas/review-frontmatter.schema.json",
+  "title": "FORGE REVIEW.md frontmatter",
   "type": "object",
   "additionalProperties": false,
   "required": ["spec", "target", "status", "cycles"],

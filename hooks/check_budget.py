@@ -211,7 +211,7 @@ def main() -> int:
                     "hookSpecificOutput": {
                         "hookEventName": "PreToolUse",
                         "permissionDecision": "deny",
-                        "permissionDecisionReason": f"IDD context-budget hook: {reason}",
+                        "permissionDecisionReason": f"FORGE context-budget hook: {reason}",
                     }
                 }
             )

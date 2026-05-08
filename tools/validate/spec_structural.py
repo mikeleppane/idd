@@ -127,10 +127,10 @@ def _iter_archived_feature_specs(features_root: Path) -> list[Path]:
     return sorted(p for p in archive_root.glob("*/SPEC.md") if p.is_file())
 
 
-def _collect_canonical_capabilities(idd_root: Path) -> dict[str, list[Path]]:
-    """Return {capability: [SPEC.md, ...]} for all canonical specs under .idd/specs/."""
+def _collect_canonical_capabilities(forge_root: Path) -> dict[str, list[Path]]:
+    """Return {capability: [SPEC.md, ...]} for all canonical specs under .forge/specs/."""
     result: dict[str, list[Path]] = {}
-    specs_root = idd_root / "specs"
+    specs_root = forge_root / "specs"
     if not specs_root.is_dir():
         return result
     for entry in sorted(specs_root.iterdir()):
@@ -143,12 +143,12 @@ def _collect_canonical_capabilities(idd_root: Path) -> dict[str, list[Path]]:
 
 
 def _collect_feature_capabilities(
-    idd_root: Path,
+    forge_root: Path,
 ) -> tuple[dict[str, list[Path]], dict[str, list[Path]]]:
-    """Return ({active cap: paths}, {archived cap: paths}) under .idd/features/."""
+    """Return ({active cap: paths}, {archived cap: paths}) under .forge/features/."""
     active: dict[str, list[Path]] = {}
     archived: dict[str, list[Path]] = {}
-    features_root = idd_root / "features"
+    features_root = forge_root / "features"
     if not features_root.is_dir():
         return active, archived
     for entry in sorted(features_root.iterdir()):
@@ -171,19 +171,19 @@ def validate_capability_uniqueness(repo_root: Path) -> list[Finding]:
     spec's HIGH classification for collision; non-zero exit per `EXIT_NONZERO_SEVERITIES`).
 
     Args:
-        repo_root: Repository root containing the .idd/ tree.
+        repo_root: Repository root containing the .forge/ tree.
 
     Returns:
         List of Finding records. Empty list means no collisions on the active
         surface.
     """
     findings: list[Finding] = []
-    idd_root = repo_root / ".idd"
-    if not idd_root.is_dir():
+    forge_root = repo_root / ".forge"
+    if not forge_root.is_dir():
         return findings
 
-    canonical = _collect_canonical_capabilities(idd_root)
-    active, archived = _collect_feature_capabilities(idd_root)
+    canonical = _collect_canonical_capabilities(forge_root)
+    active, archived = _collect_feature_capabilities(forge_root)
 
     def _emit(cap: str, paths: list[Path]) -> None:
         joined = ", ".join(str(p.relative_to(repo_root)) for p in paths)

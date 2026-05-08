@@ -42,7 +42,7 @@ def _load_state_deviations(state_path: Path) -> list[dict[str, Any]]:
 
     Pre-fix this helper silently dropped non-dict deviation entries (e.g.
     ``{"deviations": ["bad"]}`` collapsed to ``[]``). Now any non-object
-    entry raises so the caller emits a BLOCK — ``/idd:execute`` migrated to
+    entry raises so the caller emits a BLOCK — ``/forge:execute`` migrated to
     delegate its self-review to this validator, and a silently-passing
     malformed deviation would let the phase exit unreviewed.
     """

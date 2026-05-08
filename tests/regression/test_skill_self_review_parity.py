@@ -1,8 +1,8 @@
 """Per-skill regression suite: validators on real M1/M2 fixture trees.
 
 Locks parity between the migrated `tools.validate` validators and the inline
-self-review prose they replace in the four IDD skills (idd-spec, idd-plan,
-idd-scenarios, idd-execute). Two complementary axes:
+self-review prose they replace in the four FORGE skills (forge-spec, forge-plan,
+forge-scenarios, forge-execute). Two complementary axes:
 
 1.  **Fixture-pair parity** (per validator): for each migrated check, drive
     the validator against the fixtures the skill's M1/M2 self-review
@@ -38,7 +38,7 @@ def _gates(findings: list[validate.Finding]) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# idd-scenarios — replaces orphan-scenario / unmapped-AC inline prose.
+# forge-scenarios — replaces orphan-scenario / unmapped-AC inline prose.
 # ---------------------------------------------------------------------------
 
 
@@ -52,13 +52,13 @@ def _gates(findings: list[validate.Finding]) -> bool:
         ("spec_scenarios_no_scenarios_section.md", True),
     ],
 )
-def test_idd_scenarios_parity(fixture: str, should_gate: bool) -> None:
+def test_forge_scenarios_parity(fixture: str, should_gate: bool) -> None:
     findings = validate.validate_scenarios(FIX / fixture)
     assert _gates(findings) is should_gate, [f.message for f in findings]
 
 
 # ---------------------------------------------------------------------------
-# idd-spec — replaces inline scenarios + anchors prose under self-review.
+# forge-spec — replaces inline scenarios + anchors prose under self-review.
 # ---------------------------------------------------------------------------
 
 
@@ -74,13 +74,13 @@ def test_idd_scenarios_parity(fixture: str, should_gate: bool) -> None:
         ("spec_anchors_missing_symbol.md", False),
     ],
 )
-def test_idd_spec_anchors_parity(fixture: str, should_gate: bool) -> None:
+def test_forge_spec_anchors_parity(fixture: str, should_gate: bool) -> None:
     findings = validate.validate_anchors(FIX / fixture, repo_root=ANCHORS_REPO)
     assert _gates(findings) is should_gate, [f.message for f in findings]
 
 
 # ---------------------------------------------------------------------------
-# idd-plan — replaces plan-tasks + verified-deps inline prose under self-review.
+# forge-plan — replaces plan-tasks + verified-deps inline prose under self-review.
 # ---------------------------------------------------------------------------
 
 
@@ -97,7 +97,7 @@ def test_idd_spec_anchors_parity(fixture: str, should_gate: bool) -> None:
         ("plan_tasks_backticked_files", True),
     ],
 )
-def test_idd_plan_tasks_parity(fixture_dir: str, should_gate: bool) -> None:
+def test_forge_plan_tasks_parity(fixture_dir: str, should_gate: bool) -> None:
     plan = FIX / fixture_dir / "PLAN.md"
     spec = FIX / fixture_dir / "SPEC.md"
     findings = validate.validate_plan_tasks(plan, spec_path=spec)
@@ -126,13 +126,13 @@ def test_idd_plan_tasks_parity(fixture_dir: str, should_gate: bool) -> None:
         ("verified_deps_empty_key_apis.md", True),
     ],
 )
-def test_idd_plan_verified_deps_parity(fixture: str, should_gate: bool) -> None:
+def test_forge_plan_verified_deps_parity(fixture: str, should_gate: bool) -> None:
     findings = validate.validate_verified_deps(FIX / fixture)
     assert _gates(findings) is should_gate, [f.message for f in findings]
 
 
 # ---------------------------------------------------------------------------
-# idd-execute — replaces "no deviations marked unresolved" inline prose.
+# forge-execute — replaces "no deviations marked unresolved" inline prose.
 # ---------------------------------------------------------------------------
 
 
@@ -150,7 +150,7 @@ def test_idd_plan_verified_deps_parity(fixture: str, should_gate: bool) -> None:
         ("deviations_hyphen_decision", False),
     ],
 )
-def test_idd_execute_deviations_parity(fixture_dir: str, should_gate: bool) -> None:
+def test_forge_execute_deviations_parity(fixture_dir: str, should_gate: bool) -> None:
     findings = validate.validate_deviations(FIX / fixture_dir)
     assert _gates(findings) is should_gate, [f.message for f in findings]
 
@@ -206,7 +206,7 @@ def test_validate_deviations_passes_on_smoke_fixtures(feature_dir: Path) -> None
 
 
 def test_validate_scenarios_measurable_ac_parity() -> None:
-    """idd-spec allows AC -> 'one scenario or one measurable outcome'.
+    """forge-spec allows AC -> 'one scenario or one measurable outcome'.
 
     The new validator must NOT flag a measurable-outcome AC as unmapped
     (correction #9 from the plan's pre-execution review).

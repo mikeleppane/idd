@@ -1,4 +1,4 @@
-"""Smoke tests for the IDD focused-tier reference fixture.
+"""Smoke tests for the FORGE focused-tier reference fixture.
 
 These do not run live skills or slash commands; live plugin dogfood is the Task 28 release gate. These tests verify:
   - fixture artifacts pass the SPEC and state schemas;
@@ -137,11 +137,11 @@ def test_negative_empty_idea_is_detected() -> None:
 @pytest.mark.parametrize(
     "rel",
     [
-        "skills/idd-spec/SKILL.md",
-        "skills/idd-execute/SKILL.md",
-        "skills/idd-verify/SKILL.md",
-        "skills/idd-context-budget/SKILL.md",
-        "skills/idd-subagent-dispatch/SKILL.md",
+        "skills/forge-spec/SKILL.md",
+        "skills/forge-execute/SKILL.md",
+        "skills/forge-verify/SKILL.md",
+        "skills/forge-context-budget/SKILL.md",
+        "skills/forge-subagent-dispatch/SKILL.md",
         "commands/spec.md",
         "commands/execute.md",
         "commands/verify.md",

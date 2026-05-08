@@ -1,5 +1,5 @@
 ---
-name: idd-spec
+name: forge-spec
 description: missing closing fence
 # (no closing --- below)
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://idd.dev/schemas/state.schema.json",
-  "title": "IDD Per-Feature State",
+  "$id": "https://forge.dev/schemas/state.schema.json",
+  "title": "FORGE Per-Feature State",
   "type": "object",
   "additionalProperties": false,
   "required": ["feature_id", "tier", "current_phase", "phases", "skipped", "deviations", "commits"],

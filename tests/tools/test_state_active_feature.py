@@ -11,7 +11,7 @@ from tools import state
 
 
 def _make_feature(repo_root: Path, feature_id: str, current_phase: str) -> Path:
-    folder = repo_root / ".idd" / "features" / feature_id
+    folder = repo_root / ".forge" / "features" / feature_id
     folder.mkdir(parents=True, exist_ok=True)
     payload = {
         "feature_id": feature_id,
@@ -83,7 +83,7 @@ def test_find_active_feature_rejects_malformed_slug(tmp_path: Path) -> None:
 
 def test_find_active_feature_surfaces_malformed_state_json(tmp_path: Path) -> None:
     """A corrupt state.json must not be silently treated as inactive."""
-    folder = tmp_path / ".idd" / "features" / "2026-05-02-beta"
+    folder = tmp_path / ".forge" / "features" / "2026-05-02-beta"
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "state.json").write_text("{ not json", encoding="utf-8")
 
@@ -92,9 +92,9 @@ def test_find_active_feature_surfaces_malformed_state_json(tmp_path: Path) -> No
 
 
 def test_find_active_feature_skips_archive_directory(tmp_path: Path) -> None:
-    """Archive folder under .idd/features/archive/ must not be considered active."""
+    """Archive folder under .forge/features/archive/ must not be considered active."""
     expected = _make_feature(tmp_path, "2026-05-02-beta", "execute")
-    archive = tmp_path / ".idd" / "features" / "archive" / "2026-04-99-shipped"
+    archive = tmp_path / ".forge" / "features" / "archive" / "2026-04-99-shipped"
     archive.mkdir(parents=True, exist_ok=True)
     payload = {
         "feature_id": "2026-04-99-shipped",

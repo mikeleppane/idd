@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "skills": {
-    "idd-spec":              { "phase": "spec",      "tiers": ["focused", "standard", "full"] },
-    "idd-scenarios":         { "phase": "scenarios", "tiers": ["standard", "full"] },
-    "idd-plan":              { "phase": "plan",      "tiers": ["standard", "full"] },
-    "idd-crucible":          { "phase": "crucible",  "tiers": ["standard", "full"] },
-    "idd-review":            { "phase": "review",    "tiers": ["standard", "full"] },
-    "idd-execute":           { "phase": "execute",   "tiers": ["focused", "standard", "full"] },
-    "idd-verify":            { "phase": "verify",    "tiers": ["focused", "standard", "full"] },
-    "idd-ship":              { "phase": "ship",      "tiers": ["standard", "full"] },
-    "idd-context-budget":    { "phase": "*",         "tiers": ["focused", "standard", "full"] },
-    "idd-subagent-dispatch": { "phase": "*",         "tiers": ["focused", "standard", "full"] }
+    "forge-spec":              { "phase": "spec",      "tiers": ["focused", "standard", "full"] },
+    "forge-scenarios":         { "phase": "scenarios", "tiers": ["standard", "full"] },
+    "forge-plan":              { "phase": "plan",      "tiers": ["standard", "full"] },
+    "forge-crucible":          { "phase": "crucible",  "tiers": ["standard", "full"] },
+    "forge-review":            { "phase": "review",    "tiers": ["standard", "full"] },
+    "forge-execute":           { "phase": "execute",   "tiers": ["focused", "standard", "full"] },
+    "forge-verify":            { "phase": "verify",    "tiers": ["focused", "standard", "full"] },
+    "forge-ship":              { "phase": "ship",      "tiers": ["standard", "full"] },
+    "forge-context-budget":    { "phase": "*",         "tiers": ["focused", "standard", "full"] },
+    "forge-subagent-dispatch": { "phase": "*",         "tiers": ["focused", "standard", "full"] }
   }
 }

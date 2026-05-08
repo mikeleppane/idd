@@ -71,7 +71,7 @@ Scenario: <name>
 # Negative Requirements
 
 > Explicit MUST-NOT statements. These guard against scope creep, regression, and silent feature
-> additions during execute. Each negative requirement is verified by `/idd:verify` like a regular criterion.
+> additions during execute. Each negative requirement is verified by `/forge:verify` like a regular criterion.
 
 - MUST NOT <behavior the feature explicitly excludes>
 - MUST NOT <behavior the feature explicitly excludes>

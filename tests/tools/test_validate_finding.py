@@ -13,7 +13,7 @@ def test_finding_is_frozen() -> None:
     finding = validate.Finding(
         severity="BLOCK",
         target="constitution",
-        file=Path(".idd/CONSTITUTION.md"),
+        file=Path(".forge/CONSTITUTION.md"),
         message="missing frontmatter",
     )
     with pytest.raises(AttributeError):
@@ -24,12 +24,12 @@ def test_finding_fields_round_trip() -> None:
     finding = validate.Finding(
         severity="WARN",
         target="constitution",
-        file=Path(".idd/CONSTITUTION.md"),
+        file=Path(".forge/CONSTITUTION.md"),
         message="article count near cap",
     )
     assert finding.severity == "WARN"
     assert finding.target == "constitution"
-    assert finding.file == Path(".idd/CONSTITUTION.md")
+    assert finding.file == Path(".forge/CONSTITUTION.md")
     assert finding.message == "article count near cap"
 
 

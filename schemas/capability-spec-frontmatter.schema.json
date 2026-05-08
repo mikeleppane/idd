@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://idd.dev/schemas/capability-spec-frontmatter.schema.json",
-  "title": "IDD canonical capability SPEC.md frontmatter",
+  "$id": "https://forge.dev/schemas/capability-spec-frontmatter.schema.json",
+  "title": "FORGE canonical capability SPEC.md frontmatter",
   "type": "object",
   "additionalProperties": false,
   "required": ["capability", "status", "created", "last_updated", "evidence"],

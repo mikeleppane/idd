@@ -112,7 +112,7 @@ def test_deviations_non_list_deviations_block(tmp_path: Path) -> None:
 def test_deviations_non_dict_entry_blocks(tmp_path: Path) -> None:
     """A deviations[] list with a non-object entry is malformed; pre-fix the
     helper silently dropped such entries and the validator returned []. Now
-    /idd:execute delegates to this validator, so a passing run on malformed
+    /forge:execute delegates to this validator, so a passing run on malformed
     state.json would let the phase exit unreviewed.
     """
     state = tmp_path / "state.json"

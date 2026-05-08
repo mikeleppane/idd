@@ -76,8 +76,8 @@ def test_high_severity_finding_triggers_exit_1(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """HIGH severity (e.g., capability collision) must drive non-zero exit."""
-    feat_a = tmp_path / ".idd" / "features" / "2026-05-04-a"
-    feat_b = tmp_path / ".idd" / "features" / "2026-05-04-b"
+    feat_a = tmp_path / ".forge" / "features" / "2026-05-04-a"
+    feat_b = tmp_path / ".forge" / "features" / "2026-05-04-b"
     for folder in (feat_a, feat_b):
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "state.json").write_text(
@@ -193,7 +193,7 @@ def test_cli_target_all_fans_out_over_features(
     monkeypatch.setattr(validate_cli, "validate_negative_requirements", make_sentinel("nr"))
     monkeypatch.setattr(validate_cli, "validate_frontmatter", make_sentinel("fm"))
 
-    feat = tmp_path / ".idd" / "features" / "2026-05-05-x"
+    feat = tmp_path / ".forge" / "features" / "2026-05-05-x"
     feat.mkdir(parents=True)
     (feat / "state.json").write_text('{"deviations": []}', encoding="utf-8")
     (feat / "SPEC.md").write_text("# Scenarios\n# Acceptance Criteria\n", encoding="utf-8")

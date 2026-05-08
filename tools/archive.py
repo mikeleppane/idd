@@ -34,10 +34,10 @@ def _validate_feature_id(feature_id: str) -> None:
 
 
 def archive_feature(repo_root: Path, feature_id: str) -> Path:
-    """Move .idd/features/<id>/ to .idd/features/archive/<id>/.
+    """Move .forge/features/<id>/ to .forge/features/archive/<id>/.
 
     Args:
-        repo_root: Repository root containing the .idd/ tree.
+        repo_root: Repository root containing the .forge/ tree.
         feature_id: Feature folder name in YYYY-MM-DD-slug form.
 
     Returns:
@@ -47,10 +47,10 @@ def archive_feature(repo_root: Path, feature_id: str) -> Path:
         ArchiveError: feature id malformed, source missing, or target already exists.
     """
     _validate_feature_id(feature_id)
-    source = repo_root / ".idd" / "features" / feature_id
+    source = repo_root / ".forge" / "features" / feature_id
     if not source.is_dir():
         raise ArchiveError(f"feature folder not found: {source}")
-    archive_root = repo_root / ".idd" / "features" / "archive"
+    archive_root = repo_root / ".forge" / "features" / "archive"
     archive_root.mkdir(parents=True, exist_ok=True)
     target = archive_root / feature_id
     if target.exists():
@@ -60,10 +60,10 @@ def archive_feature(repo_root: Path, feature_id: str) -> Path:
 
 
 def canonical_spec_path(repo_root: Path, capability: str) -> Path:
-    """Return .idd/specs/<capability>/SPEC.md (does not validate existence).
+    """Return .forge/specs/<capability>/SPEC.md (does not validate existence).
 
     Args:
-        repo_root: Repository root containing the .idd/ tree.
+        repo_root: Repository root containing the .forge/ tree.
         capability: Capability slug (lowercase letters, digits, hyphens).
 
     Returns:
@@ -73,14 +73,14 @@ def canonical_spec_path(repo_root: Path, capability: str) -> Path:
         ArchiveError: capability slug malformed.
     """
     _validate_capability(capability)
-    return repo_root / ".idd" / "specs" / capability / "SPEC.md"
+    return repo_root / ".forge" / "specs" / capability / "SPEC.md"
 
 
 def write_canonical_spec(repo_root: Path, capability: str, body: str) -> Path:
     """Write the canonical capability SPEC.md. Refuses to overwrite.
 
     Args:
-        repo_root: Repository root containing the .idd/ tree.
+        repo_root: Repository root containing the .forge/ tree.
         capability: Capability slug (lowercase letters, digits, hyphens).
         body: Full SPEC.md text content (frontmatter + body).
 
@@ -108,7 +108,7 @@ def _emit_constitution_skip_warning(repo_root: Path, feature_id: str) -> None:
     NOT pass a ``pre_archive_hook``. Surfaces a single-line WARN to stderr
     when:
 
-    - ``.idd/CONSTITUTION.md`` exists (the project opted in to a
+    - ``.forge/CONSTITUTION.md`` exists (the project opted in to a
       Constitution), AND
     - the feature's ``REVIEW.code.md`` carries at least one
       ``[constitution:A<n>]`` tag (some unresolved finding cited an
@@ -123,8 +123,8 @@ def _emit_constitution_skip_warning(repo_root: Path, feature_id: str) -> None:
     suite pins it so tooling can grep the output.
     """
     try:
-        constitution = repo_root / ".idd" / "CONSTITUTION.md"
-        review = repo_root / ".idd" / "features" / feature_id / "REVIEW.code.md"
+        constitution = repo_root / ".forge" / "CONSTITUTION.md"
+        review = repo_root / ".forge" / "features" / feature_id / "REVIEW.code.md"
         if not constitution.exists() or not review.exists():
             return
         text = review.read_text(encoding="utf-8", errors="replace")
@@ -134,7 +134,7 @@ def _emit_constitution_skip_warning(repo_root: Path, feature_id: str) -> None:
         # mirrors the SKILL.md step number so the operator has a precise
         # pointer back to the documented gate flow.
         print(
-            "WARN: Constitution gate skipped — see /idd:ship SKILL.md step 3.5",
+            "WARN: Constitution gate skipped — see /forge:ship SKILL.md step 3.5",
             file=sys.stderr,
         )
     except Exception:
@@ -154,15 +154,15 @@ def ship_feature(
 ) -> tuple[Path, Path]:
     """Atomically write the canonical capability spec and archive the feature folder.
 
-    The transactional contract for /idd:ship: all preflight checks pass before any
+    The transactional contract for /forge:ship: all preflight checks pass before any
     write, and the canonical spec write is rolled back if archival fails.
 
     Preflight (all-or-nothing):
         1. Validate `feature_id` slug.
         2. Validate `capability` slug.
-        3. Source `.idd/features/<feature_id>/` must be a directory.
-        4. Canonical `.idd/specs/<capability>/SPEC.md` must NOT exist.
-        5. Archive target `.idd/features/archive/<feature_id>/` must NOT exist.
+        3. Source `.forge/features/<feature_id>/` must be a directory.
+        4. Canonical `.forge/specs/<capability>/SPEC.md` must NOT exist.
+        5. Archive target `.forge/features/archive/<feature_id>/` must NOT exist.
 
     Mutation:
         1. Write canonical spec via `write_canonical_spec`.
@@ -177,7 +177,7 @@ def ship_feature(
            callers that mutate state must idempotently re-apply on retry.
 
     Args:
-        repo_root: Repository root containing the .idd/ tree.
+        repo_root: Repository root containing the .forge/ tree.
         feature_id: Feature folder name in YYYY-MM-DD-slug form.
         capability: Capability slug (lowercase letters, digits, hyphens).
         body: Full SPEC.md text content (frontmatter + body).
@@ -204,7 +204,7 @@ def ship_feature(
     _validate_feature_id(feature_id)
     _validate_capability(capability)
 
-    source = repo_root / ".idd" / "features" / feature_id
+    source = repo_root / ".forge" / "features" / feature_id
     if not source.is_dir():
         raise ArchiveError(f"feature folder not found: {source}")
 
@@ -215,7 +215,7 @@ def ship_feature(
             "feature already shipped — delta proposals (M3+) required for changes",
         )
 
-    archive_target = repo_root / ".idd" / "features" / "archive" / feature_id
+    archive_target = repo_root / ".forge" / "features" / "archive" / feature_id
     if archive_target.exists():
         raise ArchiveError(f"feature already archived at {archive_target}")
 

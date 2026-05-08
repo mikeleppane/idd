@@ -15,13 +15,13 @@ from pathlib import Path
 import pytest
 
 SKILL_FILES = [
-    "skills/idd-spec/SKILL.md",
-    "skills/idd-scenarios/SKILL.md",
-    "skills/idd-plan/SKILL.md",
-    "skills/idd-crucible/SKILL.md",
-    "skills/idd-execute/SKILL.md",
-    "skills/idd-review/SKILL.md",
-    "skills/idd-verify/SKILL.md",
+    "skills/forge-spec/SKILL.md",
+    "skills/forge-scenarios/SKILL.md",
+    "skills/forge-plan/SKILL.md",
+    "skills/forge-crucible/SKILL.md",
+    "skills/forge-execute/SKILL.md",
+    "skills/forge-review/SKILL.md",
+    "skills/forge-verify/SKILL.md",
 ]
 
 COMMAND_FILES = [
@@ -60,9 +60,9 @@ def test_command_doc_mentions_constitution_preflight(command_path: str) -> None:
     )
 
 
-def test_idd_constitution_skill_exists() -> None:
-    skill = Path("skills/idd-constitution/SKILL.md")
-    assert skill.exists(), "idd-constitution skill must be authored in Task 5"
+def test_forge_constitution_skill_exists() -> None:
+    skill = Path("skills/forge-constitution/SKILL.md")
+    assert skill.exists(), "forge-constitution skill must be authored in Task 5"
     text = skill.read_text(encoding="utf-8")
     assert "load_and_filter" in text
     assert "disable-model-invocation: true" in text

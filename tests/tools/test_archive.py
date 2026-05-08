@@ -17,7 +17,7 @@ from tools.archive import (
 
 
 def _seed_feature(repo_root: Path, feature_id: str, *, files: dict[str, str]) -> Path:
-    feature_dir = repo_root / ".idd" / "features" / feature_id
+    feature_dir = repo_root / ".forge" / "features" / feature_id
     feature_dir.mkdir(parents=True)
     for name, body in files.items():
         (feature_dir / name).write_text(body, encoding="utf-8")
@@ -30,16 +30,16 @@ def test_archive_feature_moves_folder_under_features_archive(tmp_path: Path) -> 
 
     archived = archive_feature(tmp_path, feature_id)
 
-    assert archived == tmp_path / ".idd" / "features" / "archive" / feature_id
+    assert archived == tmp_path / ".forge" / "features" / "archive" / feature_id
     assert archived.is_dir()
     assert (archived / "SPEC.md").read_text(encoding="utf-8") == "# spec\n"
-    assert not (tmp_path / ".idd" / "features" / feature_id).exists()
+    assert not (tmp_path / ".forge" / "features" / feature_id).exists()
 
 
 def test_archive_feature_refuses_when_target_exists(tmp_path: Path) -> None:
     feature_id = "2026-05-04-toggle-add"
     _seed_feature(tmp_path, feature_id, files={"SPEC.md": "# spec\n"})
-    (tmp_path / ".idd" / "features" / "archive" / feature_id).mkdir(parents=True)
+    (tmp_path / ".forge" / "features" / "archive" / feature_id).mkdir(parents=True)
 
     with pytest.raises(ArchiveError, match="already archived"):
         archive_feature(tmp_path, feature_id)
@@ -53,7 +53,7 @@ def test_archive_feature_missing_source_raises(tmp_path: Path) -> None:
 def test_canonical_spec_path_uses_specs_capability_spec(tmp_path: Path) -> None:
     assert (
         canonical_spec_path(tmp_path, "feature-flag")
-        == tmp_path / ".idd" / "specs" / "feature-flag" / "SPEC.md"
+        == tmp_path / ".forge" / "specs" / "feature-flag" / "SPEC.md"
     )
 
 
@@ -62,7 +62,7 @@ def test_write_canonical_spec_creates_folder_and_file(tmp_path: Path) -> None:
 
     written = write_canonical_spec(tmp_path, "feature-flag", body)
 
-    assert written == tmp_path / ".idd" / "specs" / "feature-flag" / "SPEC.md"
+    assert written == tmp_path / ".forge" / "specs" / "feature-flag" / "SPEC.md"
     assert written.read_text(encoding="utf-8") == body
 
 
@@ -89,7 +89,7 @@ def test_invalid_feature_id_rejected(tmp_path: Path, bad: str) -> None:
 
 def _seed_constitution(repo_root: Path) -> None:
     """Write a minimal valid Constitution with one CRITICAL article."""
-    cdir = repo_root / ".idd"
+    cdir = repo_root / ".forge"
     cdir.mkdir(parents=True, exist_ok=True)
     (cdir / "CONSTITUTION.md").write_text(
         '---\nversion: 0.1.0\ncreated: "2026-05-07"\n---\n\n'
@@ -217,18 +217,18 @@ def test_ship_feature_happy_path_writes_canonical_and_archives(tmp_path: Path) -
 
     canonical, archive_path = ship_feature(tmp_path, feature_id, capability, body)
 
-    assert canonical == tmp_path / ".idd" / "specs" / capability / "SPEC.md"
+    assert canonical == tmp_path / ".forge" / "specs" / capability / "SPEC.md"
     assert canonical.read_text(encoding="utf-8") == body
-    assert archive_path == tmp_path / ".idd" / "features" / "archive" / feature_id
+    assert archive_path == tmp_path / ".forge" / "features" / "archive" / feature_id
     assert (archive_path / "SPEC.md").read_text(encoding="utf-8") == "# spec\n"
-    assert not (tmp_path / ".idd" / "features" / feature_id).exists()
+    assert not (tmp_path / ".forge" / "features" / feature_id).exists()
 
 
 def test_ship_feature_refuses_when_canonical_already_exists(tmp_path: Path) -> None:
     feature_id = "2026-05-04-toggle-add"
     capability = "feature-flag"
     _seed_feature(tmp_path, feature_id, files={"SPEC.md": "# spec\n"})
-    canonical = tmp_path / ".idd" / "specs" / capability / "SPEC.md"
+    canonical = tmp_path / ".forge" / "specs" / capability / "SPEC.md"
     canonical.parent.mkdir(parents=True)
     canonical.write_text("existing\n", encoding="utf-8")
 
@@ -236,33 +236,33 @@ def test_ship_feature_refuses_when_canonical_already_exists(tmp_path: Path) -> N
         ship_feature(tmp_path, feature_id, capability, "---\n---\n")
 
     # Source untouched
-    assert (tmp_path / ".idd" / "features" / feature_id / "SPEC.md").exists()
+    assert (tmp_path / ".forge" / "features" / feature_id / "SPEC.md").exists()
     # Canonical untouched (still says "existing")
     assert canonical.read_text(encoding="utf-8") == "existing\n"
     # No archive created
-    assert not (tmp_path / ".idd" / "features" / "archive" / feature_id).exists()
+    assert not (tmp_path / ".forge" / "features" / "archive" / feature_id).exists()
 
 
 def test_ship_feature_refuses_when_archive_target_exists(tmp_path: Path) -> None:
     feature_id = "2026-05-04-toggle-add"
     capability = "feature-flag"
     _seed_feature(tmp_path, feature_id, files={"SPEC.md": "# spec\n"})
-    (tmp_path / ".idd" / "features" / "archive" / feature_id).mkdir(parents=True)
+    (tmp_path / ".forge" / "features" / "archive" / feature_id).mkdir(parents=True)
 
     with pytest.raises(ArchiveError, match="already archived"):
         ship_feature(tmp_path, feature_id, capability, "---\n---\n")
 
     # No canonical written
-    assert not (tmp_path / ".idd" / "specs" / capability / "SPEC.md").exists()
+    assert not (tmp_path / ".forge" / "specs" / capability / "SPEC.md").exists()
     # Source untouched
-    assert (tmp_path / ".idd" / "features" / feature_id / "SPEC.md").exists()
+    assert (tmp_path / ".forge" / "features" / feature_id / "SPEC.md").exists()
 
 
 def test_ship_feature_refuses_when_source_missing(tmp_path: Path) -> None:
     with pytest.raises(ArchiveError, match="not found"):
         ship_feature(tmp_path, "2026-05-04-missing", "feature-flag", "---\n---\n")
     # No canonical written even though it would have been writable
-    assert not (tmp_path / ".idd" / "specs" / "feature-flag" / "SPEC.md").exists()
+    assert not (tmp_path / ".forge" / "specs" / "feature-flag" / "SPEC.md").exists()
 
 
 @pytest.mark.parametrize("bad_feature_id", ["", "bad-id", "../escape"])
@@ -297,10 +297,10 @@ def test_ship_feature_rolls_back_canonical_when_archive_fails(
         ship_feature(tmp_path, feature_id, capability, "---\ncapability: feature-flag\n---\n# x\n")
 
     # Canonical spec rolled back
-    canonical = tmp_path / ".idd" / "specs" / capability / "SPEC.md"
+    canonical = tmp_path / ".forge" / "specs" / capability / "SPEC.md"
     assert not canonical.exists(), "canonical spec should be rolled back when archive fails"
     # Source still present
-    assert (tmp_path / ".idd" / "features" / feature_id / "SPEC.md").exists()
+    assert (tmp_path / ".forge" / "features" / feature_id / "SPEC.md").exists()
 
 
 def test_ship_feature_pre_archive_hook_runs_against_live_source(tmp_path: Path) -> None:
@@ -327,7 +327,7 @@ def test_ship_feature_pre_archive_hook_runs_against_live_source(tmp_path: Path) 
         pre_archive_hook=hook,
     )
 
-    assert captured == [tmp_path / ".idd" / "features" / feature_id]
+    assert captured == [tmp_path / ".forge" / "features" / feature_id]
     assert canonical.is_file()
     # The hook's mutation traveled with the move.
     assert (archived / "state.json").read_text(encoding="utf-8") == '{"current_phase":"done"}\n'
@@ -351,7 +351,7 @@ def test_ship_feature_rolls_back_canonical_when_pre_archive_hook_raises(tmp_path
             pre_archive_hook=hook,
         )
 
-    canonical = tmp_path / ".idd" / "specs" / capability / "SPEC.md"
+    canonical = tmp_path / ".forge" / "specs" / capability / "SPEC.md"
     assert not canonical.exists(), "canonical rolled back on hook failure"
-    assert (tmp_path / ".idd" / "features" / feature_id / "SPEC.md").exists()
-    assert not (tmp_path / ".idd" / "features" / "archive" / feature_id).exists()
+    assert (tmp_path / ".forge" / "features" / feature_id / "SPEC.md").exists()
+    assert not (tmp_path / ".forge" / "features" / "archive" / feature_id).exists()

@@ -64,7 +64,7 @@ def _check_article_numbering(article_numbers: list[int], path: Path) -> list[Fin
 
 
 def validate_constitution(path: Path) -> list[Finding]:
-    """Validate `.idd/CONSTITUTION.md` structural shape per M3 spec §5.3.1.
+    """Validate `.forge/CONSTITUTION.md` structural shape per M3 spec §5.3.1.
 
     Checks (in order):
         1. File exists.

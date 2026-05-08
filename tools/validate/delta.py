@@ -20,7 +20,7 @@ _NEXT_H2 = re.compile(r"^## ", re.MULTILINE)
 
 
 def validate_delta(path: Path) -> list[Finding]:
-    """Validate `.idd/changes/<id>/proposal.md` structural shape per M3 spec §5.3.5.
+    """Validate `.forge/changes/<id>/proposal.md` structural shape per M3 spec §5.3.5.
 
     Checks (in order):
         1. File exists.

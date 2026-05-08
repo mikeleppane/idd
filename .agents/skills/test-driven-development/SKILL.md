@@ -1,24 +1,24 @@
 ---
 name: test-driven-development
-description: Drive every behavioral change in IDD through a failing test first. Use when adding or modifying anything in `tools/` (state machine, frontmatter linter, schema checker), changing JSON Schemas, fixing a bug surfaced by the focused-tier flow, or when `/idd:execute` dispatches an implementer subagent. Write the failing test before the code; use the Prove-It pattern for bugs; assert on observable state of `Path` payloads and dict outputs, not on internals. `make check` is the floor before claiming done.
+description: Drive every behavioral change in FORGE through a failing test first. Use when adding or modifying anything in `tools/` (state machine, frontmatter linter, schema checker), changing JSON Schemas, fixing a bug surfaced by the focused-tier flow, or when `/forge:execute` dispatches an implementer subagent. Write the failing test before the code; use the Prove-It pattern for bugs; assert on observable state of `Path` payloads and dict outputs, not on internals. `make check` is the floor before claiming done.
 ---
 
-# Test-Driven Development (IDD)
+# Test-Driven Development (FORGE)
 
-Write the failing test before the code. For bug fixes, reproduce the bug with a test *before* attempting to fix it. Tests are proof — "seems right" is not done. IDD is itself a methodology for driving development through specs and verification; the tooling that encodes that methodology has to hold itself to the same bar.
+Write the failing test before the code. For bug fixes, reproduce the bug with a test *before* attempting to fix it. Tests are proof — "seems right" is not done. FORGE is itself a methodology for driving development through specs and verification; the tooling that encodes that methodology has to hold itself to the same bar.
 
-This skill covers the *process* of driving development through tests and the *shape* of a good IDD test. It does **not** restate the repo's production-code rules — when a rule is about how the code under test must be written (typing, `pathlib.Path`, docstrings, line length), cite [coding-guidance-python](../coding-guidance-python/SKILL.md) rather than duplicate. Commit hygiene around bug-fix tests lives in [git-conventions](../git-conventions/SKILL.md).
+This skill covers the *process* of driving development through tests and the *shape* of a good FORGE test. It does **not** restate the repo's production-code rules — when a rule is about how the code under test must be written (typing, `pathlib.Path`, docstrings, line length), cite [coding-guidance-python](../coding-guidance-python/SKILL.md) rather than duplicate. Commit hygiene around bug-fix tests lives in [git-conventions](../git-conventions/SKILL.md).
 
 Project-specific rules live in [AGENTS.md](../../../AGENTS.md) and override anything here.
 
 ---
 
-## IDD testing conventions — source of truth
+## FORGE testing conventions — source of truth
 
 Re-read AGENTS.md "Testing" before every test commit. The highlights:
 
 - **`make check` is the floor.** It runs `make lint`, `make typecheck`, and `make test`. All three must pass before you declare any change done. There is no separate `unit` / `component` split today — `make test` runs the whole suite.
-- **No async.** IDD tooling is synchronous. No async pytest plugin configuration, no `@pytest.mark.asyncio`, no `asyncio.timeout`, no `TaskGroup`. If you reach for those, the design is wrong.
+- **No async.** FORGE tooling is synchronous. No async pytest plugin configuration, no `@pytest.mark.asyncio`, no `asyncio.timeout`, no `TaskGroup`. If you reach for those, the design is wrong.
 - **Tests get full type annotations.** mypy strict applies to `tests/` too — `def test_…() -> None:` is the minimum, and fixtures get typed return types.
 - **Tests are exempt from `D` rules.** Docstrings are not required on test functions; keep them terse and let the name carry the contract.
 - **`tmp_path` for any filesystem work.** Never write under `/tmp/`, the cwd, or anywhere outside the per-test temp directory.
@@ -31,7 +31,7 @@ A note on markers: `pyproject.toml` declares `markers = ["unit: fast, isolated",
 
 ## When to use TDD
 
-- Adding or changing any function in `tools/` — state machine transitions, frontmatter parsing, schema checks, anything an `/idd:*` command will call.
+- Adding or changing any function in `tools/` — state machine transitions, frontmatter parsing, schema checks, anything an `/forge:*` command will call.
 - Tightening a JSON Schema (`schemas/state.schema.json`, `schemas/frontmatter.schema.json`, `schemas/spec-frontmatter.schema.json`) — the schema test is the proof that the new constraint rejects the bad input.
 - Fixing any bug — the **Prove-It pattern** below is the default. No fix without a failing test first.
 - Modifying existing behavior in a way the lifecycle observes (a new phase entry, a new error class, a renamed state field) — change the test first so the regression is caught if the change is later reverted.
@@ -261,12 +261,12 @@ Duplication is fine. Each test failure tells you exactly what broke without a hu
 
 The more of your test runs real code, the more confidence it gives. Preference order (most → least):
 
-1. **Real implementation.** First choice. Use the actual `parse_frontmatter`, the actual `jsonschema.Draft202012Validator`, the actual `read_state` reading a real file under `tmp_path`. IDD tooling is fast and deterministic — there's almost never a reason not to use the real thing.
-2. **Fake.** A small in-memory replacement that implements the same contract. Rare in IDD because most code is pure functions on `Path` + dict. If you need one, write a ~10-line concrete class right next to the test (or in the nearest `conftest.py`); don't reach for `unittest.mock`.
+1. **Real implementation.** First choice. Use the actual `parse_frontmatter`, the actual `jsonschema.Draft202012Validator`, the actual `read_state` reading a real file under `tmp_path`. FORGE tooling is fast and deterministic — there's almost never a reason not to use the real thing.
+2. **Fake.** A small in-memory replacement that implements the same contract. Rare in FORGE because most code is pure functions on `Path` + dict. If you need one, write a ~10-line concrete class right next to the test (or in the nearest `conftest.py`); don't reach for `unittest.mock`.
 3. **Stub.** A canned input — a fixture file under `tests/fixtures/` for the smoke test, a hand-built dict for a unit test.
-4. **Mock (interaction verification).** Use **only** when the behavior under test is *about the interaction itself*. In IDD that almost never applies. If you find yourself mocking `pathlib.Path` or `json.dumps`, stop — the test is wrong.
+4. **Mock (interaction verification).** Use **only** when the behavior under test is *about the interaction itself*. In FORGE that almost never applies. If you find yourself mocking `pathlib.Path` or `json.dumps`, stop — the test is wrong.
 
-**Over-mocking is the #1 cause of tests that pass while production breaks.** If your test file imports `unittest.mock`, there should be a specific reason — and it belongs in a comment or the commit body. There is no "named seams" / `Protocol` injection layer in IDD; tools are pure functions on `Path` and dict payloads. When a tool needs an external location (e.g. a schema directory), inject it as a `Path` parameter and pass the `schemas_dir` fixture in the test.
+**Over-mocking is the #1 cause of tests that pass while production breaks.** If your test file imports `unittest.mock`, there should be a specific reason — and it belongs in a comment or the commit body. There is no "named seams" / `Protocol` injection layer in FORGE; tools are pure functions on `Path` and dict payloads. When a tool needs an external location (e.g. a schema directory), inject it as a `Path` parameter and pass the `schemas_dir` fixture in the test.
 
 ### Arrange-Act-Assert
 
@@ -352,7 +352,7 @@ If you can't name the test as a sentence, you probably don't know yet what behav
 
 ## Testing JSON Schemas
 
-IDD's contracts live in `schemas/`. Validate them with the real `jsonschema` library against representative payloads — never re-implement the rule in the test.
+FORGE's contracts live in `schemas/`. Validate them with the real `jsonschema` library against representative payloads — never re-implement the rule in the test.
 
 ```python
 # tests/tools/test_state_schema.py
@@ -441,7 +441,7 @@ Rules of the road:
 
 ---
 
-## IDD-specific patterns
+## FORGE-specific patterns
 
 ### Filesystem under test — `tmp_path`, always
 
@@ -517,18 +517,18 @@ If a tool needs the current date (e.g. to stamp `2026-05-04-feature-name` on a f
 
 ---
 
-## Test anti-patterns in IDD
+## Test anti-patterns in FORGE
 
 | Anti-pattern | Why it hurts | Do this instead |
 |---|---|---|
-| `@pytest.mark.asyncio` or async pytest plugin config | IDD is sync; the marker is meaningless and signals a wrong design. | Delete the decorator. If you genuinely need async, raise it as a design question first. |
+| `@pytest.mark.asyncio` or async pytest plugin config | FORGE is sync; the marker is meaningless and signals a wrong design. | Delete the decorator. If you genuinely need async, raise it as a design question first. |
 | `unittest.mock.patch("tools.state.…")` | Patches through the module system; breaks on rename; couples test to import path. | Inject the dependency as a `Path` / dict parameter and pass it from the test. |
 | Hardcoded `Path("schemas/state.schema.json")` in a test | Breaks when pytest is run from a different cwd; couples the test to repo layout. | Use the `schemas_dir` fixture. |
 | Reaching into `docs/features/<real feature>/` from a test | Couples the test to a moving target; flakes when the real feature evolves. | Build a fixture feature folder under `tmp_path`. |
 | Re-implementing JSON Schema rules in Python inside the test | The rule under test is the schema; an inline reimplementation tests nothing. | Use `jsonschema.Draft202012Validator(schema).validate(payload)`. |
 | Asserting on `mock.call_count == N` | Implementation-coupled; refactors break green tests. | Assert on the JSON the tool wrote, the dict it returned, the exception it raised. |
 | `unittest.mock.Mock()` for a pure function on `Path` | There's nothing to mock — the function takes a path and returns a value. | Call the real function with a `tmp_path` argument. |
-| `time.sleep(…)` in a test | IDD is sync; nothing to wait for. Flakiness disguised as patience. | Remove the sleep. If a test feels racy, the design is wrong. |
+| `time.sleep(…)` in a test | FORGE is sync; nothing to wait for. Flakiness disguised as patience. | Remove the sleep. If a test feels racy, the design is wrong. |
 | Snapshot tests on whole `STATE.json` files | Nobody reviews the snapshot; breaks on harmless field-order churn. | Assert on the specific keys the behavior cares about. |
 | Tests that pass on first run without you verifying they fail first | Test may be asserting on a default or a file the fixture already wrote. | Always confirm RED before GREEN. |
 | `test_it_works` / `test_state` / `test_error` | Zero signal in failure output. | `test_<unit>_<scenario>_<expected_behavior>`. |
@@ -550,10 +550,10 @@ The thoughts that lead to the test getting skipped, and what's actually true.
 |---|---|
 | "I'll add tests after `make check` passes" | `make check` only proves lint, types, and *existing* tests are clean — it tells you nothing about new behavior. The test for new behavior is what makes `make check` meaningful. |
 | "It's just a state machine helper, too simple to test" | State machines fail at the edges — re-entry, missing fields, stale slices. The bug example above is *exactly* this kind of "too simple" function. |
-| "I tested it manually by running `/idd:execute`" | A manual lifecycle walk doesn't persist. Tomorrow's refactor has nothing to fall back on, and the next agent has no executable contract to read. |
+| "I tested it manually by running `/forge:execute`" | A manual lifecycle walk doesn't persist. Tomorrow's refactor has nothing to fall back on, and the next agent has no executable contract to read. |
 | "Tests slow me down" | Tests slow you down now, and speed you up every subsequent change. The tradeoff is against *future you*, who is forgetful. |
 | "The schema already validates it" | Schemas validate payload shape; they don't validate transitions, file IO, or error wrapping. Those are the tool's job, and the tool needs its own tests. |
-| "Mocking's fine, I'll fix it later" | Once mocks proliferate, nothing removes them. IDD code is mostly pure functions on `Path` — the real call is almost always cheaper than the mock. |
+| "Mocking's fine, I'll fix it later" | Once mocks proliferate, nothing removes them. FORGE code is mostly pure functions on `Path` — the real call is almost always cheaper than the mock. |
 | "All tests pass" when you haven't run `make check` | `make check` is the floor. "Tests pass" without it is half-truth — lint and type errors block merge too. |
 
 ---

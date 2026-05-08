@@ -4,7 +4,7 @@ slices: 1
 status: ready
 ---
 
-> Template ships in M1; consumed by `/idd-plan` in M2.
+> Template ships in M1; consumed by `/forge-plan` in M2.
 
 # Slice 1: <vertical-slice-name>
 

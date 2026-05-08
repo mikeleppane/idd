@@ -1,4 +1,4 @@
-# IDD internal development docs (not tracked or shipped)
+# FORGE internal development docs (not tracked or shipped)
 docs/
 
 # Python
@@ -22,10 +22,10 @@ build/
 *.swp
 *:Zone.Identifier
 
-# IDD runtime artifacts (per-project, never committed in plugin repo)
-.idd/
-# Test fixtures intentionally ship a synthetic .idd/ tree under target_repo/.
-!tests/fixtures/**/target_repo/.idd/
+# FORGE runtime artifacts (per-project, never committed in plugin repo)
+.forge/
+# Test fixtures intentionally ship a synthetic .forge/ tree under target_repo/.
+!tests/fixtures/**/target_repo/.forge/
 
 # Local config
 .env

@@ -1,14 +1,14 @@
 ---
 name: amend-constitution
-description: Open `.idd/CONSTITUTION.md` in $EDITOR for atomic edit, bump version per the scope of the change, and append an ADR entry to decisions.md. Use when the user asks to amend, extend, or bootstrap the project Constitution. Pass `--bootstrap` to seed a starter Constitution from project signals (proposes up to 5 articles, opt-in).
+description: Open `.forge/CONSTITUTION.md` in $EDITOR for atomic edit, bump version per the scope of the change, and append an ADR entry to decisions.md. Use when the user asks to amend, extend, or bootstrap the project Constitution. Pass `--bootstrap` to seed a starter Constitution from project signals (proposes up to 5 articles, opt-in).
 ---
 
-# /idd:amend-constitution
+# /forge:amend-constitution
 
 ## Behavior
 
-1. Without `--bootstrap`: invoke `idd-amend-constitution` skill in regular-amend mode.
-2. With `--bootstrap`: invoke skill in bootstrap mode (refuses if `.idd/CONSTITUTION.md` exists).
+1. Without `--bootstrap`: invoke `forge-amend-constitution` skill in regular-amend mode.
+2. With `--bootstrap`: invoke skill in bootstrap mode (refuses if `.forge/CONSTITUTION.md` exists).
 
 ## Failure modes
 

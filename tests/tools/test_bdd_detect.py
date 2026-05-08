@@ -86,10 +86,10 @@ def test_node_cucumber_dep_without_config_returns_ambiguous(tmp_path: Path) -> N
     assert "cucumber" in result.reason
 
 
-def test_idd_config_override_wins(tmp_path: Path) -> None:
-    (tmp_path / ".idd").mkdir()
+def test_forge_config_override_wins(tmp_path: Path) -> None:
+    (tmp_path / ".forge").mkdir()
     _write_text(
-        tmp_path / ".idd" / "config.json",
+        tmp_path / ".forge" / "config.json",
         json.dumps(
             {
                 "bdd_framework": {
@@ -110,10 +110,10 @@ def test_idd_config_override_wins(tmp_path: Path) -> None:
     )
 
 
-def test_idd_config_override_rejects_absolute_features_dir(tmp_path: Path) -> None:
-    (tmp_path / ".idd").mkdir()
+def test_forge_config_override_rejects_absolute_features_dir(tmp_path: Path) -> None:
+    (tmp_path / ".forge").mkdir()
     _write_text(
-        tmp_path / ".idd" / "config.json",
+        tmp_path / ".forge" / "config.json",
         json.dumps(
             {
                 "bdd_framework": {
@@ -129,10 +129,10 @@ def test_idd_config_override_rejects_absolute_features_dir(tmp_path: Path) -> No
     assert "features_dir" in result.reason
 
 
-def test_idd_config_override_rejects_dotdot_traversal(tmp_path: Path) -> None:
-    (tmp_path / ".idd").mkdir()
+def test_forge_config_override_rejects_dotdot_traversal(tmp_path: Path) -> None:
+    (tmp_path / ".forge").mkdir()
     _write_text(
-        tmp_path / ".idd" / "config.json",
+        tmp_path / ".forge" / "config.json",
         json.dumps(
             {
                 "bdd_framework": {
@@ -148,18 +148,18 @@ def test_idd_config_override_rejects_dotdot_traversal(tmp_path: Path) -> None:
     assert "'..'" in result.reason
 
 
-def test_idd_config_override_with_invalid_json_is_ambiguous(tmp_path: Path) -> None:
-    (tmp_path / ".idd").mkdir()
-    _write_text(tmp_path / ".idd" / "config.json", "{not json")
+def test_forge_config_override_with_invalid_json_is_ambiguous(tmp_path: Path) -> None:
+    (tmp_path / ".forge").mkdir()
+    _write_text(tmp_path / ".forge" / "config.json", "{not json")
     result = detect(tmp_path)
     assert isinstance(result, Ambiguous)
     assert "valid JSON" in result.reason
 
 
-def test_idd_config_override_missing_keys_is_ambiguous(tmp_path: Path) -> None:
-    (tmp_path / ".idd").mkdir()
+def test_forge_config_override_missing_keys_is_ambiguous(tmp_path: Path) -> None:
+    (tmp_path / ".forge").mkdir()
     _write_text(
-        tmp_path / ".idd" / "config.json",
+        tmp_path / ".forge" / "config.json",
         json.dumps({"bdd_framework": {"ecosystem": "python"}}),
     )
     result = detect(tmp_path)
