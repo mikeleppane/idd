@@ -203,11 +203,14 @@ def render_gate_prompt(
     for f in gate:
         article = by_id.get(f.article_id or "")
         title = article.title if article else "(unknown)"
-        rationale = article.reference or article.rationale or "—" if article else "—"
+        # Prefer the article's reference (e.g. OWASP entry) over its rationale
+        # because reference is the canonical citation; rationale is the back-
+        # ground. The variable name reflects what we actually display.
+        context = (article.reference or article.rationale or "—") if article else "—"
         lines.append(f'[constitution:{f.article_id}] {f.severity} (CRITICAL article: "{title}")')
         lines.append(f"  File: {f.location}")
         lines.append(f"  Reviewer note: {f.message}")
-        lines.append(f"  Article rationale: {rationale}")
+        lines.append(f"  Article context: {context}")
         lines.append("")
     lines.extend(
         [
@@ -344,8 +347,12 @@ def make_acknowledgement_hook(
             for f in gate_findings:
                 article = by_id.get(f.article_id or "")
                 title = article.title if article else "(unknown)"
+                # Strip a leading [constitution:A<n>] from the reviewer
+                # message so the tag is not echoed twice on the same line —
+                # the bullet already starts with the tag.
+                clean_message = _TAG_RE.sub("", f.message, count=1).lstrip(" -")
                 body_lines.append(
-                    f"- [constitution:{f.article_id}] **{title}** — {f.location} — {f.message}"
+                    f"- [constitution:{f.article_id}] **{title}** — {f.location} — {clean_message}"
                 )
             with decisions_path.open("a", encoding="utf-8") as fh:
                 fh.write("\n".join(body_lines) + "\n")
