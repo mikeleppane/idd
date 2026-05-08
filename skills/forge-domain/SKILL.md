@@ -36,9 +36,13 @@ tiers fill `# Domain` at spec time and never enter this phase.
    /forge:spec completes")`. **Tier guard:** also require
    `state.json.tier == "full"`. Although `start_phase` accepts `domain` for
    any tier, this skill is full-tier only — focused and standard tiers fill
-   `# Domain` at spec time. If `tier != "full"`, abort with
-   `StateError("/forge:domain is full-tier only; current tier is '<X>' — "
-   "fill # Domain at /forge:spec time instead")` and do NOT mutate SPEC.md.
+   `# Domain` at spec time. Call `tools.state.require_full_tier(payload,
+   phase="domain")` and surface the canonical raise verbatim:
+   `"domain phase is full-tier only; current tier is '<X>'"`. Do NOT invent
+   a custom abort string; the helper is the single source of truth and is
+   shared with `/forge:refine` so users see consistent error wording across
+   the two full-tier-only phases. Do NOT mutate SPEC.md when the tier guard
+   trips.
 3. **Read SPEC.** Open `SPEC.md`. Extract the `# Intent` and `# Scenarios`
    sections verbatim (read-only). Do not mutate the spec yet.
    **Fence-aware section scan (per P5 T11 H1 lesson):** when locating
@@ -46,11 +50,13 @@ tiers fill `# Domain` at spec time and never enter this phase.
    blocks (` ``` ` and ` ~~~ ` delimited regions) before matching — fenced
    examples that contain literal `# Header` lines must not shadow real H1
    sections. Use the canonical helper `tools.validate._frontmatter._strip_code`
-   (also imported and used by `tools.validate.spec_structural` and
-   `tools.validate.constitution` — it preserves byte offsets by replacing
-   fenced + inline code regions with same-length whitespace) rather than
-   rolling a naive `re.search(r"^# Domain", ...)` regex. Do not invent a
-   new section parser; reuse `_strip_code` exactly as `spec_structural` does.
+   (its real home — `tools.validate.spec_structural` only re-imports it,
+   it does NOT define its own copy; `tools.validate.constitution` likewise
+   imports the same symbol). The helper preserves byte offsets by replacing
+   fenced + inline code regions with same-length whitespace. Do not invent
+   a new section parser; reuse `_strip_code` exactly as `spec_structural`
+   does. Note: `_mask_fenced_lines` lives elsewhere (`tools.delta_merge`)
+   and serves a different purpose — do NOT reach for it here.
 4. **Project signals.** Read `pyproject.toml` (or `package.json`) for
    ecosystem hints — language, framework, declared dependencies. These bias
    which terms count as "generic" vs "domain" (e.g., `request` is generic in
@@ -85,7 +91,7 @@ tiers fill `# Domain` at spec time and never enter this phase.
      to disambiguate.
 10. **Phase transition.** Call `tools.state.complete_phase(path, "domain")`
     then `tools.state.start_phase(path, "scenarios")`. Print
-    `next: /forge:scenarios`.
+    `Next: /forge:scenarios`.
 
 ## Failure modes
 

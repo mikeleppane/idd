@@ -27,6 +27,13 @@ VALID_TIERS = ("focused", "standard", "full")
 # than truncate so the caller has to make the trim decision deliberately.
 _REFINED_IDEA_MAX_CHARS: Final[int] = 4000
 
+# Hard cap on the Socratic refine loop. The forge-refine SKILL prose advertises
+# a "max 5 rounds" cap; this constant is the machine-side enforcement that
+# refuses to advance past it (deep-M-A1). Mirrored in the schema as
+# ``routing.refine_attempts.maximum`` so a tampered state.json is rejected on
+# read/write too.
+_REFINE_ATTEMPTS_CAP: Final[int] = 5
+
 
 def _validator_for(schema: dict[str, Any]) -> jsonschema.Draft202012Validator:
     return jsonschema.Draft202012Validator(
@@ -333,6 +340,26 @@ def record_refined_idea(
     return payload
 
 
+def require_full_tier(payload: dict[str, Any], *, phase: str) -> None:
+    """Raise ``StateError`` when ``payload['tier'] != 'full'``.
+
+    Shared tier guard for full-tier-only phases (``refine``, ``domain``).
+    The error message is deliberately uniform so the SKILL.md prose for
+    each phase can quote the helper's raise verbatim instead of inventing
+    a per-skill string (deep-M-A2 / deep-M-A6).
+
+    Args:
+        payload: Parsed state.json payload.
+        phase: Phase name to embed in the error message (e.g. ``"refine"``).
+
+    Raises:
+        StateError: when ``payload`` does not carry ``tier == "full"``.
+    """
+    tier = payload.get("tier")
+    if tier != "full":
+        raise StateError(f"{phase} phase is full-tier only; current tier is {tier!r}")
+
+
 def increment_refine_attempts(
     path: Path,
     schema_path: Path | None = None,
@@ -352,9 +379,11 @@ def increment_refine_attempts(
         The new ``refine_attempts`` count after increment.
 
     Raises:
-        StateError: ``current_phase`` is not ``refine``, the routing block is
-            absent (call ``/forge:do`` first), ``routing.refine_attempts`` is
-            present but not a non-negative integer, or schema validation fails.
+        StateError: ``current_phase`` is not ``refine``, ``tier`` is not
+            ``full``, the routing block is absent (call ``/forge:do`` first),
+            ``routing.refine_attempts`` is present but not a non-negative
+            integer, the count already sits at the ``_REFINE_ATTEMPTS_CAP``
+            cap, or schema validation fails.
     """
     payload = read_state(path, schema_path=schema_path)
 
@@ -365,6 +394,8 @@ def increment_refine_attempts(
             f"{current_phase!r}, expected 'refine'"
         )
 
+    require_full_tier(payload, phase="refine")
+
     routing = payload.get("routing")
     if not isinstance(routing, dict):
         raise StateError(
@@ -373,10 +404,10 @@ def increment_refine_attempts(
         )
 
     raw_current: Any = routing.get("refine_attempts", 0)
-    if isinstance(raw_current, bool) or not isinstance(raw_current, int):
+    if not isinstance(raw_current, int) or isinstance(raw_current, bool):
         raise StateError(
             f"cannot increment refine_attempts: routing.refine_attempts "
-            f"must be an integer, got {type(raw_current).__name__} "
+            f"must be int, got {type(raw_current).__name__} "
             f"({raw_current!r}) in {path}"
         )
     current: int = raw_current
@@ -384,6 +415,11 @@ def increment_refine_attempts(
         raise StateError(
             f"cannot increment refine_attempts: routing.refine_attempts "
             f"is negative ({current}) in {path}"
+        )
+    if current >= _REFINE_ATTEMPTS_CAP:
+        raise StateError(
+            f"refine_attempts already at cap ({_REFINE_ATTEMPTS_CAP}); "
+            f"record_refined_idea + complete_phase or surface a deviation"
         )
     new_count = current + 1
     routing["refine_attempts"] = new_count
@@ -548,7 +584,9 @@ _FOCUSED_NEXT: dict[str, str | None] = {
 }
 
 _STANDARD_NEXT: dict[str, str | None] = {
-    "refine": "/forge:spec",
+    # 'refine' is intentionally absent — refine is full-tier only and was
+    # never supposed to enter the standard pipeline (deep-M-A2). Standard
+    # tier starts at /forge:spec.
     "spec": "/forge:scenarios",
     "scenarios": "/forge:plan",
     "plan": "/forge:crucible",
@@ -560,6 +598,7 @@ _STANDARD_NEXT: dict[str, str | None] = {
 
 _FULL_NEXT: dict[str, str | None] = {
     **_STANDARD_NEXT,
+    "refine": "/forge:spec",
     "spec": "/forge:domain",
     "domain": "/forge:scenarios",
 }

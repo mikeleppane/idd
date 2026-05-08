@@ -48,7 +48,14 @@ directly against an active feature whose `current_phase` is already `refine`.
    `"cannot increment refine_attempts: current_phase is '<X>', expected 'refine'"`.
    Do not invent a custom abort string; the helper is the single source of
    truth so users see consistent errors across phases.
-3. **Resolve idea source.** Pull `state.json.routing.idea`. If present, use it
+3. **Guard tier.** After the phase guard, also require `state.json.tier == "full"`.
+   The canonical helper `tools.state.increment_refine_attempts` calls
+   `tools.state.require_full_tier(payload, phase="refine")` and surfaces
+   the verbatim raise:
+   `"refine phase is full-tier only; current tier is '<X>'"`. Do not invent
+   a custom abort string here either; quote the helper. Refine is full-tier
+   only — focused and standard tiers do not enter this phase.
+4. **Resolve idea source.** Pull `state.json.routing.idea`. If present, use it
    and ignore any CLI `<idea>` argument (routing is the canonical record;
    do not overwrite). If `routing.idea` is absent AND a CLI `<idea>` was
    passed, seed the routing block first via
@@ -58,20 +65,28 @@ directly against an active feature whose `current_phase` is already `refine`.
    `final_tier`, and `decided_at`, and gives `increment_refine_attempts` a
    block to mutate. If **both** are absent, abort with:
    `"/forge:refine needs an idea — pass one as an argument: /forge:refine \"<idea text>\""`.
-4. **Detect ambiguity.** Scan the idea for vague verbs ("improve", "better",
+5. **Detect ambiguity.** Scan the idea for vague verbs ("improve", "better",
    "fix"), compound goals (multiple "and"-joined outcomes), and missing
    acceptance signal (no measurable change implied).
-5. **Socratic loop, max 5 rounds.** While ambiguity remains and round count is
+6. **Socratic loop, max 5 rounds.** While ambiguity remains and round count is
    below 5:
    a. Ask one clarifying question targeting the highest-impact ambiguity.
    b. After the user replies, call `tools.state.increment_refine_attempts(path)`
-      to bump `routing.refine_attempts` by 1.
+      to bump `routing.refine_attempts` by 1. The helper enforces the
+      5-round cap machine-side: a sixth call raises
+      `"refine_attempts already at cap (5); record_refined_idea +
+      complete_phase or surface a deviation"`. The schema mirrors the cap
+      via `routing.refine_attempts.maximum = 5` so a tampered state.json
+      is rejected on read/write too.
    c. Synthesize a candidate refined-idea paragraph and ask the user to
       confirm or continue.
-6. **Persist refined idea.** On user confirm OR round-cap reached, call
+7. **Persist refined idea.** On user confirm OR round-cap reached, call
    `tools.state.record_refined_idea(path, refined=...)` to write
-   `state.json.refined_idea`.
-7. **Round-cap deviation.** When 5 rounds exhausted without convergence:
+   `state.json.refined_idea`. The refined idea must be ≤4000 chars; the
+   helper raises `StateError` on overflow rather than truncating silently —
+   trim before calling `record_refined_idea`. The schema mirrors the cap
+   via `refined_idea.maxLength = 4000`.
+8. **Round-cap deviation.** When 5 rounds exhausted without convergence:
    - **Interactive mode:** halt; prompt the user to re-state the idea.
    - **Auto mode:** append a `decisions.md` entry **and** append a structured
      object to `state.json.deviations` matching the schema shape
@@ -79,13 +94,13 @@ directly against an active feature whose `current_phase` is already `refine`.
      `deviations[]` items are objects, never bare strings). Use:
      `{"phase": "refine", "cause": "round cap reached", "resolution": "proceeding with best-effort refinement"}`.
      Then proceed with the best-effort paragraph.
-8. **Self-review.** Confirm:
+9. **Self-review.** Confirm:
    - Single feature scope (no compound goals).
    - Measurable outcome implied.
    - No multi-feature spillover. If the user cannot collapse to one feature,
      suggest re-running `/forge:do --full` and abort.
-9. **Phase transition.** Call `tools.state.complete_phase(path, "refine")` then
-   `tools.state.start_phase(path, "spec")`. Print `next: /forge:spec`.
+10. **Phase transition.** Call `tools.state.complete_phase(path, "refine")` then
+    `tools.state.start_phase(path, "spec")`. Print `Next: /forge:spec`.
 
 ## Failure modes
 
