@@ -279,10 +279,21 @@ def render_gate_prompt(
     Returns:
         Multiline string suitable for printing to the user. Empty string when
         ``gate`` is empty.
+
+    Raises:
+        ShipGateError: When any gate-bucket finding references an article id
+            that is not present in ``articles``. Defense in depth: the
+            partitioner already routes unknown ids to info, so this branch
+            is unreachable in production. The assertion documents the
+            invariant so a future caller bypassing the partitioner cannot
+            smuggle a "(unknown)" rendering past the user prompt.
     """
     if not gate:
         return ""
     by_id = {a.id: a for a in articles}
+    unknown = sorted({f.article_id for f in gate if f.article_id and f.article_id not in by_id})
+    if unknown:
+        raise ShipGateError(f"render_gate_prompt: unknown article id(s) in gate bucket: {unknown}")
     lines = [
         "=" * 57,
         "  CONSTITUTION FINDINGS - UNRESOLVED AT SHIP",

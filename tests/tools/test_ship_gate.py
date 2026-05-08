@@ -290,6 +290,25 @@ def test_ack_hook_recovers_from_state_write_failure(
     assert final_decisions.count("## 2026-05-07 — Constitution finding acknowledged at ship") == 1
 
 
+def test_render_gate_prompt_raises_on_unknown_article_id() -> None:
+    """L1 — defense in depth: gate-bucket findings must reference known articles.
+
+    `partition_by_article_level` already routes unknown article ids to info
+    so this path is unreachable in production. The assertion documents the
+    invariant so a future caller bypassing the partitioner cannot smuggle a
+    `(unknown)` rendering past the user prompt without the framework
+    noticing.
+    """
+    rogue = sg.ShipFinding(
+        article_id="A99",  # not present in `_articles()`
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[constitution:A99] phantom",
+    )
+    with pytest.raises(sg.ShipGateError, match="unknown article id"):
+        sg.render_gate_prompt([rogue], _articles())
+
+
 def test_render_warn_summary_lists_should_findings() -> None:
     findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
     _gate, warn, _info = sg.partition_by_article_level(findings, _articles())
