@@ -18,6 +18,12 @@ import yaml
 
 from tools.constitution_amend import atomic_replace
 from tools.delta_merge import apply_delta_ops, parse_proposal_body
+from tools.state import (
+    VALID_TIERS,
+    _utc_now_iso,
+    feature_folder_exists,
+    write_state,
+)
 from tools.validate._feature_layout import _ORPHAN_FEATURE_FILES
 from tools.validate._finding import EXIT_NONZERO_SEVERITIES, Finding
 from tools.validate.delta import validate_delta
@@ -326,6 +332,141 @@ def cleanup_seeded_feature(repo_root: Path, feature_id: str) -> bool:
     """
     _validate_feature_id(feature_id)
     return _cleanup_via_predicate(repo_root, feature_id, log_label="cleanup_seeded_feature")
+
+
+_FEATURE_TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "feature"
+
+# Locked verbatim per M3 spec §5.3.2 step 6 + plan deviation #4.  Surfaces in
+# the seed state.json so health-validate flags `research` as intentionally
+# skipped rather than a missing phase.
+_RESEARCH_SKIPPED_ENTRY: dict[str, str] = {
+    "phase": "research",
+    "reason": "M3 deferred — manual research acceptable",
+}
+
+
+def _render_seed_spec_md(template: str, *, feature_id: str, tier: str) -> str:
+    """Substitute the four placeholders in templates/feature/SPEC.md.
+
+    The template body uses literal placeholder strings; the substitution is a
+    plain ``str.replace`` chain so callers cannot accidentally re-substitute a
+    later token into an already-rendered span.
+
+    Args:
+        template: Raw text of ``templates/feature/SPEC.md``.
+        feature_id: Validated YYYY-MM-DD-slug feature id.
+        tier: Validated tier name.
+
+    Returns:
+        Rendered SPEC.md text with frontmatter ``id``/``tier``/``created``/
+        ``capability`` populated from ``feature_id`` + ``tier``.
+    """
+    created = feature_id[:10]  # YYYY-MM-DD prefix
+    slug = feature_id[11:]  # everything after the date prefix
+    rendered = template
+    rendered = rendered.replace("<YYYY-MM-DD-slug>", feature_id)
+    rendered = rendered.replace("<focused|standard|full>", tier)
+    rendered = rendered.replace("<YYYY-MM-DD>", created)
+    rendered = rendered.replace("<stable-capability-handle>", slug)
+    return rendered
+
+
+def create_feature_folder(
+    repo_root: Path,
+    *,
+    feature_id: str,
+    tier: str,
+    schema_path: Path | None = None,
+) -> Path:
+    """Seed a fresh ``.forge/features/<feature_id>/`` folder for ``/forge:do``.
+
+    Composes the three ``templates/feature/`` files (state.json, SPEC.md,
+    decisions.md) into a new feature folder with substitutions for
+    ``feature_id`` and ``tier``.  ``current_phase`` is hard-locked to
+    ``"spec"`` for M3 P6.1 (P6.2 will reintroduce a parameter when full-tier
+    routing ships).
+
+    Per-file write is atomic via ``atomic_replace`` (tempfile +
+    ``Path.replace`` on the same directory — POSIX-rename semantics).
+    The multi-file folder seed is **best-effort, not transactional** — on any
+    per-file write failure (or schema refusal from ``write_state``), the
+    partial folder is removed via ``shutil.rmtree`` before the original
+    exception is re-raised.
+
+    The ``state.json`` body is built in memory and validated via
+    ``tools.state.write_state(..., schema_path=schema_path)`` so an invalid
+    seed payload refuses BEFORE the folder is left behind on disk.
+
+    State body shape (per spec §5.3.2 step 6 + plan deviation #4):
+
+      - ``feature_id`` / ``tier`` (validated above)
+      - ``current_phase = "spec"``
+      - ``phases.spec = {"status": "in_progress", "started_at": <utc-iso>}``
+      - ``skipped = [{"phase": "research", "reason": "M3 deferred — manual research acceptable"}]``
+      - ``deviations = []``
+      - ``commits = []``
+
+    The ``routing`` block is **not** written here — ``record_routing_decision``
+    writes it next as a separate validated step.
+
+    Args:
+        repo_root: Repository root containing the ``.forge/`` tree.
+        feature_id: Feature folder name in YYYY-MM-DD-slug form.
+        tier: One of ``VALID_TIERS`` (focused/standard/full).
+        schema_path: Optional path to ``schemas/state.schema.json``.  When
+            given, ``write_state`` validates the seed payload before any disk
+            mutation.
+
+    Returns:
+        Path to the new ``.forge/features/<feature_id>/`` folder.
+
+    Raises:
+        ArchiveError: ``feature_id`` slug malformed, ``tier`` not in
+            ``VALID_TIERS``, or the feature folder already exists.
+        StateError: Seed payload fails schema validation when
+            ``schema_path`` is given (folder rmtree'd before re-raise).
+        OSError: Per-file write failure (folder rmtree'd before re-raise).
+    """
+    _validate_feature_id(feature_id)
+    if tier not in VALID_TIERS:
+        raise ArchiveError(f"invalid tier: {tier!r}; must be one of {VALID_TIERS}")
+    if feature_folder_exists(repo_root, feature_id):
+        raise ArchiveError(f"feature folder already exists: {feature_id!r}")
+
+    folder = repo_root / ".forge" / "features" / feature_id
+    folder.mkdir(parents=True, exist_ok=False)
+
+    try:
+        # state.json — validated before any disk write via write_state.
+        seed_state: dict[str, object] = {
+            "feature_id": feature_id,
+            "tier": tier,
+            "current_phase": "spec",
+            "phases": {"spec": {"status": "in_progress", "started_at": _utc_now_iso()}},
+            "skipped": [dict(_RESEARCH_SKIPPED_ENTRY)],
+            "deviations": [],
+            "commits": [],
+        }
+        write_state(folder / "state.json", seed_state, schema_path=schema_path)
+
+        # SPEC.md — render template via four-placeholder substitution.
+        spec_template = (_FEATURE_TEMPLATES_DIR / "SPEC.md").read_text(encoding="utf-8")
+        spec_body = _render_seed_spec_md(spec_template, feature_id=feature_id, tier=tier)
+        atomic_replace(folder / "SPEC.md", spec_body)
+
+        # decisions.md — copy template byte-for-byte (no substitutions).
+        decisions_body = (_FEATURE_TEMPLATES_DIR / "decisions.md").read_text(encoding="utf-8")
+        atomic_replace(folder / "decisions.md", decisions_body)
+    except BaseException:
+        # Best-effort multi-file rollback.  Any failure mid-seed (schema
+        # refusal, per-file OSError, KeyboardInterrupt) removes the partial
+        # folder before re-raising so /forge:do callers never inherit a
+        # half-rendered feature.  ``ignore_errors=True`` keeps the cleanup
+        # itself from masking the original exception.
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+
+    return folder
 
 
 def _validate_capability(capability: str) -> None:

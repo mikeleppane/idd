@@ -1,0 +1,289 @@
+"""Tests for create_feature_folder (M3 P6.1 T2 contract).
+
+Composes existing templates/feature/ files (state.json, SPEC.md,
+decisions.md) into a fresh .forge/features/<feature_id>/ folder.  Per-file
+write is atomic via tempfile + os.replace; the multi-file folder seed is
+best-effort, not transactional — on any per-file failure, shutil.rmtree
+removes the partial folder before re-raising.
+
+State body shape locked by spec §5.3.2 step 6 + plan deviation #4:
+  - feature_id, tier
+  - current_phase = "spec"
+  - phases.spec = {status: "in_progress", started_at: <utc-iso>}
+  - skipped = [{phase: "research", reason: "M3 deferred — manual research acceptable"}]
+  - deviations = []
+  - commits = []
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from tools import constitution_amend
+from tools.archive import ArchiveError, create_feature_folder
+from tools.state import StateError
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCHEMA_PATH = REPO_ROOT / "schemas" / "state.schema.json"
+TEMPLATE_DECISIONS = REPO_ROOT / "templates" / "feature" / "decisions.md"
+
+ISO8601_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|\+00:00)$")
+
+
+def _read_state(folder: Path) -> dict[str, Any]:
+    payload: dict[str, Any] = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# Happy paths
+# ---------------------------------------------------------------------------
+
+
+def test_create_feature_folder_focused_success(tmp_path: Path) -> None:
+    """Focused tier seed: folder + 3 files exist; state validates against schema."""
+    feature_id = "2026-05-08-focused-happy"
+
+    folder = create_feature_folder(
+        tmp_path,
+        feature_id=feature_id,
+        tier="focused",
+        schema_path=SCHEMA_PATH,
+    )
+
+    assert folder == tmp_path / ".forge" / "features" / feature_id
+    assert folder.is_dir()
+    assert (folder / "state.json").is_file()
+    assert (folder / "SPEC.md").is_file()
+    assert (folder / "decisions.md").is_file()
+
+    payload = _read_state(folder)
+    assert payload["feature_id"] == feature_id
+    assert payload["tier"] == "focused"
+    assert payload["current_phase"] == "spec"
+
+
+def test_create_feature_folder_standard_success(tmp_path: Path) -> None:
+    """Standard tier seed: same shape with tier='standard'."""
+    feature_id = "2026-05-08-standard-happy"
+
+    folder = create_feature_folder(
+        tmp_path,
+        feature_id=feature_id,
+        tier="standard",
+        schema_path=SCHEMA_PATH,
+    )
+
+    assert folder.is_dir()
+    payload = _read_state(folder)
+    assert payload["tier"] == "standard"
+    assert payload["current_phase"] == "spec"
+
+
+# ---------------------------------------------------------------------------
+# Refusal paths
+# ---------------------------------------------------------------------------
+
+
+def test_create_feature_folder_collision_raises(tmp_path: Path) -> None:
+    """Pre-create the folder → ArchiveError."""
+    feature_id = "2026-05-08-collision"
+    existing = tmp_path / ".forge" / "features" / feature_id
+    existing.mkdir(parents=True)
+
+    with pytest.raises(ArchiveError, match="feature folder already exists"):
+        create_feature_folder(
+            tmp_path,
+            feature_id=feature_id,
+            tier="focused",
+            schema_path=SCHEMA_PATH,
+        )
+
+
+def test_create_feature_folder_invalid_tier_raises(tmp_path: Path) -> None:
+    """Bogus tier → ArchiveError; no folder created."""
+    feature_id = "2026-05-08-bad-tier"
+    with pytest.raises(ArchiveError, match="invalid tier"):
+        create_feature_folder(
+            tmp_path,
+            feature_id=feature_id,
+            tier="weird",
+            schema_path=SCHEMA_PATH,
+        )
+    assert not (tmp_path / ".forge" / "features" / feature_id).exists()
+
+
+def test_create_feature_folder_invalid_feature_id_raises(tmp_path: Path) -> None:
+    """Bad slug → ArchiveError from _validate_feature_id."""
+    with pytest.raises(ArchiveError, match="invalid feature id"):
+        create_feature_folder(
+            tmp_path,
+            feature_id="2026-13-99-bad-date",  # invalid month/day
+            tier="focused",
+            schema_path=SCHEMA_PATH,
+        )
+
+
+def test_create_feature_folder_partial_failure_rmtrees(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SPEC.md write fails mid-way → folder removed; original exception propagates."""
+    feature_id = "2026-05-08-partial-fail"
+
+    real_atomic_replace = constitution_amend.atomic_replace
+    calls: dict[str, int] = {"count": 0}
+
+    def flaky_atomic_replace(target: Path, body: str) -> None:
+        calls["count"] += 1
+        if target.name == "SPEC.md":
+            raise OSError("simulated mid-write failure")
+        real_atomic_replace(target, body)
+
+    # Patch the binding inside tools.archive (where it's `from ... import`-ed)
+    # so create_feature_folder picks up the flaky version without disturbing
+    # the original tools.constitution_amend.atomic_replace.  setattr-by-string
+    # avoids mypy's strict "explicit-export" complaint about
+    # ``archive.atomic_replace`` access.
+    monkeypatch.setattr("tools.archive.atomic_replace", flaky_atomic_replace, raising=True)
+
+    with pytest.raises(OSError, match="simulated mid-write failure"):
+        create_feature_folder(
+            tmp_path,
+            feature_id=feature_id,
+            tier="focused",
+            schema_path=SCHEMA_PATH,
+        )
+
+    folder = tmp_path / ".forge" / "features" / feature_id
+    assert not folder.exists(), "partial folder must be rmtree'd on per-file failure"
+
+
+# ---------------------------------------------------------------------------
+# Seed-body shape
+# ---------------------------------------------------------------------------
+
+
+def test_create_feature_folder_research_skipped_entry_present(tmp_path: Path) -> None:
+    """skipped contains the research entry verbatim (deviation #4)."""
+    feature_id = "2026-05-08-research-skip"
+    create_feature_folder(
+        tmp_path,
+        feature_id=feature_id,
+        tier="focused",
+        schema_path=SCHEMA_PATH,
+    )
+    payload = _read_state(tmp_path / ".forge" / "features" / feature_id)
+    assert payload["skipped"] == [
+        {"phase": "research", "reason": "M3 deferred — manual research acceptable"}
+    ]
+
+
+def test_create_feature_folder_phase_status_in_progress(tmp_path: Path) -> None:
+    """phases.spec.status == 'in_progress'."""
+    feature_id = "2026-05-08-phase-status"
+    create_feature_folder(
+        tmp_path,
+        feature_id=feature_id,
+        tier="focused",
+        schema_path=SCHEMA_PATH,
+    )
+    payload = _read_state(tmp_path / ".forge" / "features" / feature_id)
+    assert payload["phases"]["spec"]["status"] == "in_progress"
+
+
+def test_create_feature_folder_started_at_iso_8601_utc(tmp_path: Path) -> None:
+    """phases.spec.started_at is ISO 8601 UTC (matches state schema date-time)."""
+    feature_id = "2026-05-08-iso-stamp"
+    create_feature_folder(
+        tmp_path,
+        feature_id=feature_id,
+        tier="focused",
+        schema_path=SCHEMA_PATH,
+    )
+    payload = _read_state(tmp_path / ".forge" / "features" / feature_id)
+    started_at = payload["phases"]["spec"]["started_at"]
+    assert isinstance(started_at, str)
+    assert ISO8601_UTC_RE.match(started_at), f"not ISO 8601 UTC: {started_at!r}"
+
+
+# ---------------------------------------------------------------------------
+# Template substitution + return value
+# ---------------------------------------------------------------------------
+
+
+def test_create_feature_folder_spec_md_substitutions(tmp_path: Path) -> None:
+    """SPEC.md frontmatter has feature_id/tier/created/capability with no placeholders left."""
+    feature_id = "2026-05-08-spec-subst"
+    create_feature_folder(
+        tmp_path,
+        feature_id=feature_id,
+        tier="standard",
+        schema_path=SCHEMA_PATH,
+    )
+    spec_text = (tmp_path / ".forge" / "features" / feature_id / "SPEC.md").read_text(
+        encoding="utf-8"
+    )
+    assert f"id: {feature_id}" in spec_text
+    assert "tier: standard" in spec_text
+    assert "created: 2026-05-08" in spec_text
+    assert "capability: spec-subst" in spec_text
+    # No raw template placeholders remain in the frontmatter block.
+    frontmatter_end = spec_text.find("\n---\n", 4)
+    assert frontmatter_end > 0
+    frontmatter = spec_text[:frontmatter_end]
+    assert "<YYYY-MM-DD-slug>" not in frontmatter
+    assert "<focused|standard|full>" not in frontmatter
+    assert "<YYYY-MM-DD>" not in frontmatter
+    assert "<stable-capability-handle>" not in frontmatter
+
+
+def test_create_feature_folder_returns_folder_path(tmp_path: Path) -> None:
+    """Return value matches repo_root/.forge/features/<feature_id>."""
+    feature_id = "2026-05-08-return-path"
+    folder = create_feature_folder(
+        tmp_path,
+        feature_id=feature_id,
+        tier="focused",
+        schema_path=SCHEMA_PATH,
+    )
+    assert folder == tmp_path / ".forge" / "features" / feature_id
+    assert folder.is_dir()
+
+
+def test_create_feature_folder_schema_path_refuses_invalid_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Forced bogus timestamp → write_state raises StateError; folder removed."""
+    feature_id = "2026-05-08-bad-stamp"
+
+    monkeypatch.setattr("tools.archive._utc_now_iso", lambda: "not-a-date-time")
+
+    with pytest.raises(StateError, match="fails schema"):
+        create_feature_folder(
+            tmp_path,
+            feature_id=feature_id,
+            tier="focused",
+            schema_path=SCHEMA_PATH,
+        )
+
+    folder = tmp_path / ".forge" / "features" / feature_id
+    assert not folder.exists(), "schema refusal must leave no folder behind"
+
+
+def test_create_feature_folder_decisions_md_copied_byte_for_byte(tmp_path: Path) -> None:
+    """decisions.md matches templates/feature/decisions.md byte-for-byte."""
+    feature_id = "2026-05-08-decisions-copy"
+    create_feature_folder(
+        tmp_path,
+        feature_id=feature_id,
+        tier="focused",
+        schema_path=SCHEMA_PATH,
+    )
+    written = (tmp_path / ".forge" / "features" / feature_id / "decisions.md").read_bytes()
+    expected = TEMPLATE_DECISIONS.read_bytes()
+    assert written == expected
