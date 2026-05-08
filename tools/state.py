@@ -6,7 +6,7 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import jsonschema
 
@@ -19,6 +19,13 @@ _FEATURE_ID_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0
 
 
 VALID_TIERS = ("focused", "standard", "full")
+
+# Soft cap on refined_idea length. The refined idea is lifted verbatim into
+# SPEC.md Intent and consumed by every downstream phase prompt; an unbounded
+# blob is both a context-budget hazard and a leakage surface for any secrets
+# or credentials a user pastes into the original idea text. We refuse rather
+# than truncate so the caller has to make the trim decision deliberately.
+_REFINED_IDEA_MAX_CHARS: Final[int] = 4000
 
 
 def _validator_for(schema: dict[str, Any]) -> jsonschema.Draft202012Validator:
@@ -305,11 +312,22 @@ def record_refined_idea(
         Updated state payload.
 
     Raises:
-        StateError: empty input, or schema validation failure.
+        StateError: empty input, ``current_phase`` is not ``refine``,
+            ``refined`` exceeds the length cap, or schema validation fails.
     """
     if not refined.strip():
         raise StateError("refined_idea must be non-empty")
+    if len(refined) > _REFINED_IDEA_MAX_CHARS:
+        raise StateError(
+            f"refined_idea exceeds {_REFINED_IDEA_MAX_CHARS}-char cap "
+            f"(got {len(refined)} chars); trim before persistence"
+        )
     payload = read_state(path, schema_path=schema_path)
+    current_phase = payload.get("current_phase")
+    if current_phase != "refine":
+        raise StateError(
+            f"cannot record refined_idea: current_phase is {current_phase!r}, expected 'refine'"
+        )
     payload["refined_idea"] = refined
     write_state(path, payload, schema_path=schema_path)
     return payload
