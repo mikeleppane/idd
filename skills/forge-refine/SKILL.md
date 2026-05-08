@@ -44,10 +44,12 @@ directly against an active feature whose `current_phase` is already `refine`.
    `state.json.refined_idea`.
 7. **Round-cap deviation.** When 5 rounds exhausted without convergence:
    - **Interactive mode:** halt; prompt the user to re-state the idea.
-   - **Auto mode:** append a `decisions.md` entry and add an entry to
-     `state.json.deviations` (text:
-     `"Refine round cap reached; proceeding with best-effort refinement"`),
-     then proceed with the best-effort paragraph.
+   - **Auto mode:** append a `decisions.md` entry **and** append a structured
+     object to `state.json.deviations` matching the schema shape
+     `{phase, cause, resolution}` (per `schemas/state.schema.json` —
+     `deviations[]` items are objects, never bare strings). Use:
+     `{"phase": "refine", "cause": "round cap reached", "resolution": "proceeding with best-effort refinement"}`.
+     Then proceed with the best-effort paragraph.
 8. **Self-review.** Confirm:
    - Single feature scope (no compound goals).
    - Measurable outcome implied.
@@ -63,7 +65,8 @@ directly against an active feature whose `current_phase` is already `refine`.
   feature and abort without transitioning phase.
 - **5 rounds exhausted, no convergence.** In interactive mode, halt and let
   the user re-state. In auto mode, log a deviation (`decisions.md` entry +
-  `state.json.deviations` append) and proceed with the best-effort refinement.
+  `state.json.deviations` append — object shape `{phase, cause, resolution}`)
+  and proceed with the best-effort refinement.
 - **`routing` block absent.** `tools.state.increment_refine_attempts` raises
   `StateError`. Surface the message: `/forge:do --full <idea>` must run first.
 

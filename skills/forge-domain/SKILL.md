@@ -59,9 +59,12 @@ tiers fill `# Domain` at spec time and never enter this phase.
    - No compound term (e.g., `delta proposal validator`) is left undefined
      when its constituents alone are insufficient.
    - On unresolvable terms in **auto mode**: append a `decisions.md` entry
-     and add a `state.json.deviations[]` entry
-     (`"Domain unresolved terms; proceeding with best-effort glossary"`),
-     then advance.
+     **and** append a structured object to `state.json.deviations` matching
+     the schema shape `{phase, cause, resolution}` (per
+     `schemas/state.schema.json` — `deviations[]` items are objects, never
+     bare strings). Use:
+     `{"phase": "domain", "cause": "unresolved terms", "resolution": "proceeding with best-effort glossary"}`.
+     Then advance.
    - On unresolvable terms in **interactive mode**: halt and ask the user
      to disambiguate.
 10. **Phase transition.** Call `tools.state.complete_phase(path, "domain")`
