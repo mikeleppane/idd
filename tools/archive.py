@@ -114,6 +114,28 @@ def slug_from_idea(text: str, *, max_words: int = 5) -> str:
     return slug
 
 
+def scan_existing_capabilities(repo_root: Path) -> list[str]:
+    """Return a sorted list of canonical capability slugs present in the repo.
+
+    A capability is considered canonical when a directory exists at
+    ``.forge/specs/<slug>/`` and that directory contains a ``SPEC.md`` file.
+    Directories without ``SPEC.md`` are treated as non-canonical and skipped.
+    Listing is filesystem-driven, not state-driven.
+
+    Args:
+        repo_root: Repository root containing the ``.forge/`` tree.
+
+    Returns:
+        Sorted list of capability slug strings (may be empty). Never raises
+        ``FileNotFoundError`` — if ``.forge/specs/`` does not exist, returns
+        ``[]``.
+    """
+    specs_dir = repo_root / ".forge" / "specs"
+    if not specs_dir.is_dir():
+        return []
+    return sorted(d.name for d in specs_dir.iterdir() if d.is_dir() and (d / "SPEC.md").is_file())
+
+
 def _validate_capability(capability: str) -> None:
     if not _CAPABILITY_RE.fullmatch(capability):
         raise ArchiveError(f"invalid capability slug: {capability!r}")
