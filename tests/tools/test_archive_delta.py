@@ -284,7 +284,13 @@ def test_validate_delta_block_finding_raises(tmp_path: Path) -> None:
 
 
 def test_happy_path_no_hook(tmp_path: Path) -> None:
-    """All preflight + mutation succeed; canonical updated; archive correct; orig gone."""
+    """All preflight + mutation succeed; canonical updated; archive correct; orig gone.
+
+    With no explicit ``pre_archive_hook``, the default
+    ``_mark_change_merged_hook`` is wired automatically — the archived
+    proposal MUST carry ``status: merged``, never the stale
+    ``status: approved`` (Reviewer-3 Important).
+    """
     change_id = "2026-05-08-add-criterion"
     _make_canonical(tmp_path, "my-cap")
     _make_proposal(tmp_path, change_id)
@@ -305,11 +311,40 @@ def test_happy_path_no_hook(tmp_path: Path) -> None:
     assert (archive_path / "proposal-pre.md").is_file()
 
     # Proposal.md moved into archive
-    assert (archive_path / "proposal.md").is_file()
+    archived_proposal = archive_path / "proposal.md"
+    assert archived_proposal.is_file()
+
+    # Default hook ran — archived proposal has status: merged, NOT approved.
+    archived_text = archived_proposal.read_text(encoding="utf-8")
+    assert "status: merged" in archived_text
+    assert "status: approved" not in archived_text
 
     # Original change folder is gone (moved)
     orig_folder = tmp_path / ".forge" / "changes" / change_id
     assert not orig_folder.exists()
+
+
+def test_default_hook_marks_proposal_merged_when_no_hook_passed(tmp_path: Path) -> None:
+    """Explicit assertion of the default-hook contract.
+
+    Reviewer-3 Important: ``merge_delta_proposal`` archived approved
+    proposals when the caller omitted the hook.  After the fix, the default
+    is ``_mark_change_merged_hook(proposal_path)``; archived proposals
+    always reflect the merged state.
+    """
+    change_id = "2026-05-08-add-criterion"
+    _make_canonical(tmp_path, "my-cap")
+    proposal = _make_proposal(tmp_path, change_id)
+    assert "status: approved" in proposal.read_text(encoding="utf-8")
+
+    _canonical, archive_path = merge_delta_proposal(tmp_path, change_id, "my-cap")
+
+    # The merged proposal lives in the archive only — original was moved.
+    archived_text = (archive_path / "proposal.md").read_text(encoding="utf-8")
+    assert "status: merged" in archived_text
+    # The pre-merge snapshot still records the original approved status.
+    pre_text = (archive_path / "proposal-pre.md").read_text(encoding="utf-8")
+    assert "status: approved" in pre_text
 
 
 # ---------------------------------------------------------------------------
@@ -482,18 +517,26 @@ def test_hook_fail_restores_proposal_and_leaves_canonical_untouched(tmp_path: Pa
 
 
 def test_atomic_replace_fail_restores_proposal(tmp_path: Path) -> None:
-    """atomic_replace raises → proposal.md restored; canonical untouched; no archive."""
+    """atomic_replace raises → proposal.md restored; canonical untouched; no archive.
+
+    A no-op hook is supplied explicitly so the default ``_mark_change_merged_hook``
+    (which itself calls ``atomic_replace`` to flip proposal.md status) does not
+    intercept the patched OSError before the canonical-write step.
+    """
     change_id = "2026-05-08-add-criterion"
     canonical_spec = _make_canonical(tmp_path, "my-cap")
     proposal = _make_proposal(tmp_path, change_id)
     original_canonical_bytes = canonical_spec.read_bytes()
     original_proposal_bytes = proposal.read_bytes()
 
+    def _noop(_change_folder: Path) -> None:
+        return None
+
     with (
         patch("tools.archive.atomic_replace", side_effect=OSError("simulated write fail")),
         pytest.raises(ArchiveError, match="atomic_replace"),
     ):
-        merge_delta_proposal(tmp_path, change_id, "my-cap")
+        merge_delta_proposal(tmp_path, change_id, "my-cap", pre_archive_hook=_noop)
 
     # Canonical SPEC.md untouched
     assert canonical_spec.read_bytes() == original_canonical_bytes

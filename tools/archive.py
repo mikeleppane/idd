@@ -6,13 +6,13 @@ owns the path math so the LLM cannot misplace shipped artifacts.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import re
 import shutil
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType
 
 import yaml
 
@@ -25,6 +25,15 @@ from tools.validate.spec_structural import (
     validate_capability_spec_sections,
     validate_frontmatter,
 )
+
+# fcntl is POSIX-only; keep tools.archive importable on Windows by guarding it.
+# The advisory lock in merge_delta_proposal is skipped when fcntl is unavailable;
+# the rest of the module (ship_feature, slug_from_idea, etc.) works regardless.
+fcntl: ModuleType | None
+try:
+    import fcntl
+except ModuleNotFoundError:  # pragma: no cover - non-POSIX (Windows)
+    fcntl = None
 
 _CAPABILITY_RE = re.compile(r"^[a-z0-9-]+$")
 # Schema-aligned slug: must start with alnum, at least 3 chars total.
@@ -772,31 +781,73 @@ def merge_delta_proposal(
         (``canonical-pre.md``, ``proposal-pre.md``) ride into the archive
         folder for forensics and future ``/forge:undo`` (M4).
 
+    Default hook:
+        When ``pre_archive_hook`` is ``None``, ``_mark_change_merged_hook`` is
+        wired automatically once preflight passes.  This guarantees that every
+        archived ``proposal.md`` carries ``status: merged`` — without it, a
+        caller that omits the hook would archive a stale ``status: approved``
+        proposal that ``validate_health`` cannot see (it skips
+        ``.forge/changes/archive``).
+
+    Snapshot orphans:
+        On a step-4 (validator) rollback, the snapshot files written in steps
+        1-2 stay in the live change folder — the canonical and proposal are
+        already byte-identical to their pre-call state, so the snapshots are
+        no-ops but visible.  A subsequent retry overwrites them via
+        ``shutil.copy2`` (idempotent).  Safe to delete manually if a chain of
+        retries fails.
+
     Raises:
         ArchiveError: On any preflight or mutation failure.  Hook exceptions are
             wrapped in ``ArchiveError`` after rollback.
-    """
-    # Advisory file lock — fail fast if a concurrent merge is already in flight
-    # for the same change_id.  We derive the proposal path here (pure path math)
-    # so the lock is held for the entire transaction.  _preflight_merge repeats
-    # the is_file() check; a missing file fails there with a clear message.
-    _lock_path = repo_root / ".forge" / "changes" / change_id / "proposal.md"
-    try:
-        _lock_fh = _lock_path.open("rb")
-    except OSError:
-        _lock_fh = None  # path doesn't exist yet; _preflight_merge will surface this
 
-    if _lock_fh is not None:
+    Platform note:
+        Uses ``fcntl.flock`` for an advisory file lock — POSIX only.  The
+        ``fcntl`` import is deferred to keep the rest of ``tools.archive``
+        importable on Windows.
+    """
+    # Validate slugs FIRST — before any path math touches user-controlled
+    # change_id / capability.  Joining an unvalidated slug into a Path is the
+    # documented anti-pattern (coding-guidance-python "First-tier bug-causers");
+    # a change_id like "../../etc" would otherwise let a read-mode open()
+    # target a file outside the repo before preflight rejects it.
+    _validate_change_id(change_id)
+    _validate_capability(capability)
+
+    # Advisory file lock — fail fast if a concurrent merge is already in flight
+    # for the same change_id.  Lock held for the entire transaction.
+    # When proposal.md does not yet exist, the open fails with OSError, the
+    # lock is silently skipped, and _preflight_merge surfaces "proposal not
+    # found" — two concurrent callers in this state both abort at preflight,
+    # so no actual race opens.  When fcntl is unavailable (Windows), the lock
+    # is skipped entirely and the function relies on filesystem-level
+    # preflight + atomic-replace ordering for safety.
+    _lock_fh = None
+    if fcntl is not None:
+        _lock_path = repo_root / ".forge" / "changes" / change_id / "proposal.md"
         try:
-            fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            _lock_fh.close()
-            raise ArchiveError(f"another merge is in flight for change_id {change_id!r}") from exc
+            _lock_fh = _lock_path.open("rb")
+        except OSError:
+            _lock_fh = None
+
+        if _lock_fh is not None:
+            try:
+                fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                _lock_fh.close()
+                raise ArchiveError(
+                    f"another merge is in flight for change_id {change_id!r}"
+                ) from exc
 
     try:
         change_folder, proposal_path, canonical_spec, archive_target = _preflight_merge(
             repo_root, change_id, capability
         )
+
+        # Default hook — wire after preflight so proposal_path is guaranteed
+        # to exist.  Guarantees every archived proposal carries status: merged.
+        if pre_archive_hook is None:
+            pre_archive_hook = _mark_change_merged_hook(proposal_path)
 
         # Steps 1 + 2: snapshots
         canonical_snapshot = change_folder / "canonical-pre.md"
@@ -814,8 +865,7 @@ def merge_delta_proposal(
         _validate_merged_body(change_folder, merged_body)
 
         # Step 5: pre_archive_hook
-        if pre_archive_hook is not None:
-            _run_hook(pre_archive_hook, change_folder, proposal_snapshot, proposal_path)
+        _run_hook(pre_archive_hook, change_folder, proposal_snapshot, proposal_path)
 
         # Step 6: atomic-replace canonical SPEC.md
         _write_canonical(canonical_spec, merged_body, proposal_snapshot, proposal_path)
