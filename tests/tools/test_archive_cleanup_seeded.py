@@ -220,6 +220,98 @@ def test_cleanup_seeded_feature_refuses_on_malformed_state_json_with_warn(
 
 
 # ---------------------------------------------------------------------------
+# Refusal — fail-closed on malformed commits (external review finding)
+# ---------------------------------------------------------------------------
+
+
+def test_cleanup_seeded_feature_refuses_when_commits_is_empty_string(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """commits == "" must NOT pass the orphan check (fail-closed).
+
+    Pre-fix the predicate ran ``payload.get("commits") or []`` which coerced
+    every falsy value (including ``""``) to ``[]`` and removed the folder.
+    The post-fix code rejects any non-empty-list shape outright.
+    """
+    feature_id = "2026-05-08-empty-string-commits"
+    folder = _seed_focused(tmp_path, feature_id)
+    payload = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+    payload["commits"] = ""  # malformed — must refuse cleanup
+    (folder / "state.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    result = cleanup_seeded_feature(tmp_path, feature_id)
+
+    assert result is False
+    assert folder.is_dir()
+    captured = capsys.readouterr()
+    assert "WARN" in captured.err
+
+
+def test_cleanup_seeded_feature_refuses_when_commits_is_none(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """commits == null in JSON must NOT pass the orphan check (fail-closed)."""
+    feature_id = "2026-05-08-none-commits"
+    folder = _seed_focused(tmp_path, feature_id)
+    payload = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+    payload["commits"] = None
+    (folder / "state.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    result = cleanup_seeded_feature(tmp_path, feature_id)
+
+    assert result is False
+    assert folder.is_dir()
+    assert "WARN" in capsys.readouterr().err
+
+
+def test_cleanup_seeded_feature_refuses_when_commits_key_missing(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """state.json with no commits key at all must refuse cleanup (fail-closed)."""
+    feature_id = "2026-05-08-no-commits-key"
+    folder = tmp_path / ".forge" / "features" / feature_id
+    folder.mkdir(parents=True)
+    payload: dict[str, Any] = {
+        "feature_id": feature_id,
+        "tier": "focused",
+        "current_phase": "spec",
+        "phases": {"spec": {"status": "in_progress"}},
+        "skipped": [],
+        "deviations": [],
+        # commits key intentionally omitted
+    }
+    (folder / "state.json").write_text(json.dumps(payload), encoding="utf-8")
+    (folder / "SPEC.md").write_text("# x\n", encoding="utf-8")
+
+    result = cleanup_seeded_feature(tmp_path, feature_id)
+
+    assert result is False
+    assert folder.is_dir()
+    assert "WARN" in capsys.readouterr().err
+
+
+def test_cleanup_seeded_feature_refuses_when_commits_is_false(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """commits == false must NOT pass the orphan check."""
+    feature_id = "2026-05-08-false-commits"
+    folder = _seed_focused(tmp_path, feature_id)
+    payload = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+    payload["commits"] = False
+    (folder / "state.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    result = cleanup_seeded_feature(tmp_path, feature_id)
+
+    assert result is False
+    assert folder.is_dir()
+    assert "WARN" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
 # Idempotency — second call is a no-op with WARN
 # ---------------------------------------------------------------------------
 

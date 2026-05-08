@@ -271,6 +271,36 @@ def test_cleanup_orphan_feature_still_works_for_refine_phase(tmp_path: Path) -> 
     assert not folder.exists()
 
 
+def test_cleanup_orphan_feature_refuses_when_commits_is_empty_string(
+    tmp_path: Path,
+) -> None:
+    """commits == "" must fail-closed (parity with cleanup_seeded_feature)."""
+    feature_id = "2026-05-08-orphan-empty-str-commits"
+    folder = _seed_orphan(tmp_path, feature_id)
+    payload = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+    payload["commits"] = ""
+    (folder / "state.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    result = cleanup_orphan_feature(tmp_path, feature_id)
+
+    assert result is False
+    assert folder.is_dir()
+
+
+def test_cleanup_orphan_feature_refuses_when_commits_is_none(tmp_path: Path) -> None:
+    """commits == null must fail-closed (parity with cleanup_seeded_feature)."""
+    feature_id = "2026-05-08-orphan-null-commits"
+    folder = _seed_orphan(tmp_path, feature_id)
+    payload = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+    payload["commits"] = None
+    (folder / "state.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    result = cleanup_orphan_feature(tmp_path, feature_id)
+
+    assert result is False
+    assert folder.is_dir()
+
+
 def test_cleanup_orphan_feature_warn_label_says_cleanup_orphan_feature(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

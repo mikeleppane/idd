@@ -213,9 +213,13 @@ def _orphan_conditions_met(folder: Path) -> bool:  # noqa: PLR0911
     if not isinstance(phase_block, dict) or phase_block.get("status") != "in_progress":
         return False
 
-    # Condition 2: no commits
-    commits = payload.get("commits") or []
-    if commits:
+    # Condition 2: commits is exactly an empty list.  Fail-closed against
+    # malformed shapes — missing key, ``None``, ``""``, ``0``, ``False``, or
+    # any non-list value all refuse cleanup.  The previous ``or []`` form
+    # silently coerced these falsy values to ``[]`` and removed the folder
+    # (external review finding: cleanup must fail-closed on malformed state).
+    commits = payload.get("commits")
+    if commits != []:
         return False
 
     # Condition 3: folder contents are a strict subset of _ORPHAN_FEATURE_FILES
