@@ -172,10 +172,37 @@ def test_skill_calls_seed_routed_feature_literal() -> None:
 
 
 def test_skill_dispatch_literal() -> None:
+    """Locked dispatch literal must appear as its own line in SKILL.md.
+
+    Substring containment is too lax — a future edit could insert prose
+    inside the literal (e.g. ``Next: /forge:spec --feature <feature_id>
+    --debug``) and the substring check would still pass.  Anchor the
+    assertion to a complete line via ``text.splitlines()`` after stripping
+    leading whitespace and a single optional surrounding backtick (the
+    literal is rendered as inline code in SKILL.md step 11).
+
+    Locks remediation for M3 P6.1 T7 finding p6-1-L3.
+    """
     text = _read(SKILL_PATH)
-    assert "Next: /forge:spec --feature <feature_id>" in text, (
-        "SKILL.md must print the locked dispatch literal exactly per AC #15"
+    expected = "Next: /forge:spec --feature <feature_id>"
+
+    def _line_matches(raw: str) -> bool:
+        # Strip indentation, then strip a single optional pair of surrounding
+        # backticks that would render the literal as inline code in markdown.
+        stripped = raw.strip()
+        if stripped.startswith("`") and stripped.endswith("`"):
+            stripped = stripped[1:-1]
+        return stripped == expected
+
+    matching = [line for line in text.splitlines() if _line_matches(line)]
+    assert matching, (
+        f"SKILL.md must print the locked dispatch literal {expected!r} as its "
+        f"own line (optionally inline-coded with backticks); no exact-line "
+        f"match found"
     )
+    # Sanity-check substring still present so the migration doesn't break
+    # other readers that grep the file.
+    assert expected in text, "SKILL.md must still contain the dispatch literal as a substring"
 
 
 # ---------------------------------------------------------------------------
