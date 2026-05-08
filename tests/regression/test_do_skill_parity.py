@@ -280,6 +280,39 @@ def test_skill_constitution_preflight_default_skip() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 14b. feature_slug carried into seed_routed_feature for suffix-disambig
+# ---------------------------------------------------------------------------
+
+
+def test_skill_carries_feature_slug_into_seed_call() -> None:
+    """Suffix-disambig contract — chosen slug must reach the seeder.
+
+    The skill MUST instruct the LLM to pass the disambiguated slug as the
+    ``feature_slug=`` argument to ``tools.routing.seed_routed_feature`` so
+    ``idea`` (and therefore ``state.json.routing.idea``) is preserved
+    verbatim.  Pre-fix the skill silently relied on re-deriving the slug
+    from ``idea``, forcing operators to mutate ``idea`` text and corrupt
+    the audit record.
+
+    Locks remediation for the external review finding on
+    ``skills/forge-do/SKILL.md:54`` + ``tools/routing.py:140``.
+    """
+    text = _read(SKILL_PATH)
+    assert "feature_slug=" in text, (
+        "SKILL.md must thread the disambiguated slug as `feature_slug=` to "
+        "tools.routing.seed_routed_feature so the operator's chosen suffix "
+        "flows into feature_id while idea remains unchanged"
+    )
+    # Audit-record protection prose must appear so a future edit cannot
+    # silently regress the contract back to "edit idea text".
+    lowered = text.lower()
+    assert "audit record" in lowered, (
+        "SKILL.md must explain why the audit record matters — operators "
+        "MUST NOT bake the suffix into idea text"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 15. Cleanup caveat — decisions.md edits NOT preserved on cancel
 # ---------------------------------------------------------------------------
 

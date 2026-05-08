@@ -163,6 +163,96 @@ def test_seed_routed_feature_bogus_tier_raises_value_error(tmp_path: Path) -> No
 
 
 # ---------------------------------------------------------------------------
+# feature_slug override (suffix-disambig branch — external review finding)
+# ---------------------------------------------------------------------------
+
+
+def test_feature_slug_overrides_idea_derived_slug(tmp_path: Path) -> None:
+    """When the operator picks a disambiguating suffix, ``feature_slug`` wires
+    it through verbatim and ``routing.idea`` is persisted unchanged.
+
+    Locks the suffix-disambig contract: pre-fix the seeder always re-ran
+    ``slug_from_idea(idea)`` so the operator had to mutate the idea text
+    (corrupting the audit record) or hit the same collision.  Post-fix the
+    operator passes ``feature_slug='add-oauth-login-flow-v2'`` while
+    ``idea`` carries the original phrasing.
+    """
+    repo = _stage_repo(tmp_path)
+    idea = "add OAuth login flow"
+    canonical_slug = slug_from_idea(idea)
+    # Pre-seed the canonical capability so the SCAN-layer would route to
+    # /forge:change or to suffix-disambig.  This test models the post-confirm
+    # surface after the operator picked the suffix.
+    canonical_dir = repo / ".forge" / "specs" / canonical_slug
+    canonical_dir.mkdir(parents=True)
+    (canonical_dir / "SPEC.md").write_text("# canonical\n", encoding="utf-8")
+
+    folder = seed_routed_feature(
+        repo,
+        idea=idea,
+        final_tier="focused",
+        today=TODAY,
+        feature_slug=f"{canonical_slug}-v2",
+    )
+
+    assert folder.name == f"2026-05-08-{canonical_slug}-v2"
+    payload = _read_state(folder)
+    # idea persisted verbatim — disambiguation never corrupts the audit record.
+    assert payload["routing"]["idea"] == idea
+    assert payload["feature_id"] == folder.name
+
+
+def test_feature_slug_default_falls_back_to_idea_derived_slug(tmp_path: Path) -> None:
+    """Omitting ``feature_slug`` keeps the existing slug-from-idea behavior."""
+    repo = _stage_repo(tmp_path)
+    idea = "add OAuth login flow"
+
+    folder = seed_routed_feature(
+        repo,
+        idea=idea,
+        final_tier="focused",
+        today=TODAY,
+    )
+
+    assert folder.name == f"2026-05-08-{slug_from_idea(idea)}"
+
+
+def test_feature_slug_invalid_pattern_raises_value_error(tmp_path: Path) -> None:
+    """``feature_slug`` must satisfy the schema-aligned slug pattern."""
+    repo = _stage_repo(tmp_path)
+
+    # Uppercase, underscore, leading hyphen, too short — all rejected.
+    for bogus in ["Foo-Bar", "foo_bar", "-leading-hyphen", "ab", "0", "with space"]:
+        with pytest.raises(ValueError, match="invalid feature_slug"):
+            seed_routed_feature(
+                repo,
+                idea="x",
+                final_tier="focused",
+                today=TODAY,
+                feature_slug=bogus,
+            )
+        features_root = repo / ".forge" / "features"
+        assert not features_root.exists() or not any(features_root.iterdir()), (
+            f"no folder may be seeded when feature_slug={bogus!r} is rejected"
+        )
+
+
+def test_feature_slug_accepted_at_three_char_boundary(tmp_path: Path) -> None:
+    """Boundary: 3-char slug (the minimum) is accepted."""
+    repo = _stage_repo(tmp_path)
+
+    folder = seed_routed_feature(
+        repo,
+        idea="any text here",
+        final_tier="focused",
+        today=TODAY,
+        feature_slug="abc",
+    )
+
+    assert folder.name == "2026-05-08-abc"
+
+
+# ---------------------------------------------------------------------------
 # Slug derivation + collision
 # ---------------------------------------------------------------------------
 

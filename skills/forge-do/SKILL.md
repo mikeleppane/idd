@@ -64,8 +64,15 @@ documented but not yet routable: the routing helper raises
    the change route).
    On `/forge:change` choice, exit and dispatch
    `/forge:change --capability <slug> "<delta_description>"`. On a
-   suffix, recompute the slug, re-run the scan, and abort on persistent
-   collision.
+   suffix, the user types the FULL disambiguated slug (e.g.
+   `add-oauth-login-flow-v2`); validate it locally against
+   `^[a-z0-9][a-z0-9-]{2,}$`, re-run the scan with the new slug, and
+   abort on persistent collision. Carry the chosen slug into step 8 as
+   the `feature_slug=` argument to `tools.routing.seed_routed_feature`
+   so the operator's suffix flows into `feature_id` while `idea`
+   continues to carry the user's original phrasing verbatim. NEVER edit
+   `idea` to bake the suffix in — that would corrupt the
+   `state.json.routing.idea` audit record.
 5. **LLM tier proposal.** Issue a pure LLM call with project signals
    (top-level dir tree plus `pyproject.toml` / `package.json` /
    `Cargo.toml` if present) and the relevance-filtered Constitution
@@ -86,15 +93,22 @@ documented but not yet routable: the routing helper raises
    proposal. `--full` was already raised in step 1, so by this step the
    resolved tier is one of `focused` / `standard`.
 8. **Seed via routing helper.** Call
-   `tools.routing.seed_routed_feature(repo_root, idea=<idea>, final_tier=<tier>, proposed_tier=<llm_tier>, rationale=<one_sentence>, constitution_present=<bool>)`.
+   `tools.routing.seed_routed_feature(repo_root, idea=<idea>, final_tier=<tier>, proposed_tier=<llm_tier>, rationale=<one_sentence>, constitution_present=<bool>, feature_slug=<chosen_slug_or_None>)`.
+   When step 4 took the suffix-disambig branch, pass the chosen
+   disambiguated slug as `feature_slug=` — the helper uses it verbatim
+   for `feature_id` while `idea` is persisted into `routing.idea`
+   unchanged, so the user's original phrasing remains in the audit
+   record. When step 4 found no collision, omit `feature_slug` (or
+   pass `None`) and the helper derives the slug via
+   `tools.archive.slug_from_idea(idea)` as before.
    The helper composes `tools.archive.create_feature_folder` and
    `tools.state.record_routing_decision` (both with `schema_path` set to
    `<repo_root>/schemas/state.schema.json` so an invalid payload refuses
    before disk mutation). On any post-seed exception inside the helper,
    it invokes `tools.archive.cleanup_seeded_feature(repo_root, feature_id)`
    before re-raising. The skill catches `NotImplementedError` only;
-   `ArchiveError` and `StateError` surface to the user with the seeded
-   folder already cleaned up by the helper.
+   `ArchiveError`, `StateError`, and `ValueError` surface to the user
+   with the seeded folder already cleaned up by the helper.
 9. **Cleanup hook (UI cancel paths).** Wrap step 8 in a try/finally
    that calls `tools.archive.cleanup_seeded_feature(repo_root, feature_id)`
    on `KeyboardInterrupt` and on user-decline-after-seed. Best-effort

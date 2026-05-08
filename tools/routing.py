@@ -28,6 +28,7 @@ Coverage AC: 100% on this module (M3 P6.1 plan §AC #5).
 
 from __future__ import annotations
 
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -43,6 +44,13 @@ from tools.state import (
     feature_folder_exists,
     record_routing_decision,
 )
+
+# Schema-aligned capability slug pattern.  Mirrors
+# ``tools.archive._CAPABILITY_SLUG_SCHEMA_RE`` (≥3 chars, alnum-leading).  Used
+# to validate the operator-supplied ``feature_slug`` for the suffix-disambig
+# branch — the chosen ``<slug>-v2`` / ``<slug>-bulk`` slug must satisfy the
+# same shape as a slug derived from ``slug_from_idea``.
+_FEATURE_SLUG_RE: re.Pattern[str] = re.compile(r"^[a-z0-9][a-z0-9-]{2,}$")
 
 # Locked dispatch literal for the not-yet-shipped ``--full`` path.  The skill
 # (T3) surfaces the raise verbatim so an operator can grep the upcoming plan.
@@ -60,6 +68,7 @@ def seed_routed_feature(
     rationale: str | None = None,
     constitution_present: bool = False,
     today: date | None = None,
+    feature_slug: str | None = None,
 ) -> Path:
     """Seed a ``/forge:do`` feature folder + routing block in one validated step.
 
@@ -107,6 +116,15 @@ def seed_routed_feature(
             loaded at routing time.  Default ``False``.
         today: Optional date injection for deterministic ``feature_id``
             computation (used by tests).  Defaults to ``date.today()``.
+        feature_slug: Optional operator-supplied capability slug for the
+            suffix-disambig branch (``<slug>-v2``, ``<slug>-bulk``).  When
+            given, this slug is used verbatim to compose ``feature_id`` and
+            ``idea`` is persisted into ``routing.idea`` unchanged — the
+            operator's chosen disambiguation never corrupts the audit
+            record.  Must satisfy ``^[a-z0-9][a-z0-9-]{2,}$`` (mirrors the
+            schema-aligned slug shape ``slug_from_idea`` produces).  When
+            omitted, the slug is derived via ``slug_from_idea(idea)`` (the
+            no-collision path).
 
     Returns:
         Path to the new ``.forge/features/<feature_id>/`` folder, ready for
@@ -116,7 +134,8 @@ def seed_routed_feature(
         NotImplementedError: ``final_tier == "full"`` (M3 P6.2 territory);
             no folder created.
         ValueError: ``final_tier`` is not in ``VALID_TIERS`` and is not
-            ``"full"``; no folder created.
+            ``"full"``; OR ``feature_slug`` is given but does not satisfy
+            the slug pattern.  No folder created in either case.
         ArchiveError: Folder already exists (collision), or
             :func:`create_feature_folder` itself rejects the seed.
         StateError: ``record_routing_decision`` rejected the routing
@@ -135,9 +154,22 @@ def seed_routed_feature(
         raise ValueError(f"invalid final_tier {final_tier!r}; must be one of {VALID_TIERS}")
 
     # Step 3: feature_id = <today>-<slug>.  ``today`` injection keeps tests
-    # deterministic without monkeypatching ``datetime.date``.
+    # deterministic without monkeypatching ``datetime.date``.  When
+    # ``feature_slug`` is given (suffix-disambig branch) it is used verbatim
+    # after a regex check; ``idea`` is persisted into ``routing.idea``
+    # unchanged so the audit record reflects what the user actually said.
     today_iso = (today or date.today()).isoformat()
-    feature_id = f"{today_iso}-{slug_from_idea(idea)}"
+    if feature_slug is not None:
+        if not _FEATURE_SLUG_RE.fullmatch(feature_slug):
+            raise ValueError(
+                f"invalid feature_slug {feature_slug!r}; "
+                "expected slug matching ^[a-z0-9][a-z0-9-]{2,}$ "
+                "(≥3 chars, alnum-leading, lowercase + hyphens)"
+            )
+        slug = feature_slug
+    else:
+        slug = slug_from_idea(idea)
+    feature_id = f"{today_iso}-{slug}"
 
     # Step 4: schema path passed to BOTH helpers so payload validation
     # refuses BEFORE any disk write.
