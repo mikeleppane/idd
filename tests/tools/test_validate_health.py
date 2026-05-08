@@ -32,10 +32,18 @@ def _seed_spec(folder: Path, capability: str = "x") -> None:
     )
 
 
-def test_clean_repo_returns_no_findings(tmp_path: Path) -> None:
-    # Post M3 P6.1 T0.5: a current_phase=spec/refine + in_progress + no-commits
-    # seed feature is itself an orphan candidate (LOW finding), so a "clean"
-    # feature must have at least one commit recorded.
+def test_repo_with_committed_feature_returns_no_findings(tmp_path: Path) -> None:
+    """A feature folder that already has at least one commit recorded is
+    NOT an orphan candidate, so the scan returns clean.
+
+    Renamed from ``test_clean_repo_returns_no_findings`` (M3 P6.1 T7
+    finding p6-1-M4): the original name overstated coverage because the
+    fixture has a commit, which is the inverse of "clean repo" semantics.
+    See ``test_archived_done_feature_returns_no_findings`` for the
+    truly-clean repo case and
+    ``test_fresh_feature_with_no_commits_produces_low_orphan_finding``
+    for the documented orphan-candidate behavior.
+    """
     _seed_state(
         tmp_path / ".forge" / "features" / "2026-05-04-clean",
         commits=[{"sha": "abc1234", "subject": "feat: stuff", "phase": "spec"}],
@@ -45,6 +53,52 @@ def test_clean_repo_returns_no_findings(tmp_path: Path) -> None:
     findings = validate.validate_health(tmp_path)
 
     assert findings == []
+
+
+def test_archived_done_feature_returns_no_findings(tmp_path: Path) -> None:
+    """A feature archived under ``.forge/specs/<slug>/SPEC.md`` (with the
+    matching ``evidence:`` link) and NO live entry under
+    ``.forge/features/`` produces zero findings — the originally-intended
+    "clean repo with one shipped feature" semantics.
+
+    M3 P6.1 T7 finding p6-1-M4 — restores the coverage that
+    ``test_clean_repo_returns_no_findings`` was supposed to provide
+    before T0.5 weakened it with a forced commit entry.
+    """
+    canonical = tmp_path / ".forge" / "specs" / "shipped-feature"
+    canonical.mkdir(parents=True)
+    (canonical / "SPEC.md").write_text(
+        "---\nid: 2026-04-01-shipped-feature\nstatus: shipped\n"
+        "tier: focused\ncreated: 2026-04-01\ncapability: shipped-feature\n"
+        "evidence: ../../features/archive/2026-04-01-shipped-feature\n"
+        "---\n# Intent\nshipped via /forge:ship.\n",
+        encoding="utf-8",
+    )
+
+    findings = validate.validate_health(tmp_path)
+
+    assert findings == [], (
+        f"a fully archived feature with evidence link must produce zero findings; got {findings}"
+    )
+
+
+def test_fresh_feature_with_no_commits_produces_low_orphan_finding(tmp_path: Path) -> None:
+    """A freshly-seeded feature (current_phase=spec, no commits, only the
+    canonical seed files) MUST produce exactly one LOW orphan finding.
+
+    Locks the post-T0.5 contract: orphan detection now fires for the
+    /forge:do focused/standard pre-seed, not just the legacy refine seed.
+    M3 P6.1 T7 finding p6-1-M4.
+    """
+    folder = tmp_path / ".forge" / "features" / "2026-05-08-fresh"
+    _seed_state(folder)  # default: current_phase=spec, in_progress, commits=[]
+    _seed_spec(folder, "fresh")
+
+    findings = validate.validate_health(tmp_path)
+
+    orphan = [f for f in findings if f.severity == "LOW" and "orphan" in f.message.lower()]
+    assert len(orphan) == 1, f"expected exactly one LOW orphan finding; got {findings}"
+    assert "2026-05-08-fresh" in orphan[0].message
 
 
 def test_orphan_feature_folder_low(tmp_path: Path) -> None:
