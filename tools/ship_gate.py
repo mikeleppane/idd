@@ -4,6 +4,20 @@ Four pure functions:
 
     parse_review_findings(path)                  -> list[ShipFinding]
         Filters rows to Status: open. Resolved/accepted-risk are history.
+
+        Multi-tag rows (a single `Problem` cell containing more than one
+        ``[constitution:A<n>]`` tag) emit ONE ``ShipFinding`` per tag so a
+        SHOULD-then-CRITICAL ordering cannot silently demote the CRITICAL
+        finding into the warn bucket. Each emitted finding routes through
+        ``partition_by_article_level`` independently.
+
+        Header-row anchoring: the parser locates the `# Findings` heading
+        (case-insensitive) and binds to the first `| ID |` table that
+        follows. A `| ID |` table appearing in the document preamble (e.g.
+        an inventory or table of contents) is therefore not mistaken for
+        the Findings table. With no `# Findings` heading present the
+        parser returns ``[]``.
+
     partition_by_article_level(findings, articles)
                                                  -> (gate, warn, info)
     render_gate_prompt(gate, articles)           -> str
@@ -41,6 +55,9 @@ class ShipGateError(RuntimeError):
 _TAG_RE = re.compile(r"\[constitution:(A\d+)\]")
 # Header row of the Findings table tells us which column holds Status.
 _HEADER_RE = re.compile(r"^\|\s*ID\s*\|", re.IGNORECASE)
+# Anchor the table search to the `# Findings` heading (case-insensitive) so
+# unrelated `| ID | ... |` tables in the preamble cannot disarm the parser.
+_FINDINGS_HEADING_RE = re.compile(r"^#\s+Findings\s*$", re.IGNORECASE)
 _VALID_STATUS_VALUES: frozenset[str] = frozenset({"open", "resolved", "accepted-risk"})
 
 
@@ -66,10 +83,24 @@ def parse_review_findings(path: Path) -> list[ShipFinding]:
     Resolved or accepted-risk rows are convergence-history (Open Scoping #15)
     and skipped — the §5.3.9 gate acts on unresolved findings only.
 
-    Missing file returns []. Robust to extra whitespace; tolerates the legacy
-    no-Status layout for backwards compat (treats every row as ``open``) so a
-    REVIEW.code.md authored before the column was added still surfaces
-    findings. An unrecognized Status cell value (anything outside
+    Multi-tag rows: a `Problem` cell may carry more than one
+    ``[constitution:A<n>]`` tag (e.g. one finding violates two articles, or a
+    SHOULD article is mentioned alongside a CRITICAL article). The parser
+    emits one ``ShipFinding`` per tag so each tag routes through
+    ``partition_by_article_level`` on its own merits — no silent demotion of
+    a CRITICAL article behind a SHOULD article that happened to appear first.
+
+    Header-row anchoring: the parser locates the ``# Findings`` heading
+    (case-insensitive) and binds to the first ``| ID |`` table that follows
+    it. Any ``| ID |`` table appearing in the document preamble (inventory,
+    table of contents, etc.) is ignored — pre-fix the parser greedily latched
+    onto the first preamble table and silently zeroed every downstream row.
+
+    Missing file returns ``[]``. No ``# Findings`` heading returns ``[]``.
+    Robust to extra whitespace; tolerates the legacy no-Status layout for
+    backwards compat (treats every row as ``open``) so a REVIEW.code.md
+    authored before the column was added still surfaces findings. An
+    unrecognized Status cell value (anything outside
     ``{open, resolved, accepted-risk}``, case-insensitive) raises
     ``ShipGateError`` so a typo cannot silently filter the row.
 
@@ -77,7 +108,8 @@ def parse_review_findings(path: Path) -> list[ShipFinding]:
         path: Path to REVIEW.code.md.
 
     Returns:
-        List of unresolved ``[constitution:A<n>]``-tagged findings.
+        List of unresolved ``[constitution:A<n>]``-tagged findings, one
+        entry per tag in each matching row.
 
     Raises:
         ShipGateError: When a row's Status cell holds an unrecognized value.
@@ -87,8 +119,25 @@ def parse_review_findings(path: Path) -> list[ShipFinding]:
 
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
+
+    # Locate the `# Findings` heading first; the table parser only considers
+    # rows AFTER this anchor so a `| ID | ... |` table in the preamble cannot
+    # disarm the parser. Without the heading, return [] to match the
+    # documented "no findings" contract.
+    findings_heading_idx = next(
+        (i for i, line in enumerate(lines) if _FINDINGS_HEADING_RE.match(line)),
+        None,
+    )
+    if findings_heading_idx is None:
+        return []
+    search_start = findings_heading_idx + 1
+
     header_idx = next(
-        (i for i, line in enumerate(lines) if _HEADER_RE.match(line)),
+        (
+            i
+            for i, line in enumerate(lines[search_start:], start=search_start)
+            if _HEADER_RE.match(line)
+        ),
         None,
     )
     if header_idx is None:
@@ -103,34 +152,51 @@ def parse_review_findings(path: Path) -> list[ShipFinding]:
     for line in lines[header_idx + 1 :]:
         if not line.startswith("| F-"):
             continue
-        cells = _parse_table_columns(line)
-        if len(cells) < len(header):
-            continue
-        # Locate columns by header index for resilience.
-        try:
-            severity = cells[header.index("Severity")]
-            location = cells[header.index("Location")]
-            message = cells[header.index("Problem")]
-        except ValueError:
-            continue  # malformed table; skip
-        if status_col >= 0:
-            row_status = cells[status_col].lower()
-            if row_status not in _VALID_STATUS_VALUES:
-                raise ShipGateError(f"unrecognized Status value: {cells[status_col]!r} in {path}")
-            if row_status != "open":
-                continue
-        tag_match = _TAG_RE.search(message)
-        if tag_match is None:
-            continue
-        out.append(
-            ShipFinding(
-                article_id=tag_match.group(1),
-                severity=severity,
-                location=location,
-                message=message,
-            )
-        )
+        out.extend(_findings_from_row(line, header=header, status_col=status_col, source=path))
     return out
+
+
+def _findings_from_row(
+    line: str,
+    *,
+    header: list[str],
+    status_col: int,
+    source: Path,
+) -> list[ShipFinding]:
+    """Yield zero or more ShipFinding rows from a single `| F-...` table line.
+
+    A row produces multiple findings when its `Problem` cell carries more than
+    one ``[constitution:A<n>]`` tag (multi-violation finding). Splitting this
+    out of ``parse_review_findings`` keeps the parent's branch count under the
+    PLR0912 ceiling and isolates per-row routing logic.
+    """
+    cells = _parse_table_columns(line)
+    if len(cells) < len(header):
+        return []
+    try:
+        severity = cells[header.index("Severity")]
+        location = cells[header.index("Location")]
+        message = cells[header.index("Problem")]
+    except ValueError:
+        return []  # malformed table; skip
+    if status_col >= 0:
+        row_status = cells[status_col].lower()
+        if row_status not in _VALID_STATUS_VALUES:
+            raise ShipGateError(f"unrecognized Status value: {cells[status_col]!r} in {source}")
+        if row_status != "open":
+            return []
+    # findall keeps every tag in declaration order; one ShipFinding per tag
+    # so each routes through partition_by_article_level on its own merits.
+    tag_ids = _TAG_RE.findall(message)
+    return [
+        ShipFinding(
+            article_id=article_id,
+            severity=severity,
+            location=location,
+            message=message,
+        )
+        for article_id in tag_ids
+    ]
 
 
 def partition_by_article_level(

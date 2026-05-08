@@ -65,6 +65,29 @@ _HEADER_RE = re.compile(r"^## Article (\d+) — (.+) \[(CRITICAL|SHOULD|MAY)\]\s
 _FIELD_RE = re.compile(r"^\*\*(Rule|Reference|Rationale|Exception):\*\*\s*(.*)$")
 _FIELD_KEYS = ("rule", "reference", "rationale", "exception")
 
+# Loader/validator must agree on what counts as an article header. The
+# structural validator (tools.validate._frontmatter._strip_code) blanks
+# fenced + inline code regions before scanning so illustrative quotes
+# inside ```markdown ... ``` cannot trigger phantom-article findings.
+# We mirror the blanking here — keeping byte offsets stable via
+# whitespace replacement so any future line-number reporting matches the
+# original file.
+_FENCE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
+
+
+def _strip_code_regions(text: str) -> str:
+    """Replace fenced + inline code spans with same-length whitespace.
+
+    Mirrors ``tools.validate._frontmatter._strip_code`` so the loader sees
+    exactly what the validator sees. Whitespace replacement preserves byte
+    offsets (line counts unchanged); article headers inside fences are
+    therefore invisible to the parser and cannot leak phantom Articles into
+    the dispatch payload.
+    """
+    out = _FENCE_BLOCK_RE.sub(lambda m: " " * len(m.group(0)), text)
+    return _INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), out)
+
 
 def parse_constitution(path: Path) -> list[Article]:
     """Read .idd/CONSTITUTION.md and return parsed Article records.
@@ -95,9 +118,14 @@ def parse_constitution(path: Path) -> list[Article]:
     except yaml.YAMLError as exc:
         raise ConstitutionError(f"frontmatter parse error: {exc}") from exc
 
+    # Strip fenced + inline code from the body so illustrative `## Article`
+    # examples inside code blocks do not produce phantom Articles. Validator
+    # parity: tools.validate._frontmatter._strip_code applies the same blanking
+    # before its own structural scan.
+    scrubbed_body = _strip_code_regions(body)
     articles: list[Article] = []
     state = _ParseState()
-    for line in body.splitlines():
+    for line in scrubbed_body.splitlines():
         _consume_line(line, state, articles)
     if state.current is not None:
         articles.append(_block_to_article(state.current))

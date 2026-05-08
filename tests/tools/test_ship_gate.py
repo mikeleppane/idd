@@ -285,3 +285,93 @@ def test_render_warn_summary_lists_should_findings() -> None:
 
 def test_render_warn_summary_empty_input_returns_empty_string() -> None:
     assert sg.render_warn_summary([], _articles()) == ""
+
+
+def test_parse_review_findings_emits_one_finding_per_tag_in_message(tmp_path: Path) -> None:
+    """H1 — Multi-tag rows must emit one ShipFinding per `[constitution:A<n>]`.
+
+    Pre-fix `_TAG_RE.search` returned only the first match, so a row tagged
+    with both a SHOULD article (A4) and a CRITICAL article (A1) routed
+    entirely to warn — silently demoting the CRITICAL finding.
+    """
+    src = tmp_path / "review_multi_tag.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | src/x.py:1 | [constitution:A4] [constitution:A1] dual tag | fix | self |
+""",
+        encoding="utf-8",
+    )
+    findings = sg.parse_review_findings(src)
+    article_ids = sorted(f.article_id for f in findings if f.article_id)
+    assert article_ids == ["A1", "A4"], "every tag in the cell must yield its own finding"
+
+
+def test_parse_review_findings_anchors_to_findings_section(tmp_path: Path) -> None:
+    """H4 — `| ID |` table in REVIEW preamble must not zero out the parser.
+
+    Pre-fix `_HEADER_RE` greedily matched the first `| ID |` row in the
+    document. A preamble table (e.g. an inventory, ToC, or column legend)
+    silently disarmed every downstream `| F-...` row.
+    """
+    src = tmp_path / "review_with_preamble_table.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+## Inventory of reviewers
+
+| ID | Role |
+|----|------|
+| R-1 | heavy-subagent |
+
+# Findings
+
+| ID | Severity | Status | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | src/x.py:1 | [constitution:A1] tag here | fix | self |
+""",
+        encoding="utf-8",
+    )
+    findings = sg.parse_review_findings(src)
+    assert len(findings) == 1
+    assert findings[0].article_id == "A1"
+
+
+def test_parse_review_findings_returns_empty_when_no_findings_section(tmp_path: Path) -> None:
+    """H4 — without a `# Findings` heading the parser must return [], not raise.
+
+    A document without a `# Findings` section but with a stray `| F-...` row
+    elsewhere (e.g. quoted in prose) must not be treated as a real finding.
+    """
+    src = tmp_path / "review_no_section.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+| ID | Role |
+|----|------|
+| R-1 | heavy-subagent |
+
+Quoting an example: `| F-1 | HIGH | open | src/x.py | [constitution:A1] x | fix | self |`.
+""",
+        encoding="utf-8",
+    )
+    assert sg.parse_review_findings(src) == []

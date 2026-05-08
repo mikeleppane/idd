@@ -194,6 +194,41 @@ def test_read_package_json_top_level_deps_handles_malformed_dep_section(tmp_path
     assert cn._read_package_json_top_level_deps(bad) == []
 
 
+def test_parse_constitution_ignores_article_headers_inside_fenced_code(tmp_path: Path) -> None:
+    """H3 — `## Article N` inside a fenced or inline code block must NOT be parsed.
+
+    Pre-fix loader scanned the raw body and emitted phantom Article rows for
+    illustrative quotations inside a fenced code block, while the structural
+    validator (which strips fences before its own scan) never saw them.
+    Loader and validator must agree on what counts as an article header.
+    """
+    text = (
+        '---\nversion: 0.1.0\ncreated: "2026-05-07"\n---\n\n'
+        "## Article 1 — Real article [SHOULD]\n"
+        "**Rule:** Be explicit.\n"
+        "**Reference:** ref\n"
+        "**Rationale:** because.\n"
+        "**Exception:** None.\n"
+        "\n"
+        "Below is an example template the team should follow:\n"
+        "\n"
+        "```markdown\n"
+        "## Article 99 — Phantom critical [CRITICAL]\n"
+        "**Rule:** Never trigger this from inside a fence.\n"
+        "**Reference:** —\n"
+        "**Rationale:** —\n"
+        "**Exception:** None.\n"
+        "```\n"
+        "\n"
+        "Inline `## Article 98 — Inline phantom [CRITICAL]` should also be ignored.\n"
+    )
+    src = tmp_path / "with_fenced_phantom.md"
+    src.write_text(text, encoding="utf-8")
+    articles = cn.parse_constitution(src)
+    ids = [a.id for a in articles]
+    assert ids == ["A1"], f"only the real article should be parsed, got {ids}"
+
+
 def test_article_to_budget_dict_preserves_null_optionals() -> None:
     """Articles without Reference/Rationale serialize them as None, not omitted."""
     text = (
