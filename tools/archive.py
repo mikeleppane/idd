@@ -51,6 +51,7 @@ _STOPWORDS: frozenset[str] = frozenset(
 # Pattern matches `[constitution:A<n>]` tags inside REVIEW.code.md cells.
 # Used by the advisory `_emit_constitution_skip_warning` helper.
 _CONSTITUTION_TAG_RE = re.compile(r"\[constitution:A\d+\]")
+_SLUG_CLEANUP_RE = re.compile(r"[^a-z0-9 ]")
 
 
 class ArchiveError(RuntimeError):
@@ -82,12 +83,16 @@ def slug_from_idea(text: str, *, max_words: int = 5) -> str:
         A valid capability slug string.
 
     Raises:
+        ValueError: When ``max_words`` is less than 1 (programmer error /
+            invalid argument).
         ArchiveError: When the final slug is empty (message contains the
             verbatim ``text``), or shorter than 3 characters (message
             contains both the computed slug and the verbatim ``text``).
     """
+    if max_words < 1:
+        raise ValueError(f"max_words must be >= 1, got {max_words}")
     lowered = text.lower()
-    cleaned = re.sub(r"[^a-z0-9 ]", " ", lowered)
+    cleaned = _SLUG_CLEANUP_RE.sub(" ", lowered)
     tokens = cleaned.split()
     # Drop stopwords and tokens that are too short (length < _SLUG_MIN_TOKEN_LEN)
     content = [t for t in tokens if t not in _STOPWORDS and len(t) >= _SLUG_MIN_TOKEN_LEN]

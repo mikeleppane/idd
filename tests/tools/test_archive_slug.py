@@ -50,7 +50,7 @@ def test_slug_from_idea_only_stopwords_raises_archive_error() -> None:
 def test_slug_from_idea_empty_string_raises_archive_error() -> None:
     with pytest.raises(ArchiveError) as exc_info:
         slug_from_idea("")
-    assert "" in str(exc_info.value)
+    assert str(exc_info.value).startswith("slug computed from idea is empty:")
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +133,16 @@ def test_slug_from_idea_hyphen_in_input_becomes_separator() -> None:
 def test_slug_from_idea_max_words_override_caps_token_count() -> None:
     result = slug_from_idea("alpha beta gamma delta epsilon zeta", max_words=2)
     assert result == "alpha-beta"
+
+
+def test_slug_from_idea_max_words_zero_raises_value_error() -> None:
+    with pytest.raises(ValueError, match=r"max_words must be >= 1, got 0"):
+        slug_from_idea("alpha beta gamma", max_words=0)
+
+
+def test_slug_from_idea_max_words_negative_raises_value_error() -> None:
+    with pytest.raises(ValueError, match=r"max_words must be >= 1, got -1"):
+        slug_from_idea("alpha beta gamma", max_words=-1)
 
 
 # ---------------------------------------------------------------------------
