@@ -61,7 +61,7 @@ Local engineering-practice skills that govern HOW Python work lands in this repo
 |---|---|---|
 | `test-driven-development` | `.agents/skills/test-driven-development/SKILL.md` | Every behavior change. RED → GREEN → REFACTOR. Failing test before code. |
 | `coding-guidance-python` | `.agents/skills/coding-guidance-python/SKILL.md` | Every Python file create / modify / review. Type safety, contracts, module boundaries. |
-| `git-conventions` | `.agents/skills/git-conventions/SKILL.md` | Every commit. Conventional Commits with required scopes, ASCII-only subjects, ≤72 char hard cap. |
+| `git-conventions` | `.agents/skills/git-conventions/SKILL.md` | Every commit. Conventional Commits with required scopes, ASCII-only subjects, target ≤72 chars (soft cap 90 for unusual cases like spec-section anchors). |
 | `code-review-and-quality` | `.agents/skills/code-review-and-quality/SKILL.md` | Every review pass before merge. |
 
 Subagent dispatches that touch Python code MUST cite all four in the dispatch brief alongside the task. Skipping these for "small" or "trivial" Python edits is the most common drift mode — do not.
