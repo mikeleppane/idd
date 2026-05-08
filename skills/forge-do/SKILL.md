@@ -1,6 +1,6 @@
 ---
 name: forge-do
-description: Adaptive routing entry-point for FORGE features. Use when the user invokes /forge:do "<idea>" — proposes a tier (focused/standard) for the idea, seeds the feature folder + state.json + routing block, and dispatches to /forge:spec. P6.1 ships --focused and --standard; --full raises NotImplementedError until P6.2.
+description: Adaptive routing entry-point for FORGE features. Use when the user invokes /forge:do "<idea>" — proposes a tier (focused/standard/full) for the idea, seeds the feature folder + state.json + routing block, and dispatches tier-deterministically to /forge:spec (focused/standard) or /forge:refine (full).
 model: sonnet
 disable-model-invocation: true
 ---
@@ -10,9 +10,11 @@ disable-model-invocation: true
 ## When this skill applies
 
 The user invoked `/forge:do "<idea>" [--focused | --standard | --full]`.
-P6.1 ships the focused and standard tiers end-to-end. The `--full` flag is
-documented but not yet routable: the routing helper raises
-`NotImplementedError` and points at the P6.2 plan.
+All three tiers route end-to-end. Focused/standard seed
+`current_phase="spec"` and dispatch to `/forge:spec`; full seeds
+`current_phase="refine"` and dispatches to `/forge:refine`. The skill
+resolves the dispatch literal from `state.json.current_phase` after the
+seed completes.
 
 ## Inputs
 
@@ -29,12 +31,9 @@ documented but not yet routable: the routing helper raises
 
    `sensitive content (tokens, passwords) discouraged — text is persisted to state.json.routing.idea verbatim`
 
-   When the user passed `--full`, immediately delegate to
-   `tools.routing.seed_routed_feature(repo_root, idea=<idea>, final_tier="full", proposed_tier=None, rationale=None, constitution_present=False)`.
-   The helper raises
-   `NotImplementedError("--full routing ships in M3 P6.2; track at docs/plans/2026-05-DD-m3-p6-2-full-tier-routing.md")`.
-   Surface the raise verbatim to the user along with the P6.2 plan
-   pointer; do not mask the error.
+   The `--focused`, `--standard`, and `--full` flags all seed normally
+   via `tools.routing.seed_routed_feature`. The flag (when supplied)
+   wins over the LLM proposal at step 7.
 2. **Constitution preflight (per spec §5.3.1 + D-10).** If
    `.forge/CONSTITUTION.md` is absent, present the user with three
    choices: skip, bootstrap, cancel. The default = skip so a brand-new
@@ -78,20 +77,18 @@ documented but not yet routable: the routing helper raises
    `Cargo.toml` if present) and the relevance-filtered Constitution
    article list (per P3). Prompt verbatim:
 
-   `Given idea + project signals + Constitution (if any), propose tier (focused/standard) + phase list. One-sentence rationale.`
+   `Given idea + project signals + Constitution (if any), propose tier (focused/standard/full) + phase list. One-sentence rationale.`
 
-   P6.1 excludes full from the proposal space. If the LLM hallucinates
-   `full` despite the prompt and the user did NOT pass `--full`, surface
-   a refusal and ask the user to override via flag or accept the
-   focused/standard alternative.
+   All three tiers are valid proposal targets in P6.2; the override flag
+   (when supplied) still wins per step 7.
 6. **Print proposal as numbered checkbox list.** Render the LLM's
    tier + phase list as a numbered checkbox list in the terminal. Ask
    the user to confirm with `y` or override by re-invoking with
    `--focused` / `--standard`. P6.1 does not yet expose a `--phases`
    freeform override; tier flag is the only override.
 7. **Resolve final tier.** The override flag wins over the LLM
-   proposal. `--full` was already raised in step 1, so by this step the
-   resolved tier is one of `focused` / `standard`.
+   proposal. The resolved tier is one of `focused` / `standard` / `full`
+   and is passed verbatim to `seed_routed_feature` as `final_tier=`.
 8. **Seed via routing helper.** Call
    `tools.routing.seed_routed_feature(repo_root, idea=<idea>, final_tier=<tier>, proposed_tier=<llm_tier>, rationale=<one_sentence>, constitution_present=<bool>, feature_slug=<chosen_slug_or_None>)`.
    When step 4 took the suffix-disambig branch, pass the chosen
@@ -106,9 +103,9 @@ documented but not yet routable: the routing helper raises
    `<repo_root>/schemas/state.schema.json` so an invalid payload refuses
    before disk mutation). On any post-seed exception inside the helper,
    it invokes `tools.archive.cleanup_seeded_feature(repo_root, feature_id)`
-   before re-raising. The skill catches `NotImplementedError` only;
-   `ArchiveError`, `StateError`, and `ValueError` surface to the user
-   with the seeded folder already cleaned up by the helper.
+   before re-raising. `ArchiveError`, `StateError`, and `ValueError`
+   surface to the user with the seeded folder already cleaned up by the
+   helper.
 9. **Cleanup hook (UI cancel paths).** Wrap step 8 in a try/finally
    that calls `tools.archive.cleanup_seeded_feature(repo_root, feature_id)`
    on `KeyboardInterrupt` and on user-decline-after-seed. Best-effort
@@ -130,25 +127,34 @@ documented but not yet routable: the routing helper raises
     - `state.json` validates against `schemas/state.schema.json`.
     - `routing` block present with `idea`, `final_tier`, `decided_at`,
       and `constitution_present` populated.
-    - `current_phase == "spec"` AND `phases.spec.status == "in_progress"`.
+    - `current_phase ∈ {"spec", "refine"}` matching the seeded tier
+      (focused/standard → `spec`; full → `refine`) AND the corresponding
+      `phases.<current_phase>.status == "in_progress"`.
     - `skipped` contains the `research` deferral entry
-      (`{"phase": "research", "reason": "M3 deferred — manual research acceptable"}`).
+      (`{"phase": "research", "reason": "M3 deferred — manual research acceptable"}`)
+      on every tier — research stays skipped on all three.
     - The feature folder contains exactly three files: `state.json`,
       `SPEC.md`, and `decisions.md`.
-11. **Dispatch to first phase.** Print exactly:
+11. **Dispatch to first phase.** Resolve the dispatch literal by
+    `state.json.current_phase` after the seed:
+    `spec` → `/forge:spec --feature <feature_id>`;
+    `refine` → `/forge:refine --feature <feature_id>`. Print exactly one
+    of:
 
     `Next: /forge:spec --feature <feature_id>`
 
-    The `--feature <id>` form is REQUIRED. A bare `/forge:spec` would
-    re-run the new-feature creation path against the pre-seeded folder
-    and clash on the collision check. The forge-spec pre-seed branch
-    (T4) detects the seeded `routing` block and skips steps 1–4 of its
-    own lifecycle.
+    `Next: /forge:refine --feature <feature_id>`
+
+    The `--feature <id>` form is REQUIRED on both branches. A bare
+    `/forge:spec` (or `/forge:refine`) would re-run the new-feature
+    creation path against the pre-seeded folder and clash on the
+    collision check. The forge-spec pre-seed branch detects the seeded
+    `routing` block and skips steps 1–4 of its own lifecycle; the
+    forge-refine pre-seed branch (T4) does the same for full-tier
+    seeds.
 
 ## Failure modes
 
-- **`--full` requested.** Step 1 immediately raises
-  `NotImplementedError` via the routing helper. No folder is created.
 - **Constitution bootstrap declined / cancel chosen.** Skill aborts
   without seeding. No state mutation.
 - **Health preflight surfaces findings.** Default is to halt and ask
@@ -169,9 +175,10 @@ documented but not yet routable: the routing helper raises
 
 - `.forge/features/<feature_id>/state.json` — created by
   `tools.archive.create_feature_folder` via the routing helper. Seeds
-  `feature_id`, `tier`, `current_phase: "spec"`, `phases.spec.status:
-  "in_progress"`, `phases.spec.started_at: <utc>`, and the research
-  deferral entry in `skipped[]`.
+  `feature_id`, `tier`, `current_phase` (= `spec` for focused/standard,
+  `refine` for full), `phases.<current_phase>.status: "in_progress"`,
+  `phases.<current_phase>.started_at: <utc>`, and the research deferral
+  entry in `skipped[]`.
 - `state.json.routing` — written by `tools.state.record_routing_decision`
   (called inside the routing helper). Contains `idea`, `final_tier`,
   `proposed_tier`, `rationale`, `constitution_present`, `decided_at`.
@@ -191,6 +198,10 @@ documented but not yet routable: the routing helper raises
 - `tools.state.record_routing_decision` — sole writer of the routing
   block (P1 contract).
 - `commands/do.md` — slash spec.
-- `/forge:spec --feature <feature_id>` — next phase; pre-seed branch
-  consumes the seeded routing block and skips its own steps 1–4.
+- `/forge:spec --feature <feature_id>` — next phase for focused/standard
+  tiers; pre-seed branch consumes the seeded routing block and skips
+  its own steps 1–4.
+- `/forge:refine --feature <feature_id>` — next phase for full tier;
+  pre-seed branch (T4) consumes the seeded routing block and enters the
+  Socratic loop directly.
 - `/forge:change` — capability-collision delta route.

@@ -1,8 +1,9 @@
 """Regression: forge-do skill + /forge:do command shape parity.
 
 Pins the locked contract for `/forge:do` adaptive routing introduced in
-M3 P6.1 (focused + standard tiers). Parity is enforced via greppable
-substring assertions so future drift is caught before merge.
+M3 P6.1 (focused + standard tiers) and extended in M3 P6.2 (full tier).
+Parity is enforced via greppable substring assertions so future drift is
+caught before merge.
 
 Asserts:
 1. SKILL.md frontmatter sets ``disable-model-invocation: true``.
@@ -10,22 +11,30 @@ Asserts:
 3. SKILL.md body documents 11 numbered lifecycle steps.
 4. SKILL.md prints the literal secrets warning before persisting
    ``routing.idea``.
-5. SKILL.md surfaces the ``--full`` ``NotImplementedError`` with the P6.2
-   pointer.
+5. SKILL.md no longer carries the P6.1 ``--full`` ``NotImplementedError``
+   pointer (full-tier routing shipped in P6.2).
 6. SKILL.md instructs the lightweight health preflight via
    ``python -m tools.validate --target health``.
 7. Capability scan disambig prose mirrors ``forge-spec`` and never offers
    proceed-as-new.
 8. SKILL.md calls ``tools.routing.seed_routed_feature(`` literally.
-9. SKILL.md prints the locked dispatch literal
+9. SKILL.md prints the locked focused/standard dispatch literal
    ``Next: /forge:spec --feature <feature_id>``.
 10. SKILL.md cleanup hook references ``tools.archive.cleanup_seeded_feature``
     AND ``KeyboardInterrupt``.
 11. commands/do.md ``argument-hint`` matches the refine-style convention.
-12. commands/do.md documents the ``--full`` P6.2 caveat.
-13. SKILL.md self-review checklist covers the five required state-shape
-    invariants.
+12. commands/do.md no longer carries the ``--full raises`` P6.1 caveat.
+13. SKILL.md self-review checklist covers the required state-shape
+    invariants for both ``spec`` and ``refine`` seed phases.
 14. SKILL.md Constitution preflight defaults to skip.
+15. SKILL.md prints the locked full-tier dispatch literal
+    ``Next: /forge:refine --feature <feature_id>``.
+16. SKILL.md prose names ``state.json.current_phase`` as the
+    tier-deterministic dispatch resolver.
+17. SKILL.md self-review accepts ``current_phase ∈ {"spec", "refine"}``
+    rather than hard-coding ``spec``.
+18. SKILL.md LLM tier proposal prompt widens to all three tiers.
+19. SKILL.md drops the P6.1 "refuse if LLM picks full" prose.
 """
 
 from __future__ import annotations
@@ -105,15 +114,23 @@ def test_skill_secrets_warning_literal() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. --full raise pointer to P6.2
+# 5. --full raise pointer to P6.2 — REMOVED (P6.2 shipped the full tier)
 # ---------------------------------------------------------------------------
 
 
-def test_skill_full_tier_raise_pointer() -> None:
+def test_skill_full_tier_raise_pointer_removed() -> None:
+    """The P6.1 raise pointer is gone now that P6.2 ships full-tier routing.
+
+    The skill no longer raises ``NotImplementedError`` for ``--full``; the
+    routing helper seeds ``current_phase="refine"`` and the skill dispatches
+    to ``/forge:refine``.  Asserting the prose is ABSENT pins this lift so a
+    future revert cannot silently re-introduce the raise without flipping
+    this contract.
+    """
     text = _read(SKILL_PATH)
-    assert "--full routing ships in M3 P6.2" in text, (
-        "SKILL.md must surface the literal NotImplementedError message that "
-        "points users at the P6.2 plan"
+    assert "--full routing ships in M3 P6.2" not in text, (
+        "SKILL.md must NOT carry the P6.1 NotImplementedError pointer — "
+        "full-tier routing shipped in P6.2 and the prose is now stale"
     )
 
 
@@ -233,14 +250,31 @@ def test_command_argument_hint_matches_refine_convention() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 12. commands/do.md documents --full P6.2 caveat
+# 12. commands/do.md drops the P6.1 --full raises caveat
 # ---------------------------------------------------------------------------
 
 
-def test_command_full_tier_caveat_present() -> None:
+def test_command_drops_full_raises_caveat() -> None:
+    """P6.2 lifted the ``--full`` ``NotImplementedError``; the caveat is gone.
+
+    The command file MUST still mention ``--full`` (the flag is documented in
+    the args + argument-hint), but the P6.1 caveat prose ("raises
+    NotImplementedError until P6.2", the "## --full caveat (until M3 P6.2)"
+    section, etc.) MUST be absent.
+    """
     text = _read(COMMAND_PATH)
-    assert "--full" in text, "commands/do.md must mention --full"
-    assert "P6.2" in text, "commands/do.md must mention the P6.2 caveat for --full"
+    assert "--full" in text, "commands/do.md must still mention --full as a valid tier flag"
+    assert "NotImplementedError" not in text, (
+        "commands/do.md must NOT carry the P6.1 NotImplementedError caveat — "
+        "full-tier routing shipped in P6.2"
+    )
+    assert "until M3 P6.2" not in text, (
+        "commands/do.md must NOT carry the 'until M3 P6.2' caveat — full-tier "
+        "routing shipped in P6.2"
+    )
+    assert "--full caveat" not in text, (
+        "commands/do.md must NOT retain the '## --full caveat' section header"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -250,9 +284,11 @@ def test_command_full_tier_caveat_present() -> None:
 
 def test_skill_self_review_checklist_present() -> None:
     text = _read(SKILL_PATH)
+    # P6.2 widened the phase invariant from hard-coded ``spec`` to the
+    # tier-deterministic union ``{spec, refine}``; the per-phase status
+    # check generalizes to ``phases.<current_phase>.status``.
     expected_substrings = [
-        'current_phase == "spec"',
-        'phases.spec.status == "in_progress"',
+        'current_phase ∈ {"spec", "refine"}',
         "research",
         "routing",
         "state.json",
@@ -340,4 +376,136 @@ def test_skill_cleanup_caveat_decisions_md_lost() -> None:
     assert "commit it before cancelling" in text or "commit" in text, (
         "SKILL.md step 9 must instruct users to commit before cancelling "
         "if they want decisions preserved"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 16. Full-tier dispatch literal — Next: /forge:refine --feature <feature_id>
+# ---------------------------------------------------------------------------
+
+
+def test_skill_full_tier_dispatch_literal() -> None:
+    """P6.2 full-tier dispatch literal must appear as its own line.
+
+    Mirrors the focused/standard line-anchored assertion: the literal must
+    appear as a complete line (optionally inline-coded with backticks), not
+    merely as a substring inside a sentence.  Substring containment is too
+    lax — a future edit could insert prose inside the literal and the
+    substring check would still pass.
+    """
+    text = _read(SKILL_PATH)
+    expected = "Next: /forge:refine --feature <feature_id>"
+
+    def _line_matches(raw: str) -> bool:
+        stripped = raw.strip()
+        if stripped.startswith("`") and stripped.endswith("`"):
+            stripped = stripped[1:-1]
+        return stripped == expected
+
+    matching = [line for line in text.splitlines() if _line_matches(line)]
+    assert matching, (
+        f"SKILL.md must print the locked full-tier dispatch literal "
+        f"{expected!r} as its own line (optionally inline-coded with "
+        f"backticks); no exact-line match found"
+    )
+    # Anchored regex check via re.MULTILINE (covers the optionally-backticked
+    # form too) so the parity test surfaces a structurally-anchored match.
+    pattern = re.compile(
+        r"^[ \t`]*Next: /forge:refine --feature <feature_id>[ \t`]*$", re.MULTILINE
+    )
+    assert pattern.search(text), (
+        "SKILL.md must contain at least one anchored line matching the full-tier dispatch literal"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 17. Dispatch resolves by state.json.current_phase
+# ---------------------------------------------------------------------------
+
+
+def test_skill_dispatch_resolves_by_current_phase() -> None:
+    """The skill must name ``state.json.current_phase`` as the resolver.
+
+    Tier-deterministic dispatch is the P6.2 contract: the dispatch literal
+    is chosen by reading ``state.json.current_phase`` after the seed (``spec``
+    → ``/forge:spec``; ``refine`` → ``/forge:refine``).  The skill prose
+    MUST name this resolver explicitly so a future edit cannot silently
+    regress to a flag-based or LLM-proposal-based dispatch.
+    """
+    text = _read(SKILL_PATH)
+    assert "state.json.current_phase" in text, (
+        "SKILL.md must name `state.json.current_phase` as the tier-deterministic dispatch resolver"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 18. Self-review accepts current_phase ∈ {"spec", "refine"}
+# ---------------------------------------------------------------------------
+
+
+def test_skill_full_tier_self_review_accepts_refine_phase() -> None:
+    """The self-review checklist must accept refine as a valid seed phase.
+
+    P6.1 hard-coded ``current_phase == "spec"``.  P6.2 widens to
+    ``current_phase ∈ {"spec", "refine"}`` so full-tier seeds (which seed
+    ``current_phase="refine"``) survive the self-review without false
+    positives.  The hard-coded ``current_phase == "spec"`` line MUST be
+    gone so the checklist generalizes correctly.
+    """
+    text = _read(SKILL_PATH)
+    assert 'current_phase ∈ {"spec", "refine"}' in text, (
+        "SKILL.md self-review must mention current_phase ∈ {'spec', 'refine'} "
+        "to accept both focused/standard (spec) and full (refine) seed phases"
+    )
+    # Hard-coded spec-only assertion must be gone so the checklist does not
+    # falsely fail on full-tier seeds.
+    assert 'current_phase == "spec"' not in text, (
+        "SKILL.md self-review must NOT hard-code current_phase == 'spec'; "
+        "the P6.2 widening replaces it with the {'spec', 'refine'} union"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 19. LLM proposal widens to focused/standard/full
+# ---------------------------------------------------------------------------
+
+
+def test_skill_llm_proposal_widens_to_focused_standard_full() -> None:
+    """The step-5 LLM prompt must include all three tiers.
+
+    P6.1 limited the proposal space to focused/standard.  P6.2 widens to
+    focused/standard/full so the LLM can propose any tier and the override
+    flag (when supplied) still wins at step 7.
+    """
+    text = _read(SKILL_PATH)
+    assert "focused/standard/full" in text, (
+        "SKILL.md step-5 LLM prompt must enumerate all three tiers "
+        "(focused/standard/full) — the P6.2 widening removes the "
+        "P6.1 focused/standard-only restriction"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 20. Drop the P6.1 "refuse if LLM picks full" prose
+# ---------------------------------------------------------------------------
+
+
+def test_skill_drops_full_excluded_refusal_prose() -> None:
+    """The P6.1 hallucination-refusal prose is gone in P6.2.
+
+    P6.1 instructed the skill to refuse if the LLM picked ``full`` despite
+    the prompt excluding it.  P6.2 makes ``full`` a legitimate proposal
+    target, so the refusal prose ("If the LLM hallucinates `full` ...") MUST
+    be absent.  Pinning the absence prevents a future edit from silently
+    re-introducing the refusal and breaking the LLM-proposes-full path.
+    """
+    text = _read(SKILL_PATH)
+    lowered = text.lower()
+    assert "hallucinates" not in lowered, (
+        "SKILL.md must NOT carry the P6.1 'LLM hallucinates full' refusal "
+        "prose — full is a legitimate proposal target in P6.2"
+    )
+    assert "p6.1 excludes full" not in lowered, (
+        "SKILL.md must NOT carry the P6.1 'excludes full from the proposal "
+        "space' restriction — P6.2 widens the proposal space"
     )
