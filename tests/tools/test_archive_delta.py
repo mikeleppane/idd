@@ -727,3 +727,29 @@ sections [Intent]
     hook = _mark_change_merged_hook(proposal)
     with pytest.raises(ArchiveError, match="expected approved or merged"):
         hook(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# M3 — Concurrent merge_delta_proposal calls raise a clear error
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_merge_raises_clear_error(tmp_path: Path) -> None:
+    """A second merge_delta_proposal call against an in-flight change_id must raise
+    ArchiveError with a clear message — not a tempfile-not-found red herring.
+
+    This unit test monkeypatches fcntl.flock to raise BlockingIOError (the
+    signal that the lock is held) so we avoid non-deterministic threading.
+    The threaded integration scenario is documented but not automated here
+    because deterministic thread interleaving requires synchronisation
+    primitives that would make the test fragile and slow.
+    """
+    change_id = "2026-05-08-add-criterion"
+    _make_canonical(tmp_path, "my-cap")
+    _make_proposal(tmp_path, change_id)
+
+    with (
+        patch("tools.archive.fcntl.flock", side_effect=BlockingIOError("locked")),
+        pytest.raises(ArchiveError, match="in flight"),
+    ):
+        merge_delta_proposal(tmp_path, change_id, "my-cap")

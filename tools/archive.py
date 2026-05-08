@@ -6,6 +6,7 @@ owns the path math so the LLM cannot misplace shipped artifacts.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import re
 import shutil
@@ -775,40 +776,60 @@ def merge_delta_proposal(
         ArchiveError: On any preflight or mutation failure.  Hook exceptions are
             wrapped in ``ArchiveError`` after rollback.
     """
-    change_folder, proposal_path, canonical_spec, archive_target = _preflight_merge(
-        repo_root, change_id, capability
-    )
+    # Advisory file lock — fail fast if a concurrent merge is already in flight
+    # for the same change_id.  We derive the proposal path here (pure path math)
+    # so the lock is held for the entire transaction.  _preflight_merge repeats
+    # the is_file() check; a missing file fails there with a clear message.
+    _lock_path = repo_root / ".forge" / "changes" / change_id / "proposal.md"
+    try:
+        _lock_fh = _lock_path.open("rb")
+    except OSError:
+        _lock_fh = None  # path doesn't exist yet; _preflight_merge will surface this
 
-    # Steps 1 + 2: snapshots
-    canonical_snapshot = change_folder / "canonical-pre.md"
-    proposal_snapshot = change_folder / "proposal-pre.md"
-    shutil.copy2(canonical_spec, canonical_snapshot)
-    shutil.copy2(proposal_path, proposal_snapshot)
+    if _lock_fh is not None:
+        try:
+            fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            _lock_fh.close()
+            raise ArchiveError(f"another merge is in flight for change_id {change_id!r}") from exc
 
-    # Step 3: apply ops in memory
-    proposal_text = proposal_path.read_text(encoding="utf-8")
-    canonical_text = canonical_spec.read_text(encoding="utf-8")
-    ops = parse_proposal_body(proposal_text)
-    merged_body = apply_delta_ops(canonical_text, ops)
+    try:
+        change_folder, proposal_path, canonical_spec, archive_target = _preflight_merge(
+            repo_root, change_id, capability
+        )
 
-    # Step 4: validate merged body
-    _validate_merged_body(change_folder, merged_body)
+        # Steps 1 + 2: snapshots
+        canonical_snapshot = change_folder / "canonical-pre.md"
+        proposal_snapshot = change_folder / "proposal-pre.md"
+        shutil.copy2(canonical_spec, canonical_snapshot)
+        shutil.copy2(proposal_path, proposal_snapshot)
 
-    # Step 5: pre_archive_hook
-    if pre_archive_hook is not None:
-        _run_hook(pre_archive_hook, change_folder, proposal_snapshot, proposal_path)
+        # Step 3: apply ops in memory
+        proposal_text = proposal_path.read_text(encoding="utf-8")
+        canonical_text = canonical_spec.read_text(encoding="utf-8")
+        ops = parse_proposal_body(proposal_text)
+        merged_body = apply_delta_ops(canonical_text, ops)
 
-    # Step 6: atomic-replace canonical SPEC.md
-    _write_canonical(canonical_spec, merged_body, proposal_snapshot, proposal_path)
+        # Step 4: validate merged body
+        _validate_merged_body(change_folder, merged_body)
 
-    # Step 7: move change folder to archive
-    _move_to_archive(
-        change_folder,
-        archive_target,
-        canonical_spec,
-        canonical_snapshot,
-        proposal_snapshot,
-        proposal_path,
-    )
+        # Step 5: pre_archive_hook
+        if pre_archive_hook is not None:
+            _run_hook(pre_archive_hook, change_folder, proposal_snapshot, proposal_path)
 
-    return canonical_spec, archive_target
+        # Step 6: atomic-replace canonical SPEC.md
+        _write_canonical(canonical_spec, merged_body, proposal_snapshot, proposal_path)
+
+        # Step 7: move change folder to archive
+        _move_to_archive(
+            change_folder,
+            archive_target,
+            canonical_spec,
+            canonical_snapshot,
+            proposal_snapshot,
+            proposal_path,
+        )
+        return canonical_spec, archive_target
+    finally:
+        if _lock_fh is not None:
+            _lock_fh.close()
