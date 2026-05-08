@@ -102,6 +102,16 @@ documented but not yet routable: the routing helper raises
    labour: the helper handles post-seed-failure cleanup; this skill
    handles post-seed-cancel cleanup. Both routes converge on the same
    `_orphan_conditions_met` predicate generalized in T0.5.
+
+   **Caveat — best-effort cleanup, decisions.md edits NOT preserved.**
+   The cleanup predicate is filename-based, not content-based: it removes
+   the folder when `commits == []` AND folder contents are a strict
+   subset of `{state.json, SPEC.md, decisions.md}`. User edits to
+   `decisions.md` made between seed and cancel are silently lost on
+   cleanup because the file is still present (its filename passes the
+   subset check). If the user has logged a decision worth keeping, they
+   must commit it before cancelling — otherwise the cleanup hook will
+   delete the folder along with the unsaved decisions.
 10. **Self-review.** Verify the seed shape before dispatch:
     - `state.json` validates against `schemas/state.schema.json`.
     - `routing` block present with `idea`, `final_tier`, `decided_at`,

@@ -250,3 +250,34 @@ def test_skill_constitution_preflight_default_skip() -> None:
         "SKILL.md Constitution preflight must document the default = skip "
         "behavior so the agent doesn't bootstrap on every fresh project"
     )
+
+
+# ---------------------------------------------------------------------------
+# 15. Cleanup caveat — decisions.md edits NOT preserved on cancel
+# ---------------------------------------------------------------------------
+
+
+def test_skill_cleanup_caveat_decisions_md_lost() -> None:
+    """Step 9 cleanup is filename-based, not content-based.
+
+    User edits to ``decisions.md`` between seed and cancel are silently lost
+    because the cleanup predicate only checks that folder contents are a
+    strict subset of the orphan-allowed file set; content of those files is
+    never inspected.  The SKILL.md MUST surface this caveat so users know
+    to commit decisions worth keeping before cancelling.
+
+    Locks remediation for M3 P6.1 T7 finding p6-1-M2.
+    """
+    text = _read(SKILL_PATH)
+    assert "filename-based, not content-based" in text, (
+        "SKILL.md step 9 must spell out that cleanup is filename-based, "
+        "not content-based, so users understand decisions.md edits are lost"
+    )
+    assert "decisions.md" in text and "silently lost" in text, (
+        "SKILL.md step 9 must explicitly warn that user edits to "
+        "decisions.md are silently lost on cancel-cleanup"
+    )
+    assert "commit it before cancelling" in text or "commit" in text, (
+        "SKILL.md step 9 must instruct users to commit before cancelling "
+        "if they want decisions preserved"
+    )
