@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import re
 import shutil
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
 _CAPABILITY_RE = re.compile(r"^[a-z0-9-]+$")
 _FEATURE_ID_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9-]+$")
+# Pattern matches `[constitution:A<n>]` tags inside REVIEW.code.md cells.
+# Used by the advisory `_emit_constitution_skip_warning` helper.
+_CONSTITUTION_TAG_RE = re.compile(r"\[constitution:A\d+\]")
 
 
 class ArchiveError(RuntimeError):
@@ -97,6 +101,50 @@ def write_canonical_spec(repo_root: Path, capability: str, body: str) -> Path:
     return target
 
 
+def _emit_constitution_skip_warning(repo_root: Path, feature_id: str) -> None:
+    """Best-effort stderr notice when the Constitution gate is silently skipped.
+
+    Advisory only. Runs at the top of ``ship_feature`` when the caller did
+    NOT pass a ``pre_archive_hook``. Surfaces a single-line WARN to stderr
+    when:
+
+    - ``.idd/CONSTITUTION.md`` exists (the project opted in to a
+      Constitution), AND
+    - the feature's ``REVIEW.code.md`` carries at least one
+      ``[constitution:A<n>]`` tag (some unresolved finding cited an
+      article).
+
+    The check is intentionally cheap and string-based — no parser dependency,
+    no Constitution loading. Any internal exception is swallowed so a
+    malformed file cannot regress ship_feature itself; the gate stays
+    advisory in M3 (M4 will integrate properly).
+
+    The exact wording is contract: ``Constitution gate skipped`` — the test
+    suite pins it so tooling can grep the output.
+    """
+    try:
+        constitution = repo_root / ".idd" / "CONSTITUTION.md"
+        review = repo_root / ".idd" / "features" / feature_id / "REVIEW.code.md"
+        if not constitution.exists() or not review.exists():
+            return
+        text = review.read_text(encoding="utf-8", errors="replace")
+        if not _CONSTITUTION_TAG_RE.search(text):
+            return
+        # Single-line WARN; the orchestrator/operator can grep it. Body
+        # mirrors the SKILL.md step number so the operator has a precise
+        # pointer back to the documented gate flow.
+        print(
+            "WARN: Constitution gate skipped — see /idd:ship SKILL.md step 3.5",
+            file=sys.stderr,
+        )
+    except Exception:
+        # A malformed REVIEW.code.md or read error must not regress
+        # ship_feature itself. The warning is opportunistic; the bare
+        # `Exception` is intentional — any failure inside the helper is
+        # swallowed so the advisory cannot break the ship contract.
+        return
+
+
 def ship_feature(
     repo_root: Path,
     feature_id: str,
@@ -146,6 +194,13 @@ def ship_feature(
             Hook or archive-step failure rolls back the canonical write before
             re-raising.
     """
+    if pre_archive_hook is None:
+        # Advisory only. M3 keeps ship_feature itself unchanged (no
+        # raise/abort); the gate hook lives in tools.ship_gate. The warning
+        # makes a misconfigured retry that drops the gate hook visible to
+        # the operator instead of silent.
+        _emit_constitution_skip_warning(repo_root, feature_id)
+
     _validate_feature_id(feature_id)
     _validate_capability(capability)
 

@@ -87,6 +87,122 @@ def test_invalid_feature_id_rejected(tmp_path: Path, bad: str) -> None:
         archive_feature(tmp_path, bad)
 
 
+def _seed_constitution(repo_root: Path) -> None:
+    """Write a minimal valid Constitution with one CRITICAL article."""
+    cdir = repo_root / ".idd"
+    cdir.mkdir(parents=True, exist_ok=True)
+    (cdir / "CONSTITUTION.md").write_text(
+        '---\nversion: 0.1.0\ncreated: "2026-05-07"\n---\n\n'
+        "# Project Constitution\n\n"
+        "## Article 1 — Repo pattern [CRITICAL]\n"
+        "**Rule:** ORM via repository/.\n"
+        "**Reference:** —\n"
+        "**Rationale:** —\n"
+        "**Exception:** None.\n",
+        encoding="utf-8",
+    )
+
+
+def test_ship_feature_warns_on_unguarded_constitution_with_unresolved_findings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """H5 — advisory stderr warning when ship_feature runs without a hook
+    while a Constitution exists AND REVIEW.code.md still carries open
+    `[constitution:A<n>]` findings.
+
+    The warning is best-effort: it must not change ship_feature's contract
+    (no raise, no return-shape change) and any internal exception in the
+    helper must be swallowed. The signal exists so a misconfigured retry
+    that drops the gate hook fails loudly to the operator.
+    """
+    feature_id = "2026-05-04-toggle-add"
+    capability = "feature-flag"
+    body = (
+        "---\ncapability: feature-flag\nstatus: shipped\n"
+        "created: 2026-05-04\nlast_updated: 2026-05-04\n"
+        "evidence:\n"
+        "  - 2026-05-04-toggle-add: features/archive/2026-05-04-toggle-add/\n"
+        "bounded_context: null\n---\n# Feature Flag\n"
+    )
+    review_body = (
+        "---\nspec: 2026-05-04-toggle-add\ntarget: code\nstatus: open\ncycles: 1\n---\n\n"
+        "# Findings\n\n"
+        "| ID | Severity | Status | Location | Problem | Recommended Fix | Source |\n"
+        "|----|----------|--------|----------|---------|-----------------|--------|\n"
+        "| F-1 | HIGH | open | src/x.py:1 | [constitution:A1] direct ORM | move | self |\n"
+    )
+    _seed_feature(
+        tmp_path,
+        feature_id,
+        files={"SPEC.md": "# spec\n", "state.json": "{}\n", "REVIEW.code.md": review_body},
+    )
+    _seed_constitution(tmp_path)
+
+    # No pre_archive_hook. Warning must fire to stderr; ship still succeeds.
+    ship_feature(tmp_path, feature_id, capability, body)
+
+    captured = capsys.readouterr()
+    assert "Constitution gate skipped" in captured.err, (
+        f"expected stderr warning, got stderr={captured.err!r}"
+    )
+
+
+def test_ship_feature_does_not_warn_when_constitution_absent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """H5 — without a Constitution there is nothing to gate; no warning fires."""
+    feature_id = "2026-05-04-toggle-add"
+    capability = "feature-flag"
+    body = (
+        "---\ncapability: feature-flag\nstatus: shipped\n"
+        "created: 2026-05-04\nlast_updated: 2026-05-04\n"
+        "evidence:\n"
+        "  - 2026-05-04-toggle-add: features/archive/2026-05-04-toggle-add/\n"
+        "bounded_context: null\n---\n# Feature Flag\n"
+    )
+    _seed_feature(tmp_path, feature_id, files={"SPEC.md": "# spec\n", "state.json": "{}\n"})
+
+    ship_feature(tmp_path, feature_id, capability, body)
+    assert "Constitution gate skipped" not in capsys.readouterr().err
+
+
+def test_ship_feature_does_not_warn_when_hook_supplied(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """H5 — when caller passes pre_archive_hook the warning is suppressed."""
+    feature_id = "2026-05-04-toggle-add"
+    capability = "feature-flag"
+    body = (
+        "---\ncapability: feature-flag\nstatus: shipped\n"
+        "created: 2026-05-04\nlast_updated: 2026-05-04\n"
+        "evidence:\n"
+        "  - 2026-05-04-toggle-add: features/archive/2026-05-04-toggle-add/\n"
+        "bounded_context: null\n---\n# Feature Flag\n"
+    )
+    review_body = (
+        "---\nspec: 2026-05-04-toggle-add\ntarget: code\nstatus: open\ncycles: 1\n---\n\n"
+        "# Findings\n\n"
+        "| ID | Severity | Status | Location | Problem | Recommended Fix | Source |\n"
+        "|----|----------|--------|----------|---------|-----------------|--------|\n"
+        "| F-1 | HIGH | open | src/x.py:1 | [constitution:A1] direct ORM | move | self |\n"
+    )
+    _seed_feature(
+        tmp_path,
+        feature_id,
+        files={"SPEC.md": "# spec\n", "state.json": "{}\n", "REVIEW.code.md": review_body},
+    )
+    _seed_constitution(tmp_path)
+
+    ship_feature(
+        tmp_path,
+        feature_id,
+        capability,
+        body,
+        pre_archive_hook=lambda _src: None,
+    )
+    assert "Constitution gate skipped" not in capsys.readouterr().err
+
+
 def test_ship_feature_happy_path_writes_canonical_and_archives(tmp_path: Path) -> None:
     feature_id = "2026-05-04-toggle-add"
     capability = "feature-flag"
