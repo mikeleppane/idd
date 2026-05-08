@@ -1,6 +1,6 @@
 ---
 name: amend-constitution
-description: Open `.idd/CONSTITUTION.md` in $EDITOR for atomic edit; bumps version per the scope of the change and appends an ADR entry to decisions.md. Pass `--bootstrap` to seed a starter Constitution from project signals (proposes 5 articles, max 9, opt-in).
+description: Open `.idd/CONSTITUTION.md` in $EDITOR for atomic edit, bump version per the scope of the change, and append an ADR entry to decisions.md. Use when the user asks to amend, extend, or bootstrap the project Constitution. Pass `--bootstrap` to seed a starter Constitution from project signals (proposes up to 5 articles, opt-in).
 ---
 
 # /idd:amend-constitution

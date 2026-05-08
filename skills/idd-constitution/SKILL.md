@@ -1,6 +1,6 @@
 ---
 name: idd-constitution
-description: Loader + relevance filter for `.idd/CONSTITUTION.md`. Doc-only skill — phase skills invoke `tools.constitution.load_and_filter` directly. Documents the `articles[]` budget shape so all consumers stay aligned.
+description: Document the loader + relevance filter contract for `.idd/CONSTITUTION.md`. Use when reading or extending the `articles[]` dispatch budget shape, or when a phase skill needs to call `tools.constitution.load_and_filter`. Doc-only skill; not auto-invoked.
 disable-model-invocation: true
 ---
 

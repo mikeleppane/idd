@@ -34,7 +34,7 @@ User invoked `/idd:amend-constitution` (with or without `--bootstrap`).
 
 1. Refuse if `.idd/CONSTITUTION.md` already exists.
 2. Read project signals (`pyproject.toml`, `package.json`, `Cargo.toml`, top-level dirs).
-3. Generate up to 5 starter article proposals (max 9 if user expands).
+3. Generate up to 5 starter article proposals based on detected project signals.
 4. Article-by-article: print, ask accept / edit / drop.
 5. Open final draft in $EDITOR for any last polish.
 6. Write `.idd/CONSTITUTION.md` with frontmatter `version: 0.1.0`, `created: today`.
