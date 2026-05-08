@@ -268,17 +268,27 @@ def cleanup_orphan_feature(repo_root: Path, feature_id: str) -> bool:
 
 def _validate_capability(capability: str) -> None:
     if not _CAPABILITY_RE.fullmatch(capability):
-        raise ArchiveError(f"invalid capability slug: {capability!r}")
+        raise ArchiveError(
+            f"invalid capability slug: {capability!r}; expected slug matching ^[a-z0-9][a-z0-9-]*$"
+        )
 
 
 def _validate_feature_id(feature_id: str) -> None:
     if not _FEATURE_ID_RE.fullmatch(feature_id):
-        raise ArchiveError(f"invalid feature id: {feature_id!r}")
+        raise ArchiveError(
+            f"invalid feature id: {feature_id!r}; "
+            "expected 'YYYY-MM-DD-<slug>' (strict month/day, "
+            "slug matching ^[a-z0-9][a-z0-9-]+$)"
+        )
 
 
 def _validate_change_id(change_id: str) -> None:
     if not _CHANGE_ID_RE.fullmatch(change_id):
-        raise ArchiveError(f"invalid change id: {change_id!r}")
+        raise ArchiveError(
+            f"invalid change id: {change_id!r}; "
+            "expected 'YYYY-MM-DD-<slug>' (strict month/day, "
+            "slug matching ^[a-z0-9][a-z0-9-]{2,}$)"
+        )
 
 
 def _run_validator(
