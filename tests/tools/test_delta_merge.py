@@ -707,3 +707,90 @@ def test_apply_modify_rejects_empty_old_text_directly() -> None:
     canonical = "## Scenarios\nscenario-1: works\n"
     with pytest.raises(DeltaMergeError, match="empty"):
         apply_delta_ops(canonical, [op])
+
+
+# ---------------------------------------------------------------------------
+# Reviewer-3 Critical — fence-aware ## Delta section extraction
+# ---------------------------------------------------------------------------
+
+
+def test_fenced_h2_inside_delta_op_does_not_truncate_section() -> None:
+    """A fenced ``## ...`` line inside an op body must NOT close ``## Delta``.
+
+    Without fence-aware section extraction, the H2 search inside the fenced
+    block ends the ``## Delta`` section early; the parsed op body collapses
+    to just the opening fence, and a subsequent ADD op silently disappears
+    (or, worse, the merger writes a dangling fence into the canonical spec).
+
+    Reproduces the Reviewer-3 Critical: "fenced ## lines inside a delta op
+    truncate the proposal before merge".
+    """
+    proposal = (
+        "## Affects\n"
+        "\n"
+        "sections [Scenarios]\n"
+        "\n"
+        "## Delta\n"
+        "\n"
+        "+ ADD: scenario doc-example\n"
+        "  Scenario shows how to write a fenced H2 in docs:\n"
+        "\n"
+        "  ```\n"
+        "  ## Inside fenced block\n"
+        "  this is illustrative content, not a section header\n"
+        "  ```\n"
+        "\n"
+        "+ ADD: scenario after-fence\n"
+        "  This op exists AFTER the fenced ## line.  Without fence-aware\n"
+        "  section extraction, this op disappears from the parse.\n"
+        "\n"
+        "## Rationale\n"
+        "\n"
+        "Some rationale.\n"
+    )
+    ops = parse_proposal_body(proposal)
+
+    # Both ADD ops must be parsed; the second one is the canary for
+    # fence-aware ## handling.
+    kinds = [op.kind for op in ops]
+    anchors = [op.anchor for op in ops]
+    assert kinds == ["ADD", "ADD"], f"expected 2 ADD ops, got {kinds}"
+    assert anchors == ["scenario doc-example", "scenario after-fence"]
+
+    # First op's body must contain the fenced literal, including the
+    # illustrative ## line — fence content is preserved verbatim.
+    first = ops[0]
+    assert "## Inside fenced block" in first.new_text
+    assert "illustrative content" in first.new_text
+
+    # Critically: first op's body must NOT have been truncated at the
+    # fenced ##; the rationale section text must NOT appear in any op body.
+    for op in ops:
+        assert "Some rationale" not in op.new_text
+
+
+def test_fenced_h2_in_affects_section_does_not_truncate() -> None:
+    """Same fence-awareness on ## Affects extraction.
+
+    A fenced ## line inside the Affects body must not end the Affects
+    section early — otherwise the sections list is missed and downstream
+    ops become un-routable.
+    """
+    proposal = (
+        "## Affects\n"
+        "\n"
+        "```\n"
+        "## Example heading from another spec\n"
+        "```\n"
+        "\n"
+        "sections [Scenarios]\n"
+        "\n"
+        "## Delta\n"
+        "\n"
+        "+ ADD: scenario foo\n"
+        "  body line\n"
+    )
+    ops = parse_proposal_body(proposal)
+    assert len(ops) == 1
+    assert ops[0].section == "Scenarios"
+    assert ops[0].anchor == "scenario foo"

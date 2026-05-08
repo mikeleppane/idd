@@ -92,7 +92,7 @@ _SECTION_TAG_RE = re.compile(r"^\[(?P<section>[^\]]+)\]\s*(?P<rest>.*)$")
 # Matches a sections list in ## Affects body: sections [A, B, C]
 _SECTIONS_LIST_RE = re.compile(r"sections\s+\[(?P<list>[^\]]+)\]")
 
-# Minimum number of declared sections that requires [Section] tagging on every op.
+# Number of declared sections at/above which every op MUST carry a [Section] tag (§5.3.5).
 _MULTI_SECTION_THRESHOLD: int = 2
 
 
@@ -150,6 +150,11 @@ def _normalize_anchor(s: str) -> str:
 def _extract_body_section(text: str, header_re: re.Pattern[str]) -> str | None:
     """Return text from the line after *header_re* match to the next H2 (or EOF).
 
+    Fence-aware: an ``## Inside fence`` line that lives inside a fenced code
+    block does NOT terminate the section.  Without this guard, a delta op
+    body containing illustrative ``## ...`` lines would truncate the
+    ``## Delta`` section and corrupt the parsed op body.
+
     Args:
         text: Full document text.
         header_re: Compiled pattern that matches the H2 header line.
@@ -161,9 +166,19 @@ def _extract_body_section(text: str, header_re: re.Pattern[str]) -> str | None:
     if m is None:
         return None
     section_start = m.end()
-    next_h2 = _H2_RE.search(text, section_start)
-    section_end = next_h2.start() if next_h2 else len(text)
-    return text[section_start:section_end]
+
+    inside_fence = False
+    pos = section_start
+    while pos < len(text):
+        nl = text.find("\n", pos)
+        line_end = len(text) if nl == -1 else nl + 1
+        line = text[pos:line_end]
+        if _FENCE_RE.match(line):
+            inside_fence = not inside_fence
+        elif not inside_fence and line.startswith("## "):
+            return text[section_start:pos]
+        pos = line_end
+    return text[section_start:]
 
 
 def _parse_sections_list(affects_body: str) -> list[str]:
