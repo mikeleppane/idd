@@ -44,9 +44,9 @@ Produce a `.forge/features/<id>/SPEC.md` that obeys the §7.1 template and exits
 5a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<idea>, files_in_scope=[])`. When `articles[]` is non-empty, include them in the spec-author subagent's dispatch budget under the `articles` field. The author MUST keep CRITICAL articles' rules in view while drafting Intent + Negative Requirements.
 6. **Fill the template — one section at a time, asking only when ambiguous.**
    - **Frontmatter.** Set `id`, `status: draft`, `tier`, `created`, `capability` (stable handle).
-   - **Intent.** One paragraph. WHY. Drill until the *why* is concrete.
+   - **Intent.** One paragraph. WHY. Drill until the *why* is concrete. When `state.json.refined_idea` is non-empty (set by `/forge:refine` on full-tier features), seed the Intent draft from it — lift the paragraph verbatim, then refine for spec voice. When absent, draft Intent directly from the user's idea text (existing focused/standard behavior).
    - **Context.** Background and constraints. Reference RESEARCH.md only if it already exists.
-   - **Domain.** Glossary table. Aim for 4–8 terms; more is usually noise. Add a Mermaid sketch only if it clarifies a non-obvious relationship.
+   - **Domain.** Glossary table. Aim for 4–8 terms; more is usually noise. Add a Mermaid sketch only if it clarifies a non-obvious relationship. **Full-tier exception:** when the feature's tier is `full`, leaving `# Domain` as a single-line placeholder `_TBD: filled by /forge:domain_` is acceptable — the dedicated `/forge:domain` phase populates the section after spec exits. For focused and standard tiers, Domain MUST be filled at spec time (existing behavior).
    - **Codebase Anchors.** Concrete `path:Symbol` pointers a subagent can use without reading the whole repo.
    - **Scope.** Behavior-level bullets. Make the Out of Scope list as long as the In Scope list when uncertainty is high — it surfaces tacit assumptions.
    - **Scenarios.** Markdown Gherkin. One scenario per behavior. Strict `.feature` files come later (M2). Cap at 5 in M1; if you need more, the slice is too big.
@@ -65,6 +65,7 @@ Produce a `.forge/features/<id>/SPEC.md` that obeys the §7.1 template and exits
      - Every Acceptance criterion has a row in Test Strategy.
      - Open Questions count is 0.
      - Ambiguity score (heuristic): count words like "should", "might", "TBD", "etc." in non-list paragraphs. > 3 = block; refine.
+     - **Full-tier Domain-placeholder allowance.** When the feature's tier is `full` AND the `# Domain` section body matches the canonical placeholder, the inline check "Every Term in Domain appears at least once in Intent / Scope / Scenarios" is **skipped** — `/forge:domain` will populate Domain in the next phase. All other gates (NR placement, AC-falsifiability, scenarios cap, Open Questions count, weasel-word ambiguity score) still apply. **Comparator (locked):** strip leading and trailing whitespace (including any trailing newline) from the section body, then test against the regex `^_TBD: filled by /forge:domain_?$` — the trailing italic underscore is optional (markdown-italic rendering vs no-rendering both accepted), but no other text, comments, or partial fills are accepted. Backslash-escaped underscores (`\_TBD: ... \_`) do NOT match and are treated as missing Domain content.
 8. **Update `state.json`:** call `tools.state.complete_phase(path, "spec")`, then `tools.state.start_phase(path, next_phase)` where `next_phase` is `execute` for `--focused`, otherwise the first phase the user requested.
 9. **Surface to the user:** print path to SPEC.md, summarize Intent and Acceptance, list any accepted assumptions logged to `decisions.md` during refinement.
 

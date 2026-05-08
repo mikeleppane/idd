@@ -192,3 +192,227 @@ def test_record_refined_idea_rejects_empty_string(tmp_path: Path, schemas_dir: P
             refined="",
             schema_path=schemas_dir / "state.schema.json",
         )
+
+
+def test_record_refined_idea_raises_when_phase_not_refine(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    target = tmp_path / "state.json"
+    payload = _base_payload()
+    payload["current_phase"] = "spec"
+    payload["phases"] = {"spec": {"status": "in_progress", "started_at": "2026-05-04T10:00:00Z"}}
+    state.write_state(target, payload, schema_path=schemas_dir / "state.schema.json")
+
+    with pytest.raises(state.StateError) as excinfo:
+        state.record_refined_idea(
+            target,
+            refined="Allow checkout to apply a single stackable coupon.",
+            schema_path=schemas_dir / "state.schema.json",
+        )
+
+    message = str(excinfo.value)
+    assert "'refine'" in message
+    assert "'spec'" in message
+
+
+def test_record_refined_idea_succeeds_when_phase_refine(tmp_path: Path, schemas_dir: Path) -> None:
+    target = tmp_path / "state.json"
+    state.write_state(target, _base_payload(), schema_path=schemas_dir / "state.schema.json")
+
+    result = state.record_refined_idea(
+        target,
+        refined="Allow checkout to apply a single stackable coupon.",
+        schema_path=schemas_dir / "state.schema.json",
+    )
+
+    assert result["refined_idea"] == "Allow checkout to apply a single stackable coupon."
+
+
+def test_record_refined_idea_raises_when_text_exceeds_cap(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    target = tmp_path / "state.json"
+    state.write_state(target, _base_payload(), schema_path=schemas_dir / "state.schema.json")
+    too_long = "x" * 4001
+
+    with pytest.raises(state.StateError) as excinfo:
+        state.record_refined_idea(
+            target,
+            refined=too_long,
+            schema_path=schemas_dir / "state.schema.json",
+        )
+
+    message = str(excinfo.value)
+    assert "4000" in message
+    assert "4001" in message
+
+
+def test_record_refined_idea_accepts_text_at_cap_boundary(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    target = tmp_path / "state.json"
+    state.write_state(target, _base_payload(), schema_path=schemas_dir / "state.schema.json")
+    at_cap = "y" * 4000
+
+    result = state.record_refined_idea(
+        target,
+        refined=at_cap,
+        schema_path=schemas_dir / "state.schema.json",
+    )
+
+    assert result["refined_idea"] == at_cap
+    assert len(result["refined_idea"]) == 4000
+
+
+def test_record_refined_idea_persists_no_writes_on_guard_failure(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    target = tmp_path / "state.json"
+    payload = _base_payload()
+    payload["current_phase"] = "spec"
+    payload["phases"] = {"spec": {"status": "in_progress", "started_at": "2026-05-04T10:00:00Z"}}
+    payload["refined_idea"] = "preexisting refined idea body"
+    state.write_state(target, payload, schema_path=schemas_dir / "state.schema.json")
+
+    with pytest.raises(state.StateError):
+        state.record_refined_idea(
+            target,
+            refined="should never persist",
+            schema_path=schemas_dir / "state.schema.json",
+        )
+
+    persisted = json.loads(target.read_text(encoding="utf-8"))
+    assert persisted["refined_idea"] == "preexisting refined idea body"
+
+
+def _routed_payload(feature_id: str = "2026-05-04-demo") -> dict[str, Any]:
+    """Base payload with a valid routing block but no refine_attempts yet."""
+    payload = _base_payload(feature_id)
+    payload["routing"] = {
+        "idea": "Add coupon redemption to checkout",
+        "final_tier": "standard",
+        "decided_at": "2026-05-04T09:55:00Z",
+        "constitution_present": False,
+    }
+    return payload
+
+
+def test_increment_refine_attempts_first_call_returns_one_preserves_siblings(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    target = tmp_path / "state.json"
+    state.write_state(target, _routed_payload(), schema_path=schemas_dir / "state.schema.json")
+
+    new_count = state.increment_refine_attempts(
+        target,
+        schema_path=schemas_dir / "state.schema.json",
+    )
+
+    assert new_count == 1
+    persisted = json.loads(target.read_text(encoding="utf-8"))
+    assert persisted["routing"]["refine_attempts"] == 1
+    # Sibling fields preserved.
+    assert persisted["routing"]["idea"] == "Add coupon redemption to checkout"
+    assert persisted["routing"]["final_tier"] == "standard"
+    assert persisted["routing"]["decided_at"] == "2026-05-04T09:55:00Z"
+    assert persisted["routing"]["constitution_present"] is False
+
+
+def test_increment_refine_attempts_second_call_returns_two(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    target = tmp_path / "state.json"
+    payload = _routed_payload()
+    payload["routing"]["refine_attempts"] = 1
+    state.write_state(target, payload, schema_path=schemas_dir / "state.schema.json")
+
+    new_count = state.increment_refine_attempts(
+        target,
+        schema_path=schemas_dir / "state.schema.json",
+    )
+
+    assert new_count == 2
+    persisted = json.loads(target.read_text(encoding="utf-8"))
+    assert persisted["routing"]["refine_attempts"] == 2
+
+
+def test_increment_refine_attempts_third_call_returns_three(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    target = tmp_path / "state.json"
+    payload = _routed_payload()
+    payload["routing"]["refine_attempts"] = 2
+    state.write_state(target, payload, schema_path=schemas_dir / "state.schema.json")
+
+    new_count = state.increment_refine_attempts(
+        target,
+        schema_path=schemas_dir / "state.schema.json",
+    )
+
+    assert new_count == 3
+    persisted = json.loads(target.read_text(encoding="utf-8"))
+    assert persisted["routing"]["refine_attempts"] == 3
+
+
+def test_increment_refine_attempts_raises_when_current_phase_not_refine(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    target = tmp_path / "state.json"
+    payload = _routed_payload()
+    payload["current_phase"] = "spec"
+    payload["phases"] = {"spec": {"status": "in_progress", "started_at": "2026-05-04T10:00:00Z"}}
+    state.write_state(target, payload, schema_path=schemas_dir / "state.schema.json")
+
+    with pytest.raises(state.StateError, match="current_phase"):
+        state.increment_refine_attempts(
+            target,
+            schema_path=schemas_dir / "state.schema.json",
+        )
+
+
+def test_increment_refine_attempts_persists_across_reads(tmp_path: Path, schemas_dir: Path) -> None:
+    target = tmp_path / "state.json"
+    state.write_state(target, _routed_payload(), schema_path=schemas_dir / "state.schema.json")
+
+    state.increment_refine_attempts(target, schema_path=schemas_dir / "state.schema.json")
+    state.increment_refine_attempts(target, schema_path=schemas_dir / "state.schema.json")
+    final = state.increment_refine_attempts(target, schema_path=schemas_dir / "state.schema.json")
+
+    assert final == 3
+    reread = state.read_state(target, schema_path=schemas_dir / "state.schema.json")
+    assert reread["routing"]["refine_attempts"] == 3
+
+
+def test_increment_refine_attempts_validates_against_schema(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    """Resulting payload must still pass schema validation."""
+    target = tmp_path / "state.json"
+    state.write_state(target, _routed_payload(), schema_path=schemas_dir / "state.schema.json")
+
+    state.increment_refine_attempts(target, schema_path=schemas_dir / "state.schema.json")
+
+    # If the schema didn't pass on write, write_state would have raised.
+    # Re-validate explicitly to lock the contract.
+    state.read_state(target, schema_path=schemas_dir / "state.schema.json")
+
+
+def test_increment_refine_attempts_raises_when_routing_block_absent(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    target = tmp_path / "state.json"
+    # Base payload has current_phase=refine but NO routing block.
+    state.write_state(target, _base_payload(), schema_path=schemas_dir / "state.schema.json")
+
+    with pytest.raises(state.StateError) as excinfo:
+        state.increment_refine_attempts(
+            target,
+            schema_path=schemas_dir / "state.schema.json",
+        )
+
+    message = str(excinfo.value)
+    assert "routing" in message
+    assert "/forge:do" in message
+    # No partial write — file must remain unchanged (no routing block).
+    persisted = json.loads(target.read_text(encoding="utf-8"))
+    assert "routing" not in persisted
