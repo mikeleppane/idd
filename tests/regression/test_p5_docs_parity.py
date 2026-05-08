@@ -42,12 +42,3 @@ def test_agents_md_lifecycle_prose_has_merge_delta_proposal() -> None:
     assert "merge_delta_proposal" in text, (
         "AGENTS.md lifecycle prose is missing 'merge_delta_proposal' (M3 P5 footprint)."
     )
-
-
-def test_readme_has_delta_proposals_callout() -> None:
-    """README.md must contain both '/forge:change' and 'Delta proposals' literals."""
-    text = _read(README_PATH)
-    assert "/forge:change" in text, (
-        "README.md is missing '/forge:change' in the Delta proposals callout."
-    )
-    assert "Delta proposals" in text, "README.md is missing 'Delta proposals' callout paragraph."

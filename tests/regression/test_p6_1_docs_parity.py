@@ -88,36 +88,6 @@ def test_agents_md_full_tier_callout_retained_scoped_to_full() -> None:
     )
 
 
-def test_readme_p6_1_callout_replaces_focused_standard_until_p6_2() -> None:
-    text = _read(README_PATH)
-    # The old M3 P4 phrasing claimed focused/standard adaptive routing
-    # was deferred until P6.2; that claim is obsolete in P6.1.
-    forbidden = "focused/standard adaptive routing"
-    if forbidden in text:
-        # If the substring still appears, it must be in a context that
-        # refers to it as already-shipped (not deferred).
-        idx = text.find(forbidden)
-        window = text[max(0, idx - 80) : idx + 200]
-        assert "until P6.2" not in window and "lands in M3 P6.2" not in window, (
-            "README.md still claims focused/standard adaptive routing is "
-            "deferred to P6.2; P6.1 ships those tiers."
-        )
-    # `/forge:do --full` callouts MAY still mention P6.2 — that is the
-    # remaining deferral.
-
-
-def test_readme_p6_1_mentions_forge_do_focused_and_standard() -> None:
-    text = _read(README_PATH)
-    assert "/forge:do --focused" in text or "`/forge:do --focused`" in text, (
-        "README.md must describe `/forge:do --focused` as the focused-tier "
-        "adaptive-routing entry point (P6.1)."
-    )
-    assert "/forge:do --standard" in text or "`/forge:do --standard`" in text, (
-        "README.md must describe `/forge:do --standard` as the standard-tier "
-        "adaptive-routing entry point (P6.1)."
-    )
-
-
 def test_meta_json_does_not_list_forge_do() -> None:
     payload = json.loads(_read(META_PATH))
     skills = payload.get("skills", {})

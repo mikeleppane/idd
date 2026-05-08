@@ -12,13 +12,17 @@
 
 > **Intent is the source. Spec is the contract. Verification reconciles reality.**
 
-A Claude Code plugin that encodes a lightweight-but-thorough Spec-Driven Development lifecycle for working with AI coding agents on real repositories.
+FORGE is a Claude Code plugin that encodes a disciplined Spec-Driven Development lifecycle for working with AI coding agents on real repositories. It is parallel framing to TDD / BDD / DDD / SDD — a methodology, not a tool.
 
-FORGE is parallel framing to TDD / BDD / DDD / SDD — a methodology, not a tool. It optimizes for **disciplined, resumable** software work over speed-first coding. The workflow may produce several artifacts, but each one earns its place by clarifying intent, preserving context, reducing drift, or verifying reality.
+FORGE optimizes for **disciplined, resumable** software work over speed-first coding. Every artifact it produces earns its place by clarifying intent, preserving context, reducing drift, or verifying reality.
 
 ---
 
-## Why FORGE?
+## What it is
+
+A small set of slash commands, skills, hooks, and JSON-schema-validated artifacts that walk an AI coding agent through eleven phases — from a vague idea to a verified, shipped change. State is persisted on disk per feature, so any session can be paused, resumed, or handed off without losing context.
+
+## Why use it
 
 You already have an AI coding agent. FORGE adds the missing scaffolding around it:
 
@@ -26,34 +30,48 @@ You already have an AI coding agent. FORGE adds the missing scaffolding around i
 - **Spec** is the contract for intended behavior — adversarially refined before code is written.
 - **Verification** reconciles spec, code, tests, runtime behavior, and user confirmation — three layers, not just "tests pass."
 - **Crucible** is an adversarial post-plan ritual (assumptions inversion → adversarial Q&A → pre-mortem) that produces a shared `UNDERSTANDING.md` between you and the agent.
-- **Context discipline** keeps your main thread under a hard token budget (~25K for a standard-tier feature) by isolating slices in subagents and preventing context bleed.
+- **Context discipline** keeps the main thread under a hard token budget by isolating slices in subagents and preventing context bleed.
 - **Cross-AI review** uses a different model family (Claude ↔ GPT) as a second-opinion reviewer, reinforcing the adversarial shared-understanding goal.
 
 FORGE pays off when the cost of building the wrong thing, losing context, drifting from intent, or losing your own mental model of the code is higher than the cost of a disciplined workflow. It is **not** the fastest path to code. It *is* a clear path from intent to verified behavior — without surrendering your understanding of the system along the way.
 
 ---
 
+## How to use it
+
+Install the plugin (see below), then drive a feature through the lifecycle with one command:
+
+```text
+/forge:do "<your idea>" [--focused | --standard | --full]
+```
+
+`/forge:do` runs preflights, scans for capability conflicts, picks a tier, and seeds the per-feature folder under `.forge/features/<id>/`. It then dispatches the next slash command in the chosen tier.
+
+Prefer to drive each phase manually? Every phase has its own command (`/forge:spec`, `/forge:plan`, `/forge:execute`, `/forge:verify`, `/forge:ship`, …). Each command refuses to run unless the previous phase is complete — the on-disk state machine is the source of truth.
+
+---
+
 ## Lifecycle
 
-```
+```text
 refine → research → spec → domain → scenarios → plan → crucible → review → execute → verify → ship
 ```
 
 | Phase | Output | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | **refine** | refined idea statement | Sharpen a vague idea into a single-feature scope |
 | **research** | `RESEARCH.md` (optional) | Gather facts before the spec is locked |
 | **spec** | `SPEC.md` | Behavior contract: Intent, Domain, Scope, Scenarios, Acceptance, Open Questions |
 | **domain** | glossary + optional Mermaid sketch | Ubiquitous language; escalates to bounded contexts when needed |
-| **scenarios** | Gherkin scenarios in `SPEC.md` | BDD acceptance criteria; auto-escalates to `.feature` files when project supports it |
+| **scenarios** | Gherkin scenarios in `SPEC.md` | BDD acceptance criteria; auto-escalates to `.feature` files when the project supports it |
 | **plan** | `PLAN.md` | Vertical slices and waves of parallelizable tasks; file-bound |
 | **crucible** | `UNDERSTANDING.md` | Adversarial ritual: assumptions inversion → adversarial Q&A → pre-mortem |
-| **review** | `REVIEW.plan.md` / `REVIEW.code.md` | Layered self + heavy + cross-AI reviews with convergence loops (per-target file) |
+| **review** | `REVIEW.plan.md` / `REVIEW.code.md` | Layered self + heavy + cross-AI reviews with convergence loops |
 | **execute** | code + tests | Slice-isolated, subagent-bounded, wave-parallel implementation |
 | **verify** | `VERIFICATION.md` | Three layers: code audit + scenario execution + conversational UAT |
 | **ship** | merged change + updated canonical spec or delta proposal | Reconcile feature spec with shipped capability spec |
 
-Phases can be skipped via flags or selected automatically by `/forge:do`, which estimates the right tier and routes accordingly. As of M3 P6.1, `/forge:do --focused` and `/forge:do --standard` ship end-to-end; full-tier adaptive routing (`/forge:do --full`) lands in M3 P6.2.
+Phases can be skipped via flags or selected automatically by `/forge:do`, which estimates the right tier and routes accordingly.
 
 ---
 
@@ -62,59 +80,12 @@ Phases can be skipped via flags or selected automatically by `/forge:do`, which 
 `--focused` means **narrow**, not necessarily fast. Pick the tier that matches the change's risk and surface area, not your patience.
 
 | Tier | Phases | Use when |
-|---|---|---|
+| --- | --- | --- |
 | `--focused` | `spec → execute → verify` | One-file fixes, surgical changes, well-understood bugs |
-| `--standard` | `spec → scenarios → plan → crucible → execute → verify → ship` | Most features; cross-file changes; non-trivial behavior |
+| `--standard` | `spec → scenarios → plan → crucible → review → execute → review → verify → ship` | Most features; cross-file changes; non-trivial behavior |
 | `--full` | entire pipeline | New subsystems, cross-cutting refactors, anything requiring deep research and DDD |
 
-### Focused tier (M1)
-
-```
-/forge:spec --focused → /forge:execute → /forge:verify
-```
-
-The shortest path through FORGE. Pick this for one-file fixes and surgical changes where scenarios, planning, and crucible would be overhead.
-
-### Standard tier (M2)
-
-```
-/forge:spec --standard
-  → /forge:scenarios
-  → /forge:plan
-  → /forge:crucible
-  → /forge:review                  # target plan (default after crucible)
-  → /forge:execute
-  → /forge:review --target code    # target code diff against PLAN.md
-  → /forge:verify
-  → /forge:ship
-```
-
-Each command refuses to run unless the previous phase is complete (state machine guard). The `forge-context-budget` and `forge-subagent-dispatch` skills enforce the per-subagent token budget at every dispatch.
-
-**M2 limitations (called out so you don't trip on them):**
-
-- **`/forge:ship` is first-ship only.** If `.forge/specs/<capability>/SPEC.md` already exists for the capability slug, ship aborts with a "delta proposal required" message. Delta proposals (`/forge:change`) land in M3+.
-- **`/forge:review --cross-ai` is not implemented.** Cross-AI review (Claude ↔ GPT second-opinion pass) is M4 territory; the flag errors out today.
-- **Refine and domain phases ship in M3 P4; research is deferred to M4.** The `/forge:refine` and `/forge:domain` slash commands are available standalone. Adaptive routing via `/forge:do --focused` and `/forge:do --standard` ships in M3 P6.1; full-tier adaptive routing (`/forge:do --full`, including the refine + domain branch wiring) lands in M3 P6.2.
-
----
-
-## Per-feature artifacts
-
-Every FORGE feature lives in `.forge/features/<id>/` with a small set of contracts:
-
-- `SPEC.md` — the behavior contract
-- `RESEARCH.md` — optional, for research tier and above
-- `UNDERSTANDING.md` — output of the crucible
-- `PLAN.md` — file-bound vertical slices and waves
-- `REVIEW.plan.md` / `REVIEW.code.md` — per-target review findings and convergence cycles (the standard-tier flow runs review twice; each pass writes its own file)
-- `VERIFICATION.md` — three-layer verification record
-- `decisions.md` — running log of decisions and rationale
-- `state.json` — phase/slice/wave state for `/forge-resume`
-
-Canonical capability specs live in `.forge/specs/<capability>/SPEC.md`. Feature specs are working artifacts and are merged or archived against canonical specs at ship time. Changes to shipped specs flow through OpenSpec-style delta proposals in `.forge/changes/<id>/proposal.md`.
-
-A project-wide `.forge/CONSTITUTION.md` carries CRITICAL / SHOULD / MAY articles enforced at every phase entry.
+The standard tier runs review twice (against `PLAN.md`, then against the code diff). The `forge-context-budget` and `forge-subagent-dispatch` skills enforce per-subagent token budgets at every dispatch.
 
 ---
 
@@ -140,67 +111,59 @@ Three layers, all rolled into `VERIFICATION.md`:
 
 A feature ships only after all three layers pass.
 
-### M3 Constitution limitations
+---
 
-The project Constitution (`.forge/CONSTITUTION.md`) ships in M3 as **advisory
-context plus a reviewer severity hint plus a ship-time user gate**. It is
-NOT a machine BLOCK gate (D-4 / D-4a):
+## Per-feature artifacts
 
-- Reviewer subagents tag findings with `[constitution:A<n>]` and map
-  severity per the Constitution article level (CRITICAL→HIGH,
-  SHOULD→MEDIUM, MAY→LOW).
-- `/forge:ship` shows a mandatory gate prompt for any unresolved CRITICAL
-  finding; user must resolve, log a written exception, or type
-  `ACKNOWLEDGE` exactly. `ACKNOWLEDGE` proceeds with audit trail in
-  `decisions.md` + `state.json.deviations[]` + ship summary banner.
-- The reviewer LLM may miss violations. **Project CI is the real
-  enforcement** in M3. M4 will add Detection-driven BLOCK gates that close
-  the agent-side gap.
+Every FORGE feature lives in `.forge/features/<id>/` with a small set of contracts:
 
-**Delta proposals (M3).** Once a capability has shipped, change it via `/forge:change` instead of forking a new feature. The skill drafts a proposal under `.forge/changes/<id>/`, validates the structural shape via `/forge:validate --target delta`, and the user flips frontmatter to `status: approved`. Merging the change happens at `/forge:ship --change <id>`, which delegates to `tools.archive.merge_delta_proposal` — a transactional helper that snapshots the canonical SPEC.md and the proposal, applies the ADD/REMOVE/MODIFY ops in memory, validates the merged body against the capability-spec contract, runs a status-flip hook, atomic-writes the merged canonical, and archives the change folder. Any failure rolls back via the snapshots. `/forge:spec` runs a capability scan on every idea and routes to `/forge:change` when the slug already exists.
+- `SPEC.md` — the behavior contract
+- `RESEARCH.md` — optional, for research tier and above
+- `UNDERSTANDING.md` — output of the crucible
+- `PLAN.md` — file-bound vertical slices and waves
+- `REVIEW.plan.md` / `REVIEW.code.md` — per-target review findings and convergence cycles
+- `VERIFICATION.md` — three-layer verification record
+- `decisions.md` — running log of decisions and rationale
+- `state.json` — phase / slice / wave state for resumption
 
-**Pre-spec phases (M3 P4).** Full-tier features get two phases ahead of `/forge:spec`: `/forge:refine` runs a Socratic vague-idea collapse (max 5 rounds), persists the synthesized paragraph to `state.json.refined_idea`, and increments `routing.refine_attempts`; `/forge:domain` runs after spec to populate the `# Domain` glossary in-place from SPEC.md Intent + Scenarios. `/forge:spec` consumes `state.json.refined_idea` as Intent draft when present and accepts a `_TBD: filled by /forge:domain_` placeholder in `# Domain` for full-tier features. The full-tier walk is `do → refine → spec → domain → scenarios → plan → ...`. **Full-tier bootstrap caveat (until P6.2):** adaptive routing for `/forge:do --full` lands in M3 P6.2; until then full-tier features run the slash commands directly. `/forge:refine` does NOT create the feature folder — `/forge:spec` is the only command that scaffolds `.forge/features/<id>/`. Pass an idea via `/forge:refine [--feature <id>] "<idea text>"` against an existing feature already at `current_phase == "refine"`, or wait for P6.2. **Full-tier entry path:** the default `templates/feature/state.json` seeds `current_phase: "spec"`, so reaching `/forge:refine` from a clean repo today requires hand-creating `.forge/features/<YYYY-MM-DD-slug>/state.json` with `current_phase: "refine"`, `tier: "full"`, and a complete `routing` block (`idea`, `final_tier`, `decided_at` — see `schemas/state.schema.json` for the exact shape) before the slash command can run. The routing block is mandatory; `tools.state.increment_refine_attempts` raises `StateError` when it is absent.
+Canonical capability specs live in `.forge/specs/<capability>/SPEC.md`. Feature specs are working artifacts and are merged or archived against canonical specs at ship time. Changes to shipped capabilities flow through OpenSpec-style delta proposals under `.forge/changes/<id>/proposal.md` via `/forge:change`.
 
-**Adaptive routing (M3 P6.1).** `/forge:do "<idea>" [--focused | --standard]` is the canonical entry point for the focused and standard tiers. The skill prints a one-line secrets warning before persisting `routing.idea` (the idea text lands verbatim in `state.json.routing.idea` — sensitive content like tokens or passwords is discouraged), runs Constitution and health preflights, runs the capability scan with the suffix-disambig contract (`<slug>-v2`-style suffix or route to `/forge:change`; proceed-as-new without a suffix is NOT offered), proposes a tier + phase list via the LLM, then seeds the feature folder via the `tools.routing.seed_routed_feature` Python entry helper (which composes `tools.archive.create_feature_folder` + `tools.state.record_routing_decision` with `schema_path` so an invalid payload refuses before disk mutation, and invokes `tools.archive.cleanup_seeded_feature` on any post-seed exception). The dispatch literal is locked: `Next: /forge:spec --feature <feature_id>`. `--full` raises `NotImplementedError("--full routing ships in M3 P6.2")` and leaves no folder behind; full-tier adaptive routing (and the refine + domain branch wiring) ships in M3 P6.2.
+A project-wide `.forge/CONSTITUTION.md` carries CRITICAL / SHOULD / MAY articles surfaced at every phase entry and gated at ship time.
 
 ---
 
 ## Install (Claude Code)
 
-_Full plugin install is coming after M1 ships._ Until then:
-
-1. Clone this repo somewhere local.
+1. Clone this repo locally.
 2. Reference it via your Claude Code plugin path (see [Claude Code plugin docs](https://code.claude.com/docs/en/plugins-reference)).
-3. The slash commands `/forge:spec`, `/forge:execute`, `/forge:verify` light up once the plugin is loaded.
+3. The `/forge:*` slash commands light up once the plugin is loaded.
 
-A formal install path (`claude plugins install …`) ships with M1.
-
----
+A formal `claude plugins install …` path is in progress.
 
 ## Use outside Claude Code
 
-`AGENTS.md` at the repo root is a portable discovery manifest. Cursor, Aider, and Codex consume the same plain-markdown skills and commands. Full portability validation lands in M5; the markdown source is already portable today.
+`AGENTS.md` at the repo root is a portable discovery manifest. Cursor, Aider, and Codex consume the same plain-markdown skills and commands. Full portability validation is in progress; the markdown source is portable today.
 
 ---
 
 ## Configuration
 
-Per-feature state lives in `.forge/features/<id>/state.json` (created by `/forge:spec`). Project-wide configuration (default tier, cross-AI provider, context-budget overrides, auto-escalation rules) is planned for a later milestone — not present in M1.
+Per-feature state lives in `.forge/features/<id>/state.json` (created by `/forge:do` or `/forge:spec`). Project-wide configuration (default tier, cross-AI provider, context-budget overrides, auto-escalation rules) is on the roadmap.
 
-The tooling itself (state machine, frontmatter linter, schema validator) is a small Python package shipped in `tools/`.
+The tooling itself (state machine, frontmatter linter, schema validator, archive helpers) is a small Python package shipped in `tools/`.
 
 ---
 
 ## Project layout
 
-```
+```text
 forge/
 ├── .claude-plugin/plugin.json   Claude Code manifest
 ├── AGENTS.md                    portable discovery manifest
 ├── README.md                    you are here
 ├── commands/                    /forge:* slash commands
 ├── skills/                      ambient + invokable skills
-├── hooks/                       PreToolUse hooks (real budget enforcement)
+├── hooks/                       PreToolUse hooks (budget enforcement)
 ├── templates/feature/           per-feature artifact templates
 ├── schemas/                     JSON Schemas for state and frontmatter
 ├── tools/                       Python: state machine, linters, schema validator
@@ -211,9 +174,7 @@ forge/
 
 ## Contributing
 
-FORGE is in early active development. Issues and feedback are welcome. Pull requests are accepted once the M1 reference fixture lands — the fixture defines the contract for what "passing" means.
-
----
+FORGE is in early active development. Issues and feedback are welcome.
 
 ## License
 

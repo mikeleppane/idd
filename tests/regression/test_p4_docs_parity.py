@@ -37,10 +37,3 @@ def test_agents_md_lifecycle_prose_has_p4_footprint() -> None:
     assert "increment_refine_attempts" in text, (
         "AGENTS.md lifecycle prose is missing 'increment_refine_attempts' (M3 P4 footprint)."
     )
-
-
-def test_readme_has_pre_spec_phases_callout() -> None:
-    text = _read(README_PATH)
-    assert "Pre-spec phases" in text, "README.md is missing 'Pre-spec phases' callout."
-    assert "/forge:refine" in text, "README.md is missing '/forge:refine' in callout."
-    assert "/forge:domain" in text, "README.md is missing '/forge:domain' in callout."

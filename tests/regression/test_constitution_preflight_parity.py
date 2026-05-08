@@ -66,11 +66,3 @@ def test_forge_constitution_skill_exists() -> None:
     text = skill.read_text(encoding="utf-8")
     assert "load_and_filter" in text
     assert "disable-model-invocation: true" in text
-
-
-def test_readme_documents_m3_constitution_limitations() -> None:
-    text = Path("README.md").read_text(encoding="utf-8")
-    assert "M3 Constitution limitations" in text or "Constitution (M3)" in text, (
-        "README must surface the advisory-only nature of M3 Constitution "
-        "enforcement (D-4 risk disclosure)"
-    )
