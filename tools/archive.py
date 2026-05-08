@@ -13,7 +13,17 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+import yaml
+
+from tools.constitution_amend import atomic_replace
+from tools.delta_merge import apply_delta_ops, parse_proposal_body
 from tools.validate._feature_layout import _ORPHAN_FEATURE_FILES
+from tools.validate._finding import EXIT_NONZERO_SEVERITIES, Finding
+from tools.validate.delta import validate_delta
+from tools.validate.spec_structural import (
+    validate_capability_spec_sections,
+    validate_frontmatter,
+)
 
 _CAPABILITY_RE = re.compile(r"^[a-z0-9-]+$")
 # Schema-aligned slug: must start with alnum, at least 3 chars total.
@@ -21,6 +31,8 @@ _CAPABILITY_RE = re.compile(r"^[a-z0-9-]+$")
 # delta-proposal-frontmatter.schema.json:affects_capability.
 _CAPABILITY_SLUG_SCHEMA_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,}$")
 _FEATURE_ID_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9-]+$")
+# Schema-aligned change id: strict month/day, schema-aligned slug suffix.
+_CHANGE_ID_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9][a-z0-9-]{2,}$")
 
 # Minimum token length to survive the content-word filter (step 5 of slug_from_idea).
 _SLUG_MIN_TOKEN_LEN: int = 2
@@ -254,6 +266,33 @@ def _validate_feature_id(feature_id: str) -> None:
         raise ArchiveError(f"invalid feature id: {feature_id!r}")
 
 
+def _validate_change_id(change_id: str) -> None:
+    if not _CHANGE_ID_RE.fullmatch(change_id):
+        raise ArchiveError(f"invalid change id: {change_id!r}")
+
+
+def _run_validator(
+    fn: Callable[[Path], list[Finding]],
+    path: Path,
+    label: str,
+) -> None:
+    """Run a validator function; raise ArchiveError if any finding's severity is in EXIT_NONZERO_SEVERITIES.
+
+    Args:
+        fn: Validator callable that accepts a Path and returns a list of Finding records.
+        path: Path to pass to the validator.
+        label: Human-readable label used in the ArchiveError message on failure.
+
+    Raises:
+        ArchiveError: When any finding has a severity in EXIT_NONZERO_SEVERITIES.
+    """
+    findings = fn(path)
+    blockers = [f for f in findings if f.severity in EXIT_NONZERO_SEVERITIES]
+    if blockers:
+        details = "; ".join(f"{f.severity}: {f.message}" for f in blockers)
+        raise ArchiveError(f"{label} validation failed: {details}")
+
+
 def archive_feature(repo_root: Path, feature_id: str) -> Path:
     """Move .forge/features/<id>/ to .forge/features/archive/<id>/.
 
@@ -468,3 +507,254 @@ def ship_feature(
             f"ship_feature: archive failed; canonical spec rolled back: {exc}",
         ) from exc
     return canonical, archived
+
+
+_PROPOSAL_FRONTMATTER_RE = re.compile(r"^---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
+
+
+def _read_proposal_frontmatter(proposal_path: Path) -> dict[str, object]:
+    """Parse and return proposal.md YAML frontmatter as a dict.
+
+    Uses the same ``---`` block + ``yaml.safe_load`` path as
+    ``tools.validate._frontmatter`` for consistent behaviour.
+
+    Raises:
+        ArchiveError: When the frontmatter block is absent or malformed.
+    """
+    text = proposal_path.read_text(encoding="utf-8")
+    match = _PROPOSAL_FRONTMATTER_RE.match(text)
+    if not match:
+        raise ArchiveError(f"proposal frontmatter missing or malformed: {proposal_path}")
+    try:
+        parsed = yaml.safe_load(match.group(1))
+    except yaml.YAMLError as exc:
+        raise ArchiveError(f"proposal frontmatter YAML error: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ArchiveError(
+            f"proposal frontmatter must be a YAML mapping, got {type(parsed).__name__}"
+        )
+    return parsed
+
+
+def _validate_merged_body(change_folder: Path, merged_body: str) -> None:
+    """Write merged body to a temp file, validate it, and clean up.
+
+    Raises:
+        ArchiveError: When the merged body fails frontmatter or sections validation.
+    """
+    tmp = change_folder / "canonical-merged.tmp.md"
+    tmp.write_text(merged_body, encoding="utf-8")
+    try:
+        _run_validator(
+            lambda p: validate_frontmatter(p, kind="capability-spec"),
+            tmp,
+            "merged canonical frontmatter",
+        )
+        _run_validator(validate_capability_spec_sections, tmp, "merged canonical sections")
+    except ArchiveError:
+        tmp.unlink(missing_ok=True)
+        raise
+    tmp.unlink(missing_ok=True)
+
+
+def _run_hook(
+    hook: Callable[[Path], None],
+    change_folder: Path,
+    proposal_snapshot: Path,
+    proposal_path: Path,
+) -> None:
+    """Run pre_archive_hook; restore proposal.md and re-raise on failure.
+
+    Raises:
+        ArchiveError: Wrapping the original hook exception after rollback.
+    """
+    try:
+        hook(change_folder)
+    except Exception as orig:
+        proposal_snapshot.replace(proposal_path)
+        raise ArchiveError(f"pre_archive_hook failed: {orig!r}") from orig
+
+
+def _write_canonical(
+    canonical_spec: Path,
+    merged_body: str,
+    proposal_snapshot: Path,
+    proposal_path: Path,
+) -> None:
+    """Atomic-replace canonical SPEC.md; restore proposal.md on failure.
+
+    Raises:
+        ArchiveError: Wrapping the original exception after rollback.
+    """
+    try:
+        atomic_replace(canonical_spec, merged_body)
+    except Exception as orig:
+        proposal_snapshot.replace(proposal_path)
+        raise ArchiveError(f"atomic_replace of canonical spec failed: {orig!r}") from orig
+
+
+def _move_to_archive(
+    change_folder: Path,
+    archive_target: Path,
+    canonical_spec: Path,
+    canonical_snapshot: Path,
+    proposal_snapshot: Path,
+    proposal_path: Path,
+) -> None:
+    """Move change folder to archive; restore canonical + proposal on failure.
+
+    Raises:
+        ArchiveError: Wrapping the original exception after rollback.
+    """
+    archive_root = archive_target.parent
+    archive_root.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.move(str(change_folder), str(archive_target))
+    except Exception as orig:
+        shutil.copy2(canonical_snapshot, canonical_spec)
+        proposal_snapshot.replace(proposal_path)
+        shutil.rmtree(archive_target, ignore_errors=True)
+        raise ArchiveError(f"archive move failed: {orig!r}") from orig
+
+
+def _preflight_merge(
+    repo_root: Path,
+    change_id: str,
+    capability: str,
+) -> tuple[Path, Path, Path, Path]:
+    """Run all preflight checks for merge_delta_proposal.
+
+    Returns:
+        (change_folder, proposal_path, canonical_spec, archive_target)
+
+    Raises:
+        ArchiveError: On any preflight violation.
+    """
+    _validate_change_id(change_id)
+    _validate_capability(capability)
+
+    change_folder = repo_root / ".forge" / "changes" / change_id
+    proposal_path = change_folder / "proposal.md"
+
+    if not proposal_path.is_file():
+        raise ArchiveError(f"proposal not found: {proposal_path}")
+
+    fm = _read_proposal_frontmatter(proposal_path)
+
+    status = fm.get("status")
+    if status != "approved":
+        raise ArchiveError(
+            f"proposal status must be 'approved' to merge, got {status!r}: {proposal_path}"
+        )
+
+    affects = fm.get("affects_capability")
+    if affects != capability:
+        raise ArchiveError(
+            f"proposal affects_capability {affects!r} does not match capability arg {capability!r}"
+        )
+
+    canonical_spec = repo_root / ".forge" / "specs" / capability / "SPEC.md"
+    if not canonical_spec.is_file():
+        raise ArchiveError(f"canonical spec not found: {canonical_spec}")
+
+    archive_target = repo_root / ".forge" / "changes" / "archive" / change_id
+    if archive_target.exists():
+        raise ArchiveError(f"archive already exists at {archive_target}")
+
+    _run_validator(validate_delta, proposal_path, "delta proposal")
+
+    return change_folder, proposal_path, canonical_spec, archive_target
+
+
+def merge_delta_proposal(
+    repo_root: Path,
+    change_id: str,
+    capability: str,
+    pre_archive_hook: Callable[[Path], None] | None = None,
+) -> tuple[Path, Path]:
+    """Atomically merge a delta proposal into the canonical capability spec and archive it.
+
+    Transactional, all-or-nothing.  Includes proposal.md status flip in the
+    transaction — any mid-flight failure restores both the canonical spec and
+    the proposal via pre-committed snapshot files.
+
+    Preflight (all checked before any mutation):
+        1. Validate ``change_id`` against the strict change-id regex.
+        2. Validate ``capability`` slug.
+        3. ``proposal.md`` exists at ``.forge/changes/<change_id>/proposal.md``.
+        4. Frontmatter ``status == "approved"``.
+        5. Frontmatter ``affects_capability == capability`` arg.
+        6. ``.forge/specs/<capability>/SPEC.md`` exists.
+        7. ``.forge/changes/archive/<change_id>/`` does NOT exist.
+        8. ``validate_delta(proposal_path)`` returns no BLOCK/HIGH findings.
+
+    Mutation order (locked per plan D-7):
+        1. Snapshot canonical SPEC.md to ``canonical-pre.md`` in change folder.
+        2. Snapshot proposal.md to ``proposal-pre.md`` in change folder.
+        3. Apply ops via ``parse_proposal_body`` + ``apply_delta_ops`` in memory.
+        4. Validate merged body (write to ``canonical-merged.tmp.md``, run
+           ``validate_frontmatter`` + ``validate_capability_spec_sections``).
+           Any BLOCK/HIGH → discard merge; canonical untouched; raise.
+        5. Run ``pre_archive_hook(change_folder)`` if provided.  Hook failure →
+           restore proposal.md; re-raise wrapped as ``ArchiveError``.
+        6. Atomic-replace canonical SPEC.md via ``atomic_replace``.  Failure →
+           restore proposal.md; re-raise wrapped as ``ArchiveError``.
+        7. Move change folder via ``shutil.move`` to archive.  Failure →
+           restore canonical + proposal.md; clean partial archive; re-raise.
+
+    Args:
+        repo_root: Repository root containing the ``.forge/`` tree.
+        change_id: Change folder name (YYYY-MM-DD-slug form, schema-aligned slug).
+        capability: Capability slug (lowercase letters, digits, hyphens).
+        pre_archive_hook: Optional callback run after merged-body validation and
+            before the archive move, given the live ``change_folder`` path.  The
+            default hook in T6 (``_mark_change_merged_hook``) flips proposal.md
+            ``status: approved`` to ``merged``.  Any exception is wrapped in
+            ``ArchiveError`` after proposal.md is restored from its snapshot.
+
+    Returns:
+        ``(canonical_spec_path, archive_path)`` on success.  Snapshot files
+        (``canonical-pre.md``, ``proposal-pre.md``) ride into the archive
+        folder for forensics and future ``/forge:undo`` (M4).
+
+    Raises:
+        ArchiveError: On any preflight or mutation failure.  Hook exceptions are
+            wrapped in ``ArchiveError`` after rollback.
+    """
+    change_folder, proposal_path, canonical_spec, archive_target = _preflight_merge(
+        repo_root, change_id, capability
+    )
+
+    # Steps 1 + 2: snapshots
+    canonical_snapshot = change_folder / "canonical-pre.md"
+    proposal_snapshot = change_folder / "proposal-pre.md"
+    shutil.copy2(canonical_spec, canonical_snapshot)
+    shutil.copy2(proposal_path, proposal_snapshot)
+
+    # Step 3: apply ops in memory
+    proposal_text = proposal_path.read_text(encoding="utf-8")
+    canonical_text = canonical_spec.read_text(encoding="utf-8")
+    ops = parse_proposal_body(proposal_text)
+    merged_body = apply_delta_ops(canonical_text, ops)
+
+    # Step 4: validate merged body
+    _validate_merged_body(change_folder, merged_body)
+
+    # Step 5: pre_archive_hook
+    if pre_archive_hook is not None:
+        _run_hook(pre_archive_hook, change_folder, proposal_snapshot, proposal_path)
+
+    # Step 6: atomic-replace canonical SPEC.md
+    _write_canonical(canonical_spec, merged_body, proposal_snapshot, proposal_path)
+
+    # Step 7: move change folder to archive
+    _move_to_archive(
+        change_folder,
+        archive_target,
+        canonical_spec,
+        canonical_snapshot,
+        proposal_snapshot,
+        proposal_path,
+    )
+
+    return canonical_spec, archive_target
