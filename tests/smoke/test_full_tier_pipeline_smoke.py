@@ -107,7 +107,7 @@ def test_full_tier_pipeline_happy_walk(tmp_path: Path) -> None:
     assert "decided_at" in payload["routing"]
     assert payload["refined_idea"].startswith("Ship a percentage-rollout flag")
 
-    assert next_phase_command(payload) is None or next_phase_command(payload) == "/forge:spec"
+    assert next_phase_command(payload) == "/forge:spec"
 
     complete_phase(state_path, "refine", schema_path=SCHEMA_PATH)
     start_phase(state_path, "spec", schema_path=SCHEMA_PATH)
@@ -135,6 +135,8 @@ def test_full_tier_pipeline_happy_walk(tmp_path: Path) -> None:
 
 def test_full_tier_round_cap_auto_mode_logs_deviation_and_advances(tmp_path: Path) -> None:
     state_path = _seed_full_tier_at_refine(tmp_path, idea="ambiguous compound idea")
+    decisions_path = state_path.parent / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
 
     for expected in range(1, 6):
         assert increment_refine_attempts(state_path, schema_path=SCHEMA_PATH) == expected
@@ -150,6 +152,12 @@ def test_full_tier_round_cap_auto_mode_logs_deviation_and_advances(tmp_path: Pat
         cause="Refine round cap reached",
         resolution="proceeding with best-effort refinement",
     )
+    with decisions_path.open("a", encoding="utf-8") as fh:
+        fh.write(
+            "\n## 2026-05-08 — Refine round cap reached\n\n"
+            "Refine phase exhausted the 5-round cap without convergence; "
+            "proceeding with best-effort refinement.\n",
+        )
 
     complete_phase(state_path, "refine", schema_path=SCHEMA_PATH)
     start_phase(state_path, "spec", schema_path=SCHEMA_PATH)
@@ -162,6 +170,14 @@ def test_full_tier_round_cap_auto_mode_logs_deviation_and_advances(tmp_path: Pat
         for d in payload["deviations"]
     )
     assert payload["refined_idea"].startswith("Best-effort")
+
+    decisions_text = decisions_path.read_text(encoding="utf-8")
+    assert "round cap reached" in decisions_text, (
+        "Auto-mode round-cap must mirror the deviation in decisions.md"
+    )
+    assert "best-effort refinement" in decisions_text, (
+        "decisions.md entry must record the resolution"
+    )
 
 
 # ---------------------------------------------------------------------------
