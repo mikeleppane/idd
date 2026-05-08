@@ -33,7 +33,13 @@ def _seed_spec(folder: Path, capability: str = "x") -> None:
 
 
 def test_clean_repo_returns_no_findings(tmp_path: Path) -> None:
-    _seed_state(tmp_path / ".forge" / "features" / "2026-05-04-clean")
+    # Post M3 P6.1 T0.5: a current_phase=spec/refine + in_progress + no-commits
+    # seed feature is itself an orphan candidate (LOW finding), so a "clean"
+    # feature must have at least one commit recorded.
+    _seed_state(
+        tmp_path / ".forge" / "features" / "2026-05-04-clean",
+        commits=[{"sha": "abc1234", "subject": "feat: stuff", "phase": "spec"}],
+    )
     _seed_spec(tmp_path / ".forge" / "features" / "2026-05-04-clean", "clean")
 
     findings = validate.validate_health(tmp_path)

@@ -85,10 +85,15 @@ def test_happy_path_state_json_only(tmp_path: Path) -> None:
 
 
 def test_refuse_current_phase_not_refine(tmp_path: Path) -> None:
-    """current_phase='spec' → returns False, folder intact."""
+    """current_phase advanced past the seed-phase set → returns False, folder intact.
+
+    Post M3 P6.1 T0.5 the predicate accepts both ``refine`` and ``spec`` as
+    seed phases.  This test now asserts refusal once the phase has advanced
+    PAST those seeds (plan, execute, ...).
+    """
     feature_id = "2026-05-08-wrong-phase"
     folder = tmp_path / ".forge" / "features" / feature_id
-    _write_state(folder, current_phase="spec", phases={"spec": {"status": "in_progress"}})
+    _write_state(folder, current_phase="plan", phases={"plan": {"status": "in_progress"}})
     (folder / "SPEC.md").write_text("# SPEC\n", encoding="utf-8")
 
     result = cleanup_orphan_feature(tmp_path, feature_id)
@@ -247,3 +252,37 @@ def test_permission_error_propagates(tmp_path: Path) -> None:
         pytest.raises(PermissionError, match="simulated permission denied"),
     ):
         cleanup_orphan_feature(tmp_path, feature_id)
+
+
+# ---------------------------------------------------------------------------
+# Generalized predicate parity (T0.5) — refine path still works post-generalization
+# ---------------------------------------------------------------------------
+
+
+def test_cleanup_orphan_feature_still_works_for_refine_phase(tmp_path: Path) -> None:
+    """Generalizing _orphan_conditions_met to accept refine|spec must not break refine."""
+    feature_id = "2026-05-08-refine-still-works"
+    folder = _seed_orphan(tmp_path, feature_id)
+    assert folder.is_dir()
+
+    result = cleanup_orphan_feature(tmp_path, feature_id)
+
+    assert result is True
+    assert not folder.exists()
+
+
+def test_cleanup_orphan_feature_warn_label_says_cleanup_orphan_feature(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """WARN line label parity: cleanup_orphan_feature's stderr must name itself."""
+    feature_id = "2026-05-08-orphan-label"
+    folder = tmp_path / ".forge" / "features" / feature_id
+    _write_state(folder, commits=["abc1234"])
+
+    result = cleanup_orphan_feature(tmp_path, feature_id)
+
+    assert result is False
+    captured = capsys.readouterr()
+    assert "cleanup_orphan_feature" in captured.err
+    assert "cleanup_seeded_feature" not in captured.err
