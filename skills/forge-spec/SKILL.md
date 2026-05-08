@@ -16,6 +16,38 @@ Produce a `.forge/features/<id>/SPEC.md` that obeys the §7.1 template and exits
 - `.forge/intel/` if present (read on demand, never preloaded wholesale).
 - Existing related specs in `.forge/features/*/SPEC.md` (only when explicitly relevant).
 
+## Mode resolution
+
+Two entry paths converge on this skill: the **M2 fallback** (direct
+`/forge:spec "<idea>"` invocation, no upstream routing) and the **`/forge:do`
+pre-seed** branch (M3 P6.1+, the routing entry-point seeded the feature
+folder + `state.json.routing` block before dispatching here).
+
+**Pre-seed predicate (locked, four-conjunct AND).** The pre-seed branch
+fires only when **all four** of the following hold; otherwise the M2
+fallback path runs:
+
+1. `--feature <id>` resolved (the user invoked `/forge:spec --feature <id>`,
+   no `<idea>` text). The bare `/forge:spec --feature <id>` form is the
+   handoff signature `/forge:do` prints as `Next: /forge:spec --feature
+   <feature_id>`.
+2. `state.json` parses successfully — i.e., the file exists and `state.json parses` cleanly as valid JSON.
+3. `state.json.routing` block is present (set by `/forge:do` via
+   `tools.state.record_routing_decision`).
+4. `state.json.current_phase == "spec"` AND `state.json.phases.spec.status
+   == "in_progress"`. Both must hold; either failing routes to the M2
+   fallback. (The single conjunct combining both phase fields is treated
+   as one conjunct of the four.)
+
+All four conjuncts must hold for the pre-seed branch to fire. If any
+conjunct fails — including the routing block being absent — the **M2
+fallback** branch runs all steps in order as today (forge-spec creates
+the folder itself; `routing` block stays absent; `start_phase("spec")`
+runs as today's behavior).
+
+**Pre-seed branch behavior.** When the predicate holds, **skip steps 1, 2, 3, and 4** (capability scan, feature-id compute, collision check, folder create) — `/forge:do` already ran the scan, derived the slug, and created the folder via `tools.archive.create_feature_folder`. Entry resumes at **step 5** (Initialize SPEC.md from the existing template files in the pre-seeded folder). The Step 8 phase transition also picks
+up a guard described below.
+
 ## Steps
 
 1. **Capability scan (new-feature path only, all tiers, runs first).**
@@ -44,7 +76,10 @@ Produce a `.forge/features/<id>/SPEC.md` that obeys the §7.1 template and exits
 5a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<idea>, files_in_scope=[])`. When `articles[]` is non-empty, include them in the spec-author subagent's dispatch budget under the `articles` field. The author MUST keep CRITICAL articles' rules in view while drafting Intent + Negative Requirements.
 6. **Fill the template — one section at a time, asking only when ambiguous.**
    - **Frontmatter.** Set `id`, `status: draft`, `tier`, `created`, `capability` (stable handle).
-   - **Intent.** One paragraph. WHY. Drill until the *why* is concrete. When `state.json.refined_idea` is non-empty (set by `/forge:refine` on full-tier features), seed the Intent draft from it — lift the paragraph verbatim, then refine for spec voice. When absent, draft Intent directly from the user's idea text (existing focused/standard behavior).
+   - **Intent.** One paragraph. WHY. Drill until the *why* is concrete. **Idea-source precedence (locked, three-level)** — consume sources in order, falling back when the prior source is absent:
+     1. `state.json.refined_idea` — set by `/forge:refine` on full-tier features. When non-empty, seed the Intent draft from it: lift the paragraph verbatim, then refine for spec voice. (Empty for focused/standard tiers; no-op on the P6.1 pre-seed path.)
+     2. `state.json.routing.idea` — set by `/forge:do` on the focused/standard pre-seed path (P6.1). When `refined_idea` is absent but `routing.idea` is present, seed the Intent draft from `routing.idea` and refine for spec voice. This is the secondary source — slotted between `refined_idea` (primary) and the CLI `<idea>` argument (tertiary).
+     3. CLI `<idea>` argument — the M2 direct-invocation path. When both `refined_idea` AND `routing.idea` are absent, draft Intent directly from the user's idea text passed positionally to `/forge:spec` (existing focused/standard M2 behavior).
    - **Context.** Background and constraints. Reference RESEARCH.md only if it already exists.
    - **Domain.** Glossary table. Aim for 4–8 terms; more is usually noise. Add a Mermaid sketch only if it clarifies a non-obvious relationship. **Full-tier exception:** when the feature's tier is `full`, leaving `# Domain` as a single-line placeholder `_TBD: filled by /forge:domain_` is acceptable — the dedicated `/forge:domain` phase populates the section after spec exits. For focused and standard tiers, Domain MUST be filled at spec time (existing behavior).
    - **Codebase Anchors.** Concrete `path:Symbol` pointers a subagent can use without reading the whole repo.
@@ -66,7 +101,11 @@ Produce a `.forge/features/<id>/SPEC.md` that obeys the §7.1 template and exits
      - Open Questions count is 0.
      - Ambiguity score (heuristic): count words like "should", "might", "TBD", "etc." in non-list paragraphs. > 3 = block; refine.
      - **Full-tier Domain-placeholder allowance.** When the feature's tier is `full` AND the `# Domain` section body matches the canonical placeholder, the inline check "Every Term in Domain appears at least once in Intent / Scope / Scenarios" is **skipped** — `/forge:domain` will populate Domain in the next phase. All other gates (NR placement, AC-falsifiability, scenarios cap, Open Questions count, weasel-word ambiguity score) still apply. **Comparator (locked):** strip leading and trailing whitespace (including any trailing newline) from the section body, then test against the regex `^_TBD: filled by /forge:domain_?$` — the trailing italic underscore is optional (markdown-italic rendering vs no-rendering both accepted), but no other text, comments, or partial fills are accepted. Backslash-escaped underscores (`\_TBD: ... \_`) do NOT match and are treated as missing Domain content.
-8. **Update `state.json`:** call `tools.state.complete_phase(path, "spec")`, then `tools.state.start_phase(path, next_phase)`. **Resolve `next_phase` deterministically from `state.json.tier`** (mirrors `tools.state._FOCUSED_NEXT` / `_STANDARD_NEXT` / `_FULL_NEXT`):
+8. **Update `state.json`:** call `tools.state.complete_phase(path, "spec")`, then `tools.state.start_phase(path, next_phase)`.
+
+   **Pre-seed `start_phase` guard (locked).** When the pre-seed branch fired (predicate held on entry — `routing` block present AND `current_phase == "spec"` AND `phases.spec.status == "in_progress"`), do **NOT** call `start_phase("spec")` at any point during this skill's execution. `/forge:do` already wrote `phases.spec.status: "in_progress"` (and the seed `started_at` timestamp) via `tools.archive.create_feature_folder`'s seed body, and re-calling `start_phase("spec")` here would clobber that seed `started_at`. Only the trailing `complete_phase("spec")` + `start_phase(<next per tier>)` runs at exit. (Historically `forge-spec` never called `start_phase("spec")` — it created the folder fresh — so the M2 fallback path is unaffected.)
+
+   **Resolve `next_phase` deterministically from `state.json.tier`** (mirrors `tools.state._FOCUSED_NEXT` / `_STANDARD_NEXT` / `_FULL_NEXT`):
    - when the feature's tier is `focused` → `next_phase = "execute"`
    - when the feature's tier is `standard` → `next_phase = "scenarios"`
    - when the feature's tier is `full` → `next_phase = "domain"` (the dedicated `/forge:domain` phase fills the `_TBD: filled by /forge:domain_` placeholder allowed in the Domain bullet above)

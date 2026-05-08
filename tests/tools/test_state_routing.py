@@ -683,3 +683,64 @@ def test_next_phase_command_returns_none_for_non_string_tier() -> None:
         "commits": [],
     }
     assert state.next_phase_command(payload) is None
+
+
+# ---------------------------------------------------------------------------
+# routing.idea length cap (M3 P6.1 T7 finding p6-1-L5)
+# ---------------------------------------------------------------------------
+
+
+def test_routing_idea_empty_rejected(tmp_path: Path, schemas_dir: Path) -> None:
+    """``routing.idea`` MUST satisfy ``minLength: 1``.
+
+    Without the cap, an empty string slipped through and produced a
+    contentless ``state.json.routing`` block (no recall value, no audit
+    trail).  Locks the schema-level minLength contract.
+    """
+    payload = _base_payload()
+    payload["routing"] = {
+        "idea": "",  # empty — must fail
+        "final_tier": "standard",
+        "decided_at": "2026-05-04T09:55:00Z",
+    }
+    target = tmp_path / "state.json"
+
+    with pytest.raises(state.StateError, match="schema"):
+        state.write_state(target, payload, schema_path=schemas_dir / "state.schema.json")
+
+    assert not target.exists()
+
+
+def test_routing_idea_too_long_rejected(tmp_path: Path, schemas_dir: Path) -> None:
+    """``routing.idea`` MUST satisfy ``maxLength: 4000`` (mirrors refined_idea).
+
+    Without the cap, a multi-MB paste would bloat ``state.json`` over the
+    feature lifetime.  Locks the schema-level maxLength contract.
+    """
+    payload = _base_payload()
+    payload["routing"] = {
+        "idea": "z" * 4001,  # one past the cap
+        "final_tier": "standard",
+        "decided_at": "2026-05-04T09:55:00Z",
+    }
+    target = tmp_path / "state.json"
+
+    with pytest.raises(state.StateError, match="schema"):
+        state.write_state(target, payload, schema_path=schemas_dir / "state.schema.json")
+
+    assert not target.exists()
+
+
+def test_routing_idea_at_cap_accepted(tmp_path: Path, schemas_dir: Path) -> None:
+    """Boundary: ``routing.idea`` of exactly 4000 chars passes."""
+    payload = _base_payload()
+    payload["routing"] = {
+        "idea": "z" * 4000,
+        "final_tier": "standard",
+        "decided_at": "2026-05-04T09:55:00Z",
+    }
+    target = tmp_path / "state.json"
+
+    state.write_state(target, payload, schema_path=schemas_dir / "state.schema.json")
+
+    assert len(json.loads(target.read_text(encoding="utf-8"))["routing"]["idea"]) == 4000

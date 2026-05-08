@@ -117,7 +117,7 @@
       "additionalProperties": false,
       "required": ["idea", "final_tier", "decided_at"],
       "properties": {
-        "idea": { "type": "string" },
+        "idea": { "type": "string", "minLength": 1, "maxLength": 4000 },
         "proposed_tier": { "type": "string", "enum": ["focused", "standard", "full"] },
         "final_tier": { "type": "string", "enum": ["focused", "standard", "full"] },
         "rationale": { "type": "string" },

@@ -18,7 +18,13 @@ import yaml
 
 from tools.constitution_amend import atomic_replace
 from tools.delta_merge import apply_delta_ops, parse_proposal_body
-from tools.validate._feature_layout import _ORPHAN_FEATURE_FILES
+from tools.state import (
+    VALID_TIERS,
+    _utc_now_iso,
+    feature_folder_exists,
+    write_state,
+)
+from tools.validate._feature_layout import _ORPHAN_FEATURE_FILES, _ORPHAN_SEED_PHASES
 from tools.validate._finding import EXIT_NONZERO_SEVERITIES, Finding
 from tools.validate.delta import validate_delta
 from tools.validate.spec_structural import (
@@ -161,19 +167,30 @@ def scan_existing_capabilities(repo_root: Path) -> list[str]:
     return sorted(d.name for d in specs_dir.iterdir() if d.is_dir() and (d / "SPEC.md").is_file())
 
 
+# _ORPHAN_SEED_PHASES is sourced from tools/validate/_feature_layout.py so the
+# orphan predicate stays in lock-step with health.py (M3 P6.1 T7 finding
+# p6-1-M1).  The set covers BOTH the original P5 refine-tier path
+# (cleanup_orphan_feature) AND the P6.1 focused/standard pre-seed path
+# written by /forge:do (cleanup_seeded_feature).
+
+
 def _orphan_conditions_met(folder: Path) -> bool:  # noqa: PLR0911
-    """Return True when the folder satisfies all three D-2a orphan conditions.
+    """Return True when the folder satisfies all three orphan conditions.
 
     Conditions (all must hold):
-      1. state.json.current_phase == "refine" AND phases.refine.status == "in_progress".
+      1. state.json.current_phase in {"refine", "spec"} AND
+         phases[current_phase].status == "in_progress".
       2. state.json.commits == [].
       3. Folder contents are a strict subset of _ORPHAN_FEATURE_FILES.
 
-    Does NOT raise on I/O failures — returns False so callers treat a broken
-    state.json as a non-orphan (safe default). The defensive predicate is
-    intentionally a flat sequence of independent guards (PLR0911 silenced):
-    each early-return marks a distinct precondition that must hold, and
-    flattening to one final boolean would obscure which condition failed.
+    Generalized in M3 P6.1 T0.5 to cover both the P5 refine-tier seed (used
+    by cleanup_orphan_feature) and the P6.1 focused/standard /forge:do
+    pre-seed (used by cleanup_seeded_feature).  Does NOT raise on I/O
+    failures — returns False so callers treat a broken state.json as a
+    non-orphan (safe default).  The defensive predicate is intentionally a
+    flat sequence of independent guards (PLR0911 silenced): each early-return
+    marks a distinct precondition that must hold, and flattening to one final
+    boolean would obscure which condition failed.
     """
     state_path = folder / "state.json"
     if not state_path.is_file():
@@ -185,14 +202,15 @@ def _orphan_conditions_met(folder: Path) -> bool:  # noqa: PLR0911
     if not isinstance(payload, dict):
         return False
 
-    # Condition 1: phase + status
-    if payload.get("current_phase") != "refine":
+    # Condition 1: phase + status (refine|spec x in_progress).
+    current_phase = payload.get("current_phase")
+    if current_phase not in _ORPHAN_SEED_PHASES:
         return False
     phases = payload.get("phases")
     if not isinstance(phases, dict):
         return False
-    refine_block = phases.get("refine")
-    if not isinstance(refine_block, dict) or refine_block.get("status") != "in_progress":
+    phase_block = phases.get(current_phase)
+    if not isinstance(phase_block, dict) or phase_block.get("status") != "in_progress":
         return False
 
     # Condition 2: no commits
@@ -208,20 +226,72 @@ def _orphan_conditions_met(folder: Path) -> bool:  # noqa: PLR0911
     return present.issubset(_ORPHAN_FEATURE_FILES)
 
 
+def _cleanup_via_predicate(repo_root: Path, feature_id: str, *, log_label: str) -> bool:
+    """Shared cleanup body for cleanup_orphan_feature and cleanup_seeded_feature.
+
+    Both public entry points share the same generalized predicate, the same
+    shutil.rmtree, and the same race-narrowing re-check.  Only the stderr
+    WARN label differs so log lines name the actual call site.
+
+    Args:
+        repo_root: Repository root containing the ``.forge/`` tree.
+        feature_id: Feature folder name in YYYY-MM-DD-slug form.  Caller must
+            already have run ``_validate_feature_id`` — this helper does NOT
+            re-validate.
+        log_label: Prefix used in stderr WARN lines (e.g.
+            ``"cleanup_orphan_feature"`` or ``"cleanup_seeded_feature"``).
+
+    Returns:
+        ``True`` on successful removal; ``False`` on any condition violation.
+    """
+    folder = repo_root / ".forge" / "features" / feature_id
+    if not folder.is_dir():
+        print(
+            f"WARN: {log_label}: {feature_id!r} is not a directory — skipping",
+            file=sys.stderr,
+        )
+        return False
+
+    # Preflight check.
+    if not _orphan_conditions_met(folder):
+        print(
+            f"WARN: {log_label}: {feature_id!r} does not meet orphan conditions "
+            f"(preflight) — skipping",
+            file=sys.stderr,
+        )
+        return False
+
+    # Race-narrowing re-check immediately before rmtree.
+    if not _orphan_conditions_met(folder):
+        print(
+            f"WARN: {log_label}: {feature_id!r} conditions changed before rmtree "
+            f"— aborting to avoid data loss",
+            file=sys.stderr,
+        )
+        return False
+
+    shutil.rmtree(folder)
+    return True
+
+
 def cleanup_orphan_feature(repo_root: Path, feature_id: str) -> bool:
     """Remove an orphan feature folder that has never advanced past the initial seed.
 
-    Validates ``feature_id`` slug, checks the three D-2a conditions via a shared
-    helper, re-checks them immediately before ``shutil.rmtree`` (race-narrowing),
-    then removes the folder.  All condition failures are logged to stderr and
-    return ``False``; only invalid ``feature_id`` raises ``ArchiveError``.
+    Validates ``feature_id`` slug, checks the generalized orphan conditions via
+    a shared helper, re-checks them immediately before ``shutil.rmtree``
+    (race-narrowing), then removes the folder.  All condition failures are
+    logged to stderr (label ``cleanup_orphan_feature``) and return ``False``;
+    only invalid ``feature_id`` raises ``ArchiveError``.
 
-    D-2a conditions (all three must hold):
-      1. ``state.json.current_phase == "refine"`` AND
-         ``phases.refine.status == "in_progress"``.
+    Conditions (all three must hold):
+      1. ``state.json.current_phase in {"refine", "spec"}`` AND
+         ``phases[current_phase].status == "in_progress"``.
       2. ``state.json.commits == []``.
       3. Folder contents are a strict subset of
          ``_ORPHAN_FEATURE_FILES = {"state.json", "SPEC.md", "decisions.md"}``.
+
+    Use ``cleanup_seeded_feature`` instead at the ``/forge:do`` integration
+    point so log lines name the right call site; the predicate is identical.
 
     Args:
         repo_root: Repository root containing the ``.forge/`` tree.
@@ -235,35 +305,167 @@ def cleanup_orphan_feature(repo_root: Path, feature_id: str) -> bool:
         Any unexpected I/O exception (``PermissionError``, disk error) propagates.
     """
     _validate_feature_id(feature_id)
+    return _cleanup_via_predicate(repo_root, feature_id, log_label="cleanup_orphan_feature")
+
+
+def cleanup_seeded_feature(repo_root: Path, feature_id: str) -> bool:
+    """Remove a ``/forge:do`` pre-seed feature folder that has never advanced.
+
+    Distinct call-site alias for :func:`cleanup_orphan_feature`.  Same
+    generalized predicate (``refine|spec x in_progress`` + no commits + folder
+    contents subset of ``_ORPHAN_FEATURE_FILES``), same race-narrowing
+    recheck, same ``shutil.rmtree``, but stderr WARN messages name
+    ``cleanup_seeded_feature`` so log lines point at the actual entry point
+    used by the focused / standard tier seed-cancel cleanup path (M3 P6.1).
+
+    Args:
+        repo_root: Repository root containing the ``.forge/`` tree.
+        feature_id: Feature folder name in YYYY-MM-DD-slug form.
+
+    Returns:
+        ``True`` on successful removal; ``False`` on any condition violation.
+
+    Raises:
+        ArchiveError: ``feature_id`` slug is malformed.
+        Any unexpected I/O exception (``PermissionError``, disk error) propagates.
+    """
+    _validate_feature_id(feature_id)
+    return _cleanup_via_predicate(repo_root, feature_id, log_label="cleanup_seeded_feature")
+
+
+_FEATURE_TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "feature"
+
+# Locked verbatim per M3 spec §5.3.2 step 6 + plan deviation #4.  Surfaces in
+# the seed state.json so health-validate flags `research` as intentionally
+# skipped rather than a missing phase.
+_RESEARCH_SKIPPED_ENTRY: dict[str, str] = {
+    "phase": "research",
+    "reason": "M3 deferred — manual research acceptable",
+}
+
+
+def _render_seed_spec_md(template: str, *, feature_id: str, tier: str) -> str:
+    """Substitute the four placeholders in templates/feature/SPEC.md.
+
+    The template body uses literal placeholder strings; the substitution is a
+    plain ``str.replace`` chain so callers cannot accidentally re-substitute a
+    later token into an already-rendered span.
+
+    Args:
+        template: Raw text of ``templates/feature/SPEC.md``.
+        feature_id: Validated YYYY-MM-DD-slug feature id.
+        tier: Validated tier name.
+
+    Returns:
+        Rendered SPEC.md text with frontmatter ``id``/``tier``/``created``/
+        ``capability`` populated from ``feature_id`` + ``tier``.
+    """
+    created = feature_id[:10]  # YYYY-MM-DD prefix
+    slug = feature_id[11:]  # everything after the date prefix
+    rendered = template
+    rendered = rendered.replace("<YYYY-MM-DD-slug>", feature_id)
+    rendered = rendered.replace("<focused|standard|full>", tier)
+    rendered = rendered.replace("<YYYY-MM-DD>", created)
+    rendered = rendered.replace("<stable-capability-handle>", slug)
+    return rendered
+
+
+def create_feature_folder(
+    repo_root: Path,
+    *,
+    feature_id: str,
+    tier: str,
+    schema_path: Path | None = None,
+) -> Path:
+    """Seed a fresh ``.forge/features/<feature_id>/`` folder for ``/forge:do``.
+
+    Composes the three ``templates/feature/`` files (state.json, SPEC.md,
+    decisions.md) into a new feature folder with substitutions for
+    ``feature_id`` and ``tier``.  ``current_phase`` is hard-locked to
+    ``"spec"`` for M3 P6.1 (P6.2 will reintroduce a parameter when full-tier
+    routing ships).
+
+    Per-file write is atomic via ``atomic_replace`` (tempfile +
+    ``Path.replace`` on the same directory — POSIX-rename semantics).
+    The multi-file folder seed is **best-effort, not transactional** — on any
+    per-file write failure (or schema refusal from ``write_state``), the
+    partial folder is removed via ``shutil.rmtree`` before the original
+    exception is re-raised.
+
+    The ``state.json`` body is built in memory and validated via
+    ``tools.state.write_state(..., schema_path=schema_path)`` so an invalid
+    seed payload refuses BEFORE the folder is left behind on disk.
+
+    State body shape (per spec §5.3.2 step 6 + plan deviation #4):
+
+      - ``feature_id`` / ``tier`` (validated above)
+      - ``current_phase = "spec"``
+      - ``phases.spec = {"status": "in_progress", "started_at": <utc-iso>}``
+      - ``skipped = [{"phase": "research", "reason": "M3 deferred — manual research acceptable"}]``
+      - ``deviations = []``
+      - ``commits = []``
+
+    The ``routing`` block is **not** written here — ``record_routing_decision``
+    writes it next as a separate validated step.
+
+    Args:
+        repo_root: Repository root containing the ``.forge/`` tree.
+        feature_id: Feature folder name in YYYY-MM-DD-slug form.
+        tier: One of ``VALID_TIERS`` (focused/standard/full).
+        schema_path: Optional path to ``schemas/state.schema.json``.  When
+            given, ``write_state`` validates the seed payload before any disk
+            mutation.
+
+    Returns:
+        Path to the new ``.forge/features/<feature_id>/`` folder.
+
+    Raises:
+        ArchiveError: ``feature_id`` slug malformed, ``tier`` not in
+            ``VALID_TIERS``, or the feature folder already exists.
+        StateError: Seed payload fails schema validation when
+            ``schema_path`` is given (folder rmtree'd before re-raise).
+        OSError: Per-file write failure (folder rmtree'd before re-raise).
+    """
+    _validate_feature_id(feature_id)
+    if tier not in VALID_TIERS:
+        raise ArchiveError(f"invalid tier: {tier!r}; must be one of {VALID_TIERS}")
+    if feature_folder_exists(repo_root, feature_id):
+        raise ArchiveError(f"feature folder already exists: {feature_id!r}")
 
     folder = repo_root / ".forge" / "features" / feature_id
-    if not folder.is_dir():
-        print(
-            f"WARN: cleanup_orphan_feature: {feature_id!r} is not a directory — skipping",
-            file=sys.stderr,
-        )
-        return False
+    folder.mkdir(parents=True, exist_ok=False)
 
-    # Preflight check.
-    if not _orphan_conditions_met(folder):
-        print(
-            f"WARN: cleanup_orphan_feature: {feature_id!r} does not meet orphan conditions "
-            f"(preflight) — skipping",
-            file=sys.stderr,
-        )
-        return False
+    try:
+        # state.json — validated before any disk write via write_state.
+        seed_state: dict[str, object] = {
+            "feature_id": feature_id,
+            "tier": tier,
+            "current_phase": "spec",
+            "phases": {"spec": {"status": "in_progress", "started_at": _utc_now_iso()}},
+            "skipped": [dict(_RESEARCH_SKIPPED_ENTRY)],
+            "deviations": [],
+            "commits": [],
+        }
+        write_state(folder / "state.json", seed_state, schema_path=schema_path)
 
-    # Race-narrowing re-check immediately before rmtree.
-    if not _orphan_conditions_met(folder):
-        print(
-            f"WARN: cleanup_orphan_feature: {feature_id!r} conditions changed before rmtree "
-            f"— aborting to avoid data loss",
-            file=sys.stderr,
-        )
-        return False
+        # SPEC.md — render template via four-placeholder substitution.
+        spec_template = (_FEATURE_TEMPLATES_DIR / "SPEC.md").read_text(encoding="utf-8")
+        spec_body = _render_seed_spec_md(spec_template, feature_id=feature_id, tier=tier)
+        atomic_replace(folder / "SPEC.md", spec_body)
 
-    shutil.rmtree(folder)
-    return True
+        # decisions.md — copy template byte-for-byte (no substitutions).
+        decisions_body = (_FEATURE_TEMPLATES_DIR / "decisions.md").read_text(encoding="utf-8")
+        atomic_replace(folder / "decisions.md", decisions_body)
+    except BaseException:
+        # Best-effort multi-file rollback.  Any failure mid-seed (schema
+        # refusal, per-file OSError, KeyboardInterrupt) removes the partial
+        # folder before re-raising so /forge:do callers never inherit a
+        # half-rendered feature.  ``ignore_errors=True`` keeps the cleanup
+        # itself from masking the original exception.
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+
+    return folder
 
 
 def _validate_capability(capability: str) -> None:

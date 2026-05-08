@@ -8,7 +8,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from ._feature_layout import _ORPHAN_FEATURE_FILES
+from ._feature_layout import _ORPHAN_FEATURE_FILES, _ORPHAN_SEED_PHASES
 from ._finding import Finding
 from ._frontmatter import (
     _build_validator,
@@ -88,22 +88,30 @@ def _check_feature_payload(
         return findings
 
     commits = payload.get("commits") or []
-    refine_block = phases.get("refine") if isinstance(phases, dict) else None
+    seed_phase_block = (
+        phases.get(current_phase)
+        if isinstance(phases, dict) and current_phase in _ORPHAN_SEED_PHASES
+        else None
+    )
     extra_files = [p for p in entry.iterdir() if p.name not in _ORPHAN_FEATURE_FILES]
     if (
-        current_phase == "refine"
-        and isinstance(refine_block, dict)
-        and refine_block.get("status") == "in_progress"
+        current_phase in _ORPHAN_SEED_PHASES
+        and isinstance(seed_phase_block, dict)
+        and seed_phase_block.get("status") == "in_progress"
         and not commits
         and not extra_files
     ):
+        # Helper hint differs by entry point: refine seeds come from
+        # /forge:refine (existing P5 path → cleanup_orphan_feature); spec
+        # seeds come from /forge:do focused/standard (P6.1 → cleanup_seeded_feature).
+        helper = "cleanup_orphan_feature" if current_phase == "refine" else "cleanup_seeded_feature"
         findings.append(
             Finding(
                 "LOW",
                 "health",
                 entry,
-                f"orphan feature folder {entry.name!r} (refine + no commits); "
-                f"run tools.archive.cleanup_orphan_feature(<id>) when ready",
+                f"orphan feature folder {entry.name!r} ({current_phase} + no commits); "
+                f"run tools.archive.{helper}(<id>) when ready",
             ),
         )
     return findings
