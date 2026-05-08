@@ -16,8 +16,11 @@ A literal `context_budget:` marker at column 0, followed by a JSON object. The m
 ```text
 context_budget:
 {
+  "phase": "execute",
   "spec_sections": ["<list of SPEC.md section names this task needs>"],
   "files_in_scope": ["<exact paths or globs>"],
+  "tests_in_scope": ["<test file paths the dispatch will create or modify>"],
+  "tdd_exception_ref": "<ADR-id, only when execute-phase tests_in_scope is empty>",
   "intel_files": ["<paths under .forge/intel/, or omit if none>"],
   "decisions_filter": "tag:<topic> | all | none",
   "prior_summaries": ["<slice-N.summary or wave-N.summary>"],
@@ -35,7 +38,15 @@ context_budget:
 }
 ```
 
-The hook validates only `files_in_scope` (non-empty array of bounded globs) and `forbidden` (non-empty array). The other keys are part of the FORGE contract but not hook-enforced — they are read by the dispatched subagent.
+The hook validates `files_in_scope` (non-empty array of bounded globs), `forbidden` (non-empty array), and the execute-phase `tests_in_scope` rule below. The other keys are part of the FORGE contract but not hook-enforced — they are read by the dispatched subagent.
+
+## Phase discriminator and TDD scope fields
+
+Three fields drive execute-phase TDD enforcement (M7 Decision 2). Schema reference: [`schemas/budget.schema.json`](../../schemas/budget.schema.json) — documentation only; the hook keeps a stdlib-only frozen literal copy of the phase value it cares about (`"execute"`).
+
+- **`phase`** *(optional but recommended)* — the FORGE phase under which this dispatch runs. Enum mirrors `current_phase` in `schemas/state.schema.json` (`refine`, `research`, `spec`, `domain`, `scenarios`, `plan`, `crucible`, `review`, `execute`, `verify`, `ship`, `harden`). Required to opt into execute-phase enforcement; absent or non-`execute` values leave `tests_in_scope` optional.
+- **`tests_in_scope`** *(string array)* — test files the subagent will create or modify. **Mandatory and non-empty when `phase == "execute"`**, unless `tdd_exception_ref` is set. The hook denies execute-phase dispatches that lack the field, set it to a non-array, or leave it empty without an exception. For non-execute phases the field is optional (but if present it must still be a list of strings).
+- **`tdd_exception_ref`** *(string)* — ADR id from `.forge/features/<id>/decisions.md` (`## TDD Exception: <ac-id>` heading) that justifies an empty `tests_in_scope` under execute phase. The validator `tools.validate.tdd_evidence` cross-checks that every AC the dispatch implements is listed in the named ADR — a budget-level exception cannot silently cover ACs the ADR does not enumerate. See [`forge-tdd`](../forge-tdd/SKILL.md) for the full RED→GREEN scaffold and ADR shape requirements.
 
 ## What to do when the hook blocks
 

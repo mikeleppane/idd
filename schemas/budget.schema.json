@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://forge.local/schemas/budget.schema.json",
+  "title": "FORGE subagent dispatch context_budget block",
+  "description": "Documentation + test fixture only. Hooks/check_budget.py does NOT import this schema (stdlib-only per M7 Decision 2). Drift between this enum and the hook's frozen literal is caught by tests.",
+  "type": "object",
+  "required": ["files_in_scope", "forbidden"],
+  "properties": {
+    "phase": {
+      "type": "string",
+      "description": "Optional FORGE phase the dispatch runs under. When 'execute', tests_in_scope is mandatory + non-empty unless tdd_exception_ref is set. Canonical enum source: schemas/state.schema.json (current_phase). Listed inline here for documentation; hook keeps an independent frozen literal.",
+      "enum": [
+        "refine",
+        "research",
+        "spec",
+        "domain",
+        "scenarios",
+        "plan",
+        "crucible",
+        "review",
+        "execute",
+        "verify",
+        "ship",
+        "harden"
+      ]
+    },
+    "spec_sections": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "SPEC.md section names this dispatch needs to read."
+    },
+    "files_in_scope": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Bounded paths or globs the dispatch is allowed to load. Unbounded items (**, *.py repo-wide, etc.) are rejected by the hook."
+    },
+    "tests_in_scope": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Test files this dispatch will create or modify. Mandatory and non-empty when phase == 'execute', unless tdd_exception_ref is set. Optional otherwise."
+    },
+    "tdd_exception_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ADR id from .forge/features/<id>/decisions.md (## TDD Exception: <ac-id>) that justifies an empty tests_in_scope under execute phase. Validator (tools.validate.tdd_evidence) cross-checks the ADR lists every AC the dispatch implements."
+    },
+    "intel_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Paths under .forge/intel/ to load."
+    },
+    "decisions_filter": {
+      "type": "string",
+      "description": "tag:<topic> | all | none — selector for decisions.md filtering."
+    },
+    "prior_summaries": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "References to prior slice/wave summaries the dispatch should consume."
+    },
+    "forbidden": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Explicit prohibitions for the dispatch (e.g. 'read entire repo')."
+    },
+    "articles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "description": "Optional filtered Constitution articles passed to the subagent (M3 P3)."
+    },
+    "return_format": {
+      "type": "object",
+      "description": "Shape of the structured payload the subagent returns to the dispatcher.",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "properties": { "phase": { "const": "execute" } },
+        "required": ["phase"]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "required": ["tests_in_scope"],
+            "properties": {
+              "tests_in_scope": { "minItems": 1 }
+            }
+          },
+          {
+            "required": ["tdd_exception_ref"]
+          }
+        ]
+      }
+    }
+  ]
+}
