@@ -17,7 +17,7 @@ Run the FORGE execute phase against the active feature.
      - Require `PLAN.md` exists with frontmatter `status: ready`.
      - Invoke `forge-execute` skill (standard branch).
    - Otherwise → abort with reason.
-3. The `forge-context-budget` and `forge-subagent-dispatch` skills apply automatically; the `PreToolUse` hook (`hooks/check_budget.py`) blocks malformed dispatches mechanically.
+3. The `forge-context-budget` and `forge-subagent-dispatch` skills apply automatically; the `PreToolUse` hook (`hooks/check_budget.py`) blocks malformed dispatches mechanically. TDD enforced via [forge-tdd](../skills/forge-tdd/SKILL.md). Pair test commits before implementation; whitelist available for refactor/docs/chore work.
 4. On completion, print summary: feature id, slices completed, commits made (from `state.commits`), deviations.
 
 ## Failure modes
