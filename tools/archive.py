@@ -493,7 +493,15 @@ def create_feature_folder(
         raise ArchiveError(f"feature folder already exists: {feature_id!r}")
 
     folder = repo_root / ".forge" / "features" / feature_id
-    folder.mkdir(parents=True, exist_ok=False)
+    # L3: wrap mkdir's FileExistsError as ArchiveError so callers see a
+    # consistent exception type when a TOCTOU race fires (folder created
+    # between the feature_folder_exists check above and this mkdir).
+    try:
+        folder.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        raise ArchiveError(
+            f"feature folder already exists (race detected): {feature_id!r}"
+        ) from exc
 
     try:
         # state.json — validated before any disk write via write_state.
