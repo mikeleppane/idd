@@ -508,13 +508,55 @@ def test_cleanup_failure_with_baseexception_preserves_original(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """If cleanup raises a BaseException (e.g. KeyboardInterrupt mid-rmtree),
+    """If cleanup raises a normal Exception (NOT KeyboardInterrupt/SystemExit),
     the ORIGINAL ``record_routing_decision`` exception must still propagate
     and a one-line WARN must hit stderr.
 
-    Locks remediation for M3 P6.1 T7 finding p6-1-M3 — without the explicit
-    BaseException catch around cleanup, a KeyboardInterrupt during rmtree
-    would mask the underlying StateError.
+    Locks remediation for M3 P6.1 T7 finding p6-1-M3 + M6 deep-tester M6:
+    the BaseException catch around cleanup must distinguish between
+    user-cancel signals (KeyboardInterrupt / SystemExit, propagated) and
+    other cleanup faults (suppressed; original re-raised).
+    """
+    repo = _stage_repo(tmp_path)
+
+    def _boom(*args: Any, **kwargs: Any) -> None:
+        raise StateError("original routing failure")
+
+    def _cleanup_runtime_error(*args: Any, **kwargs: Any) -> bool:
+        raise RuntimeError("disk error during rmtree")
+
+    monkeypatch.setattr(routing, "record_routing_decision", _boom)
+    monkeypatch.setattr(routing, "cleanup_seeded_feature", _cleanup_runtime_error)
+
+    with pytest.raises(StateError, match="original routing failure"):
+        seed_routed_feature(
+            repo,
+            idea="cleanup failure during routing failure",
+            final_tier="focused",
+            today=TODAY,
+        )
+
+    captured = capsys.readouterr()
+    assert "cleanup_seeded_feature raised during post-seed rollback" in captured.err, (
+        "stderr must carry the WARN line so operators can correlate the "
+        "rollback failure with the original record_routing_decision exception"
+    )
+
+
+def test_cleanup_keyboard_interrupt_propagates_over_original(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """If cleanup raises KeyboardInterrupt mid-rollback, the cancel signal
+    MUST propagate (not the original exception) and stderr MUST carry the
+    'USER CANCELLED MID-ROLLBACK' WARN so the operator knows the partial
+    folder may remain at .forge/features/<id>.
+
+    M6 deep-tester finding M6: previously the BaseException catch silently
+    swallowed cleanup-side KeyboardInterrupt and re-raised the original
+    exception, so a Ctrl-C mid-rollback looked like a clean failure even
+    though the partial folder was still on disk.
     """
     repo = _stage_repo(tmp_path)
 
@@ -527,7 +569,8 @@ def test_cleanup_failure_with_baseexception_preserves_original(
     monkeypatch.setattr(routing, "record_routing_decision", _boom)
     monkeypatch.setattr(routing, "cleanup_seeded_feature", _cleanup_kbd_interrupt)
 
-    with pytest.raises(StateError, match="original routing failure"):
+    # KeyboardInterrupt from cleanup MUST propagate, not the StateError.
+    with pytest.raises(KeyboardInterrupt):
         seed_routed_feature(
             repo,
             idea="kbd interrupt during cleanup",
@@ -536,9 +579,13 @@ def test_cleanup_failure_with_baseexception_preserves_original(
         )
 
     captured = capsys.readouterr()
-    assert "cleanup_seeded_feature raised during post-seed rollback" in captured.err, (
-        "stderr must carry the WARN line so operators can correlate the "
-        "rollback failure with the original record_routing_decision exception"
+    assert "USER CANCELLED MID-ROLLBACK" in captured.err, (
+        "stderr must carry the 'USER CANCELLED MID-ROLLBACK' WARN so the "
+        "operator knows the partial folder may remain on disk"
+    )
+    assert "partial folder may remain" in captured.err, (
+        "stderr WARN must mention the partial folder may remain so the operator "
+        "knows to clean it up manually"
     )
 
 

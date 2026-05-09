@@ -242,9 +242,23 @@ def seed_routed_feature(
     except BaseException as original:
         try:
             cleanup_seeded_feature(repo_root, feature_id)
-        except BaseException:
-            # Cleanup itself raised. Log and fall through to re-raise the
-            # ORIGINAL record_routing_decision exception, NOT the cleanup one.
+        except (KeyboardInterrupt, SystemExit):
+            # M6 deep-tester finding M6: a user-cancel signal mid-rollback
+            # (Ctrl-C / SystemExit) MUST propagate so the operator sees the
+            # actual cancel, instead of being silently masked by the original
+            # routing exception. The partial folder may remain on disk —
+            # surface that in the WARN so the operator can clean up manually.
+            print(
+                "WARN: USER CANCELLED MID-ROLLBACK; "
+                f"partial folder may remain at .forge/features/{feature_id}",
+                file=sys.stderr,
+            )
+            raise
+        except Exception:
+            # Cleanup itself raised a non-cancel exception. Log and fall
+            # through to re-raise the ORIGINAL record_routing_decision
+            # exception, NOT the cleanup one — the original carries the
+            # actionable failure mode.
             print(
                 "WARN: cleanup_seeded_feature raised during post-seed rollback; "
                 "original exception below",
