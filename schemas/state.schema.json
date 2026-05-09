@@ -63,7 +63,7 @@
             "parallel_used": {
               "type": "boolean",
               "default": false,
-              "description": "Reserved for future intel-aware multi-agent escalation; ships single-agent only. Absence implies false."
+              "description": "Reserved for M8 P2 intel-aware multi-agent escalation; P0 ships single-agent only. Absence implies false. Locking the field shape now keeps the M8 P2 consumer from forcing a schema bump on day one."
             }
           },
           "additionalProperties": false
