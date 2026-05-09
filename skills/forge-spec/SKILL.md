@@ -91,6 +91,7 @@ up a guard described below.
    - **Open Questions.** Numbered. Add liberally as you fill the template; resolve before exit.
 7. **Self-review gate:**
    - Run: `python -m tools.validate --target spec-semantic .forge/features/<id>/SPEC.md` (covers Scenarios↔Acceptance mapping, orphan scenarios, weasel words, and Codebase Anchors path/symbol resolution). Any finding with severity `BLOCK` or `HIGH` blocks phase exit. `MEDIUM`/`LOW` are advisory; surface to the user.
+   - If `.forge/features/<id>/DOMAIN.md` exists (re-entry after a prior domain pass, or post-domain spec amendment): run `python -m tools.validate --target domain_glossary .forge/features/<id>` to catch orphan terms introduced by the spec edit. Findings of severity `BLOCK` block phase exit; `MEDIUM` (unused glossary entry) and `LOW` (undefined context annotation) are advisory. When DOMAIN.md is absent (the common path for first-pass full-tier features and for focused/standard tiers entirely), the validator returns empty and the bullet is a no-op.
    - For ACs that map to a measurable outcome instead of a scenario (per the current rule), append the literal token `(measurable)` to the AC line so the validator skips scenario-mapping for that index. Example:
      `4. p99 latency under 200ms over a 24h window (measurable)`
    - Inline checks (not migrated):
