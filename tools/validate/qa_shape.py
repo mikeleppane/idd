@@ -303,9 +303,10 @@ def _compute_confidence(statuses: dict[str, str]) -> str:
 
     Rules (mirrors QA.md template):
 
-    - ``high`` ↔ Acceptance is ``delivers`` AND Edge Probing /
-      Adversarial / NR Regrep are all ``pass``. Any ``skipped`` outside
-      NR Regrep demotes to ``partial`` (first-pass strictness).
+    - ``high`` ↔ Acceptance is ``delivers`` AND Edge Probing / Adversarial
+      are ``pass`` AND NR Regrep is ``pass`` or ``skipped`` (a feature with
+      no Negative Requirements legitimately skips that section). Any
+      ``skipped`` outside NR Regrep demotes to ``partial``.
     - ``low`` ↔ any section is ``fail`` / ``does-not-deliver`` OR more
       than one section is ``partial``.
     - ``partial`` otherwise.
@@ -319,11 +320,9 @@ def _compute_confidence(statuses: dict[str, str]) -> str:
         return "low"
 
     skipped_outside_nr = any(v == "skipped" for name, v in others.items() if name != "NR Regrep")
-    if (
-        accept == "delivers"
-        and all(v == "pass" for v in others.values())
-        and not skipped_outside_nr
-    ):
+    nr_ok = others.get("NR Regrep", "") in {"pass", "skipped"}
+    non_nr_pass = all(v == "pass" for name, v in others.items() if name != "NR Regrep")
+    if accept == "delivers" and non_nr_pass and nr_ok and not skipped_outside_nr:
         return "high"
     return "partial"
 

@@ -211,6 +211,33 @@ def test_qa_shape_confidence_aggregation_mismatch_blocks(tmp_path: Path) -> None
     ), findings
 
 
+def test_qa_shape_high_confidence_allows_nr_regrep_skipped(tmp_path: Path) -> None:
+    """A feature with no Negative Requirements legitimately ``skip``s NR Regrep.
+
+    When Acceptance=delivers, Edge Probing=pass, Adversarial=pass and
+    NR Regrep=skipped, the aggregated confidence should still resolve to
+    ``high`` — otherwise ``high`` is unreachable for any feature that
+    declared no NRs.
+    """
+    feature_dir = _make_feature_dir(tmp_path)
+    _write_state(feature_dir)
+    _write_qa(
+        feature_dir,
+        _qa_md(
+            verdict="delivers",
+            acceptance_status="delivers",
+            edge_status="pass",
+            adversarial_status="pass",
+            nr_status="skipped",
+            confidence="high",
+        ),
+    )
+    findings = validate_qa_shape(tmp_path, FEATURE_ID)
+    assert not any(
+        "qa_shape:confidence_aggregation_mismatch" in f.message for f in findings
+    ), findings
+
+
 def test_qa_shape_invalid_section_status_blocks(tmp_path: Path) -> None:
     feature_dir = _make_feature_dir(tmp_path)
     _write_state(feature_dir)
