@@ -6,4 +6,5 @@
 
 - Rationale: smoke fixture documents the ADR-escape path so the validator
   proves it skips pairing for criteria explicitly excused by the author.
+- Reviewer: mleppan23
 - Date: 2026-05-08
