@@ -25,18 +25,22 @@ Print a one-line status summary for the active feature.
    Append the canonical phase history table after the summary line.
 - `--report`
    Print a structured markdown report covering current phase, the last 5
-   commits, open BLOCK findings (with recovery hints when available), and
-   the recommended next command. Mutually exclusive with `--verbose`.
+   commits (in `state.commits[]` insertion order, most-recent first), open
+   BLOCK + HIGH findings scoped to the active feature (with recovery
+   hints when available), and the recommended next command. Mutually
+   exclusive with `--verbose`.
 
 When `current_phase == "refine"`, the summary line appends `(round X/5)`
 where `X` is `state.json.routing.refine_attempts` (defaulting to `0` when
 the field is not yet set). The cap matches the Socratic-loop ceiling
 enforced by `tools.state.increment_refine_attempts` (`_REFINE_ATTEMPTS_CAP`).
 
-**Local-only logs.** Every feature accumulates a JSONL event log at
-`.forge/logs/<feature_id>.jsonl`. The log is local-only — gitignored,
-never sent over the network. Inspect it with
-`cat .forge/logs/<feature_id>.jsonl | jq` or any JSONL tool.
+**Local-only logs.** `tools.feature_log` writes per-feature lifecycle
+events to `.forge/logs/<feature_id>.jsonl` *when callers append to it*.
+Today the writer ships without a default producer; the path is reserved
+and gitignored, so any caller that opts in stays local — no network sink.
+Inspect with `cat .forge/logs/<feature_id>.jsonl | jq` or any JSONL tool
+when the file exists.
 
 ## Failure modes
 
