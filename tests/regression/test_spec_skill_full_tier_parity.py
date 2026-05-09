@@ -1,6 +1,6 @@
 """Regression: forge-spec full-tier narrative parity.
 
-Locks the M3 P4 T4 narrative additions to ``skills/forge-spec/SKILL.md``:
+Locks the full-tier narrative additions to ``skills/forge-spec/SKILL.md``:
 1. Step 6 Intent draft consumes ``state.json.refined_idea`` verbatim when set
    by ``/forge:refine``.
 2. Step 6 Domain section may stay as the single-line placeholder
@@ -105,9 +105,11 @@ def test_spec_skill_focused_standard_domain_unchanged() -> None:
 
 
 def test_spec_skill_locks_placeholder_comparator() -> None:
-    assert "^_TBD: filled by /forge:domain_?$" in _BODY, (
-        "SKILL.md must lock the placeholder comparator regex so partial fills "
-        "and whitespace drift are rejected (T11 deep-M3)"
+    # M6 L10: trailing underscore is now MANDATORY (was optional via `_?`).
+    assert "^_TBD: filled by /forge:domain_$" in _BODY, (
+        "SKILL.md must lock the placeholder comparator regex with mandatory "
+        "trailing underscore so partial fills and the unrendered no-underscore "
+        "variant are rejected (M6 L10)"
     )
     assert "strip leading and trailing whitespace" in _BODY, (
         "SKILL.md must specify whitespace stripping as part of the comparator"
@@ -175,7 +177,7 @@ def test_spec_skill_full_tier_next_phase_is_domain() -> None:
 # These tests run that regex against the documented inputs so the comparator
 # is empirically protected, not just textually mentioned.
 
-_DOMAIN_PLACEHOLDER_RE = re.compile(r"^_TBD: filled by /forge:domain_?$")
+_DOMAIN_PLACEHOLDER_RE = re.compile(r"^_TBD: filled by /forge:domain_$")
 
 
 def test_full_tier_domain_placeholder_canonical_form_matches() -> None:
@@ -183,9 +185,13 @@ def test_full_tier_domain_placeholder_canonical_form_matches() -> None:
     assert _DOMAIN_PLACEHOLDER_RE.match(body) is not None
 
 
-def test_full_tier_domain_placeholder_no_trailing_underscore_matches() -> None:
+def test_full_tier_domain_placeholder_no_trailing_underscore_does_not_match() -> None:
+    """M6 L10: trailing underscore is now MANDATORY. The unrendered
+    no-underscore variant must NOT match — previously the comparator
+    silently accepted both forms, masking partial fills.
+    """
     body = "_TBD: filled by /forge:domain"
-    assert _DOMAIN_PLACEHOLDER_RE.match(body) is not None
+    assert _DOMAIN_PLACEHOLDER_RE.match(body) is None
 
 
 def test_full_tier_domain_placeholder_backslash_escaped_does_not_match() -> None:

@@ -13,6 +13,7 @@ import re
 import shutil
 import sys
 import tempfile
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,13 +48,20 @@ except ModuleNotFoundError:  # pragma: no cover - non-POSIX (Windows)
 
 _FLOW_VERSION_V3 = 3
 _CAPABILITY_RE = re.compile(r"^[a-z0-9-]+$")
-# Schema-aligned slug: must start with alnum, at least 3 chars total.
+# Schema-aligned slug: must start with alnum, at least 3 chars total, and
+# never carry a trailing hyphen or two consecutive hyphens.
 # Matches schemas/capability-spec-frontmatter.schema.json and
 # delta-proposal-frontmatter.schema.json:affects_capability.
-_CAPABILITY_SLUG_SCHEMA_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,}$")
-_FEATURE_ID_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9-]+$")
+_CAPABILITY_SLUG_SCHEMA_RE = re.compile(r"^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){2,}$")
+# Strict feature-id: ``YYYY-MM-DD`` + alnum-leading slug with no trailing
+# hyphen and no consecutive hyphens.
+_FEATURE_ID_RE = re.compile(
+    r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9]))+$"
+)
 # Schema-aligned change id: strict month/day, schema-aligned slug suffix.
-_CHANGE_ID_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9][a-z0-9-]{2,}$")
+_CHANGE_ID_RE = re.compile(
+    r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){2,}$"
+)
 
 # Minimum token length to survive the content-word filter (step 5 of slug_from_idea).
 _SLUG_MIN_TOKEN_LEN: int = 2
@@ -127,7 +135,13 @@ def slug_from_idea(text: str, *, max_words: int = 5) -> str:
     """
     if max_words < 1:
         raise ValueError(f"max_words must be >= 1, got {max_words}")
-    lowered = text.lower()
+    # Normalize via NFKD + ascii-ignore so accented Latin (``café`` ->
+    # ``cafe``) and German umlauts (``über`` -> ``uber``) collapse to their
+    # base form before the existing ``[^a-z0-9 ]`` cleanup. Non-decomposable
+    # characters (CJK, Devanagari, etc.) are stripped entirely; the existing
+    # "all tokens filtered" empty-slug path catches that case downstream.
+    normalized = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    lowered = normalized.lower()
     cleaned = _SLUG_CLEANUP_RE.sub(" ", lowered)
     tokens = cleaned.split()
     # Drop stopwords and tokens that are too short (length < _SLUG_MIN_TOKEN_LEN)
@@ -142,10 +156,18 @@ def slug_from_idea(text: str, *, max_words: int = 5) -> str:
         if len(distinct) == max_words:
             break
     slug = "-".join(distinct)
-    # Validate final slug matches the schema-aligned pattern
-    if not slug or not _CAPABILITY_SLUG_SCHEMA_RE.fullmatch(slug):
-        if not slug:
-            raise ArchiveError(f"slug computed from idea is empty: {text}")
+    # Validate final slug matches the schema-aligned pattern.  Split the
+    # empty-slug failure into two paths so the operator can tell whether the
+    # input had no tokens at all (empty / whitespace) versus tokens that all
+    # got filtered as stopwords or too-short.
+    if not slug:
+        if tokens:
+            raise ArchiveError(
+                f"slug computed from idea is empty (all tokens filtered as "
+                f"stopwords or too short, min token length {_SLUG_MIN_TOKEN_LEN}): {text}"
+            )
+        raise ArchiveError(f"slug computed from idea is empty: {text}")
+    if not _CAPABILITY_SLUG_SCHEMA_RE.fullmatch(slug):
         raise ArchiveError(f"slug computed from idea is too short: {slug} ({text})")
     return slug
 
@@ -173,10 +195,9 @@ def scan_existing_capabilities(repo_root: Path) -> list[str]:
 
 
 # _ORPHAN_SEED_PHASES is sourced from tools/validate/_feature_layout.py so the
-# orphan predicate stays in lock-step with health.py (M3 P6.1 T7 finding
-# p6-1-M1).  The set covers BOTH the original P5 refine-tier path
-# (cleanup_orphan_feature) AND the P6.1 focused/standard pre-seed path
-# written by /forge:do (cleanup_seeded_feature).
+# orphan predicate stays in lock-step with health.py.  The set covers BOTH the
+# refine-tier path (cleanup_orphan_feature) AND the focused/standard pre-seed
+# path written by /forge:do (cleanup_seeded_feature).
 
 
 def _orphan_conditions_met(folder: Path) -> bool:  # noqa: PLR0911
@@ -188,9 +209,9 @@ def _orphan_conditions_met(folder: Path) -> bool:  # noqa: PLR0911
       2. state.json.commits == [].
       3. Folder contents are a strict subset of _ORPHAN_FEATURE_FILES.
 
-    Generalized in M3 P6.1 T0.5 to cover both the P5 refine-tier seed (used
-    by cleanup_orphan_feature) and the P6.1 focused/standard /forge:do
-    pre-seed (used by cleanup_seeded_feature).  Does NOT raise on I/O
+    Generalized to cover both the refine-tier seed (used by
+    cleanup_orphan_feature) and the focused/standard /forge:do pre-seed
+    (used by cleanup_seeded_feature).  Does NOT raise on I/O
     failures — returns False so callers treat a broken state.json as a
     non-orphan (safe default).  The defensive predicate is intentionally a
     flat sequence of independent guards (PLR0911 silenced): each early-return
@@ -325,7 +346,7 @@ def cleanup_seeded_feature(repo_root: Path, feature_id: str) -> bool:
     contents subset of ``_ORPHAN_FEATURE_FILES``), same race-narrowing
     recheck, same ``shutil.rmtree``, but stderr WARN messages name
     ``cleanup_seeded_feature`` so log lines point at the actual entry point
-    used by the focused / standard tier seed-cancel cleanup path (M3 P6.1).
+    used by the focused / standard tier seed-cancel cleanup path.
 
     Args:
         repo_root: Repository root containing the ``.forge/`` tree.
@@ -353,10 +374,10 @@ _RESEARCH_SKIPPED_ENTRY: dict[str, str] = {
 }
 
 # Seed-time entry phases accepted by ``create_feature_folder``.  ``"spec"`` is
-# the P6.1 focused/standard path; ``"refine"`` is the P6.2 full-tier path.
-# Any other lifecycle phase value (e.g. ``"plan"``, ``"execute"``) is post-
-# seed territory and is rejected here so /forge:do callers cannot accidentally
-# create a folder mid-lifecycle.
+# the focused/standard entry; ``"refine"`` is the full-tier entry.  Any other
+# lifecycle phase value (e.g. ``"plan"``, ``"execute"``) is post-seed territory
+# and is rejected here so /forge:do callers cannot accidentally create a
+# folder mid-lifecycle.
 _VALID_SEED_PHASES: frozenset[str] = frozenset({"spec", "refine"})
 
 
@@ -399,9 +420,8 @@ def create_feature_folder(
     Composes the three ``templates/feature/`` files (state.json, SPEC.md,
     decisions.md) into a new feature folder with substitutions for
     ``feature_id`` and ``tier``.  The ``current_phase`` keyword controls the
-    seed entry: ``"spec"`` (P6.1, focused/standard) or ``"refine"`` (P6.2,
-    full-tier only).  Any other lifecycle phase is post-seed territory and is
-    refused.
+    seed entry: ``"spec"`` (focused/standard) or ``"refine"`` (full-tier
+    only).  Any other lifecycle phase is post-seed territory and is refused.
 
     Per-file write is atomic via ``atomic_replace`` (tempfile +
     ``Path.replace`` on the same directory — POSIX-rename semantics).
@@ -439,9 +459,9 @@ def create_feature_folder(
         feature_id: Feature folder name in YYYY-MM-DD-slug form.
         tier: One of ``VALID_TIERS`` (focused/standard/full).
         current_phase: Seed entry phase; one of ``{"spec", "refine"}``.
-            Defaults to ``"spec"`` to preserve the P6.1 focused/standard
-            contract.  ``"refine"`` opens the P6.2 full-tier path and
-            additionally requires ``tier == "full"``.
+            Defaults to ``"spec"`` for the focused/standard entry.
+            ``"refine"`` opens the full-tier entry and additionally requires
+            ``tier == "full"``.
         schema_path: Optional path to ``schemas/state.schema.json``.  When
             given, ``write_state`` validates the seed payload before any disk
             mutation.
@@ -471,7 +491,15 @@ def create_feature_folder(
         raise ArchiveError(f"feature folder already exists: {feature_id!r}")
 
     folder = repo_root / ".forge" / "features" / feature_id
-    folder.mkdir(parents=True, exist_ok=False)
+    # Wrap mkdir's FileExistsError as ArchiveError so callers see a
+    # consistent exception type when a TOCTOU race fires (folder created
+    # between the feature_folder_exists check above and this mkdir).
+    try:
+        folder.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        raise ArchiveError(
+            f"feature folder already exists (race detected): {feature_id!r}"
+        ) from exc
 
     try:
         # state.json — validated before any disk write via write_state.

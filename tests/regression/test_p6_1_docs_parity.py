@@ -1,19 +1,20 @@
-"""Regression: P6.1 surface presence in AGENTS.md, README.md, and skills/_meta.json.
+"""Regression: focused/standard adaptive-routing surface presence in
+AGENTS.md, README.md, and skills/_meta.json.
 
-Asserts the locked contract for M3 P6.1 `/forge:do` adaptive routing:
+Asserts the locked contract for `/forge:do` adaptive routing:
 
 1. AGENTS.md skills table contains a `forge-do` row classified `explicit`.
 2. AGENTS.md commands table contains a `/forge:do` row.
-3. AGENTS.md P6.1 prose names `tools.routing.seed_routed_feature` as the
+3. AGENTS.md prose names `tools.routing.seed_routed_feature` as the
    post-confirm Python entry helper.
-4. AGENTS.md P6.1 prose carries the locked dispatch literal
+4. AGENTS.md prose carries the locked dispatch literal
    `Next: /forge:spec --feature <feature_id>`.
-5. AGENTS.md retains a full-tier callout pointing at the still-deferred
-   `/forge:do --full` (M3 P6.2) entry path.
-6. README.md no longer carries the obsolete focused/standard
-   "until P6.2" entry-path note (the focused/standard portion is shipped).
+5. AGENTS.md retains a full-tier callout pointing at the
+   `/forge:do --full` entry path.
+6. README.md no longer carries any obsolete focused/standard
+   "until ..." entry-path note (the focused/standard portion is shipped).
 7. README.md describes `/forge:do --focused` and `/forge:do --standard`
-   as the canonical adaptive-routing entry points (P6.1).
+   as the canonical adaptive-routing entry points.
 8. `skills/_meta.json` does NOT list `forge-do` — `forge-do` is a
    routing entry-point skill, not a phase-bearing lifecycle skill.
 """

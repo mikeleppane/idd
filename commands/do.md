@@ -20,6 +20,8 @@ list, confirms with the user, seeds the feature folder under
   Persisted verbatim into `state.json.routing.idea`.
 - `--focused` / `--standard` / `--full` — optional tier override. The
   flag wins over the LLM's proposal.
+  `Pass at most one of --focused / --standard / --full` — multi-flag
+  input is rejected at parse time before any disk mutation.
 
 ## Behavior
 

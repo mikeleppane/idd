@@ -18,7 +18,12 @@ class StateError(RuntimeError):
     """Raised when state.json cannot be read, parsed, or transitioned."""
 
 
-_FEATURE_ID_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9-]+$")
+# Strict feature-id: ``YYYY-MM-DD`` + alnum-leading slug with no trailing
+# hyphen and no consecutive hyphens. Mirrors the regex in
+# tools.archive._FEATURE_ID_RE.
+_FEATURE_ID_RE = re.compile(
+    r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9]))+$"
+)
 
 
 VALID_TIERS = ("focused", "standard", "full")
@@ -206,6 +211,39 @@ def complete_phase(
     return payload
 
 
+def _tier_allowed_phases(tier: str) -> frozenset[str]:
+    """Return the set of phases legitimately reachable on the given tier.
+
+    Computed from the per-tier next-phase tables (``_FOCUSED_NEXT``,
+    ``_STANDARD_NEXT``, ``_FULL_NEXT``) plus the ``review`` phase (whose
+    next-command lives in ``_next_review_command`` rather than the table)
+    on tiers that flow through review, plus the post-ship ``qa`` phase
+    introduced by ``flow_version: 3``. ``start_phase`` refuses a
+    tier-incompatible phase (e.g. ``start_phase("refine")`` on a
+    focused-tier feature) so the next-phase pump cannot end up on a
+    dead-end ``None``.
+
+    Unknown tier returns an empty set so the caller refuses defensively.
+    """
+    table_keys: set[str] = set()
+    extras: set[str] = {"qa"}
+    if tier == "focused":
+        table_keys = set(_FOCUSED_NEXT.keys())
+    elif tier == "standard":
+        table_keys = set(_STANDARD_NEXT.keys())
+        # Standard tier flows through review (crucible -> review --target plan,
+        # execute -> review --target code); review's next-command resolves via
+        # _next_review_command, so it isn't a key in _STANDARD_NEXT but is a
+        # legitimately reachable phase on this tier.
+        extras.add("review")
+    elif tier == "full":
+        table_keys = set(_FULL_NEXT.keys())
+        extras.add("review")
+    else:
+        return frozenset()
+    return frozenset(table_keys | extras)
+
+
 def start_phase(
     path: Path,
     phase: str,
@@ -224,13 +262,23 @@ def start_phase(
         Updated state payload.
 
     Raises:
-        StateError: Unknown phase or schema failure.
+        StateError: Unknown phase, phase not allowed on the seeded
+            ``state.json.tier``, or schema failure.
     """
     if phase not in VALID_LIFECYCLE_PHASES:
         raise StateError(f"unknown phase '{phase}'; must be one of {VALID_LIFECYCLE_PHASES}")
 
     payload = read_state(path, schema_path=schema_path)
     timestamp = now or _utc_now_iso()
+
+    # M6 M5: cross-check phase against seeded tier so a focused/standard
+    # feature cannot end up on a refine/domain slot (where the next-phase
+    # pump returns None and the lifecycle gets stuck).
+    tier = payload.get("tier")
+    if isinstance(tier, str):
+        allowed = _tier_allowed_phases(tier)
+        if phase not in allowed:
+            raise StateError(f"phase {phase!r} not allowed on tier {tier!r}")
 
     if "phases" not in payload or not isinstance(payload["phases"], dict):
         raise StateError("state.json is missing the required `phases` mapping")
@@ -304,6 +352,15 @@ def record_routing_decision(
     if proposed_tier is not None and proposed_tier not in VALID_TIERS:
         raise StateError(f"invalid proposed_tier {proposed_tier!r}; must be one of {VALID_TIERS}")
     payload = read_state(path, schema_path=schema_path)
+    # M3 cross-check: final_tier must match the seeded state.json.tier so a
+    # focused/standard feature cannot quietly end up with routing.final_tier
+    # set to "full" (which would corrupt downstream phase-pump tables and
+    # next_phase_command resolution). seed_routed_feature already passes
+    # final_tier == state.tier on the happy path, so this guard never trips
+    # the canonical seeded route — only mismatched re-calls.
+    state_tier = payload.get("tier")
+    if final_tier != state_tier:
+        raise StateError(f"final_tier {final_tier!r} mismatches state.json.tier {state_tier!r}")
     block: dict[str, Any] = {
         "idea": idea,
         "final_tier": final_tier,
@@ -354,6 +411,40 @@ def record_refined_idea(
         )
     payload["refined_idea"] = refined
     write_state(path, payload, schema_path=schema_path)
+    return payload
+
+
+def guard_refine_entry(path: Path, schema_path: Path | None = None) -> dict[str, Any]:
+    """Guard ``/forge:refine`` entry on tier + phase BEFORE any mutation.
+
+    Reads ``state.json`` once and refuses if the feature is not actually on
+    the refine entry slot:
+
+      * ``current_phase != "refine"``  → ``StateError`` (wrong phase).
+      * ``tier != "full"``             → ``StateError`` (wrong tier).
+
+    Returns the parsed payload so the caller can continue without a second
+    read. The two error wordings are deliberately distinct so the SKILL
+    prose can quote them verbatim and the operator sees which precondition
+    failed.
+
+    Args:
+        path: state.json path.
+        schema_path: Optional schema for validation on read.
+
+    Returns:
+        Parsed state.json payload (already-validated when ``schema_path`` is given).
+
+    Raises:
+        StateError: ``current_phase != "refine"`` OR ``tier != "full"``.
+    """
+    payload = read_state(path, schema_path=schema_path)
+    current_phase = payload.get("current_phase")
+    if current_phase != "refine":
+        raise StateError(
+            f"cannot enter refine: current_phase is {current_phase!r}, expected 'refine'"
+        )
+    require_full_tier(payload, phase="refine")
     return payload
 
 

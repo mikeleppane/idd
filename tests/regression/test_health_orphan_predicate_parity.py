@@ -58,8 +58,7 @@ def test_orphan_seed_phases_shared_via_feature_layout() -> None:
     """archive.py and health.py both bind the SAME _ORPHAN_SEED_PHASES object.
 
     Identity check (via the canonical module) ensures a future change to one
-    predicate's phase set cannot silently desync from the other.  M3 P6.1 T7
-    finding p6-1-M1.
+    predicate's phase set cannot silently desync from the other.
     """
     canonical = layout_mod._ORPHAN_SEED_PHASES
     archive_attr = getattr(archive_mod, "_ORPHAN_SEED_PHASES")  # noqa: B009
@@ -197,6 +196,33 @@ def test_validate_health_flags_orphan_for_refine_in_progress_unchanged(tmp_path:
     ]
     assert len(orphan_findings) == 1
     assert orphan_findings[0].severity == "LOW"
+
+
+def test_validate_health_fail_closed_on_malformed_commits_value(tmp_path: Path) -> None:
+    """L8: a malformed ``commits`` value (anything other than ``[]``) must
+    be treated as not-orphan by health.py, mirroring the fail-closed
+    archive.py predicate. The previous ``commits = payload.get("commits") or []``
+    silently coerced ``None``, ``"", ``0``, ``False``, or any non-list to ``[]``
+    and produced an orphan flag — that's a data-loss vector if cleanup were
+    ever wired off the health finding.
+    """
+    # Each malformed shape must NOT produce an orphan finding.
+    for index, malformed in enumerate(["", None, 0, False, "ignored", {"x": 1}]):
+        feature_id = f"2026-05-08-malformed-{index}"
+        _seed_feature(
+            tmp_path,
+            feature_id,
+            current_phase="spec",
+            phases={"spec": {"status": "in_progress"}},
+            commits=malformed,
+        )
+
+    findings = validate_health(tmp_path)
+    malformed_orphan = [f for f in findings if "malformed-" in f.message and "orphan" in f.message]
+    assert malformed_orphan == [], (
+        f"health.py must fail closed on malformed commits values "
+        f"(parity with archive.py); got orphan findings: {malformed_orphan}"
+    )
 
 
 def test_validate_health_orphan_message_names_phase_and_helper(tmp_path: Path) -> None:

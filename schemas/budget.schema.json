@@ -71,7 +71,7 @@
         "type": "object",
         "additionalProperties": true
       },
-      "description": "Optional filtered Constitution articles passed to the subagent (M3 P3)."
+      "description": "Optional filtered Constitution articles passed to the subagent."
     },
     "return_format": {
       "type": "object",

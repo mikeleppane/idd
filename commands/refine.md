@@ -35,8 +35,8 @@ a Socratic loop capped at 5 rounds. Writes the result to
      `record_routing_decision` — the routing block is already populated
      by `/forge:do --full`, and re-calling would clobber the seed
      `decided_at` timestamp.
-   - **Direct-invocation fallback** — any conjunct fails (existing M3 P4
-     behavior preserved). Precedence: `state.json.routing.idea` wins when
+   - **Direct-invocation fallback** — any conjunct fails. Precedence:
+     `state.json.routing.idea` wins when
      present and the CLI `<idea>` is ignored; when `routing.idea` is
      absent AND the user passed CLI `<idea>`, seeds the routing block via
      `tools.state.record_routing_decision` with `final_tier="full"`

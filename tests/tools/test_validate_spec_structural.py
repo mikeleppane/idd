@@ -1,4 +1,4 @@
-"""Tests for validate_capability_spec_sections structural check (T2a, M3 P5)."""
+"""Tests for validate_capability_spec_sections structural check."""
 
 from __future__ import annotations
 

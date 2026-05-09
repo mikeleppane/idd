@@ -1,11 +1,11 @@
-"""Tests for ``tools.routing.seed_routed_feature`` (M3 P6.1 T1 + P6.2 T2 contract).
+"""Tests for ``tools.routing.seed_routed_feature``.
 
-The helper composes :func:`tools.archive.create_feature_folder` (T2) and
-:func:`tools.state.record_routing_decision` (P1) with a post-seed cleanup
-wrapper backed by :func:`tools.archive.cleanup_seeded_feature` (T0.5).  All
-schema validation runs against ``schemas/state.schema.json`` BEFORE any disk
-mutation.  As of P6.2, ``--full`` seeds normally with
-``current_phase="refine"``; focused/standard seed with ``current_phase="spec"``.
+The helper composes :func:`tools.archive.create_feature_folder` and
+:func:`tools.state.record_routing_decision` with a post-seed cleanup
+wrapper backed by :func:`tools.archive.cleanup_seeded_feature`.  All
+schema validation runs against ``schemas/state.schema.json`` BEFORE any
+disk mutation.  ``--full`` seeds with ``current_phase="refine"``;
+focused/standard seed with ``current_phase="spec"``.
 """
 
 from __future__ import annotations
@@ -122,7 +122,7 @@ def test_seed_routed_feature_standard_happy_path(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Full-tier seed — P6.2 contract (refine entry phase, refine⇒full locked)
+# Full-tier seed contract (refine entry phase, refine⇒full locked)
 # ---------------------------------------------------------------------------
 
 
@@ -342,6 +342,101 @@ def test_feature_slug_accepted_at_three_char_boundary(tmp_path: Path) -> None:
     assert folder.name == "2026-05-08-abc"
 
 
+def test_seed_routed_feature_missing_schema_raises_runtime_error(tmp_path: Path) -> None:
+    """A missing schemas/state.schema.json must surface a clean RuntimeError
+    naming the missing path, not a raw FileNotFoundError bubbled up from
+    inside write_state.
+    """
+    # NOTE: do NOT call _stage_repo — the test exercises the no-schema branch.
+    repo = tmp_path
+    with pytest.raises(RuntimeError, match=r"schemas/state\.schema\.json missing"):
+        seed_routed_feature(
+            repo,
+            idea="any idea",
+            final_tier="focused",
+            today=TODAY,
+        )
+
+
+def test_seed_routed_feature_idea_over_4000_chars_raises_clean_error(tmp_path: Path) -> None:
+    """A >4000-char idea must surface a clean cap error rather than the
+    schema-validation dump that includes the full payload inline.
+
+    The seeder pre-validates ``len(idea) <= 4000`` BEFORE any disk mutation
+    and raises ``ValueError`` with a message containing ``trim`` so the
+    operator knows what to do.
+    """
+    repo = _stage_repo(tmp_path)
+    overlong = "x" * 4001
+
+    with pytest.raises(ValueError, match=r"idea exceeds 4000-char cap.*trim"):
+        seed_routed_feature(
+            repo,
+            idea=overlong,
+            final_tier="focused",
+            today=TODAY,
+        )
+
+    features_root = repo / ".forge" / "features"
+    assert not features_root.exists() or not any(features_root.iterdir()), (
+        "no folder may be seeded when idea exceeds the 4000-char cap"
+    )
+
+
+def test_seed_routed_feature_idea_at_4000_char_boundary_accepted(tmp_path: Path) -> None:
+    """Boundary: an idea of exactly 4000 chars is accepted (cap is inclusive).
+
+    Uses an explicit ``feature_slug`` so the test does not depend on whether
+    the idea-derived slug fits in the filesystem's filename length cap; only
+    the helper-level cap check is being exercised here.
+    """
+    repo = _stage_repo(tmp_path)
+    at_cap = "x" * 4000
+
+    folder = seed_routed_feature(
+        repo,
+        idea=at_cap,
+        final_tier="focused",
+        today=TODAY,
+        feature_slug="cap-boundary",
+    )
+    assert folder.is_dir()
+
+
+def test_seed_routed_feature_feature_slug_canonical_collision_raises(tmp_path: Path) -> None:
+    """``feature_slug`` that names an existing canonical capability must refuse.
+
+    Without this guard, an operator could pass ``feature_slug="auth"`` while
+    ``.forge/specs/auth/SPEC.md`` already exists. The seed would succeed
+    silently and ship would later detect the canonical collision after wasted
+    spec/execute/verify work. This test pre-creates the canonical capability,
+    invokes ``seed_routed_feature`` with the colliding slug, and asserts:
+
+      * ``ArchiveError`` is raised with a clear "clashes with existing canonical
+        capability" message.
+      * No ``.forge/features/<feature_id>/`` folder is created.
+    """
+    repo = _stage_repo(tmp_path)
+    canonical_slug = "auth"
+    canonical_dir = repo / ".forge" / "specs" / canonical_slug
+    canonical_dir.mkdir(parents=True)
+    (canonical_dir / "SPEC.md").write_text("# canonical\n", encoding="utf-8")
+
+    with pytest.raises(ArchiveError, match="clashes with existing canonical capability"):
+        seed_routed_feature(
+            repo,
+            idea="add a different idea entirely",
+            final_tier="focused",
+            today=TODAY,
+            feature_slug=canonical_slug,
+        )
+
+    features_root = repo / ".forge" / "features"
+    assert not features_root.exists() or not any(features_root.iterdir()), (
+        "no folder may be seeded when feature_slug clashes with a canonical capability"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Slug derivation + collision
 # ---------------------------------------------------------------------------
@@ -474,13 +569,88 @@ def test_cleanup_failure_with_baseexception_preserves_original(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """If cleanup raises a BaseException (e.g. KeyboardInterrupt mid-rmtree),
+    """If cleanup raises a normal Exception (NOT KeyboardInterrupt/SystemExit),
     the ORIGINAL ``record_routing_decision`` exception must still propagate
     and a one-line WARN must hit stderr.
 
-    Locks remediation for M3 P6.1 T7 finding p6-1-M3 — without the explicit
-    BaseException catch around cleanup, a KeyboardInterrupt during rmtree
-    would mask the underlying StateError.
+    The BaseException catch around cleanup must distinguish between
+    user-cancel signals (KeyboardInterrupt / SystemExit, propagated) and
+    other cleanup faults (suppressed; original re-raised).
+    """
+    repo = _stage_repo(tmp_path)
+
+    def _boom(*args: Any, **kwargs: Any) -> None:
+        raise StateError("original routing failure")
+
+    def _cleanup_runtime_error(*args: Any, **kwargs: Any) -> bool:
+        raise RuntimeError("disk error during rmtree")
+
+    monkeypatch.setattr(routing, "record_routing_decision", _boom)
+    monkeypatch.setattr(routing, "cleanup_seeded_feature", _cleanup_runtime_error)
+
+    with pytest.raises(StateError, match="original routing failure"):
+        seed_routed_feature(
+            repo,
+            idea="cleanup failure during routing failure",
+            final_tier="focused",
+            today=TODAY,
+        )
+
+    captured = capsys.readouterr()
+    assert "cleanup_seeded_feature raised during post-seed rollback" in captured.err, (
+        "stderr must carry the WARN line so operators can correlate the "
+        "rollback failure with the original record_routing_decision exception"
+    )
+
+
+def test_cleanup_wrapper_preserves_cause_chain_on_re_raise(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L7: the cleanup wrapper re-raises the original exception WITHOUT
+    ``from None`` so ``__context__`` is preserved (re-raise without
+    suppression). The cleanup exception itself is swallowed via the
+    inner except branches so chaining cannot reintroduce it.
+    """
+    repo = _stage_repo(tmp_path)
+
+    # Build the original exception with an explicit cause chain so we can
+    # assert the chain survives the re-raise unchanged.
+    inner_cause = ValueError("inner cause")
+    original = StateError("original routing failure")
+    original.__cause__ = inner_cause
+
+    def _boom(*args: Any, **kwargs: Any) -> None:
+        raise original
+
+    monkeypatch.setattr(routing, "record_routing_decision", _boom)
+
+    with pytest.raises(StateError) as excinfo:
+        seed_routed_feature(
+            repo,
+            idea="cause chain check",
+            final_tier="focused",
+            today=TODAY,
+        )
+    # Original cause must survive — ``raise original from None`` would
+    # have set ``__suppress_context__ = True`` and dropped the chain.
+    assert excinfo.value.__cause__ is inner_cause
+
+
+def test_cleanup_keyboard_interrupt_propagates_over_original(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """If cleanup raises KeyboardInterrupt mid-rollback, the cancel signal
+    MUST propagate (not the original exception) and stderr MUST carry the
+    'USER CANCELLED MID-ROLLBACK' WARN so the operator knows the partial
+    folder may remain at .forge/features/<id>.
+
+    Previously the BaseException catch silently swallowed cleanup-side
+    KeyboardInterrupt and re-raised the original exception, so a Ctrl-C
+    mid-rollback looked like a clean failure even though the partial
+    folder was still on disk.
     """
     repo = _stage_repo(tmp_path)
 
@@ -493,7 +663,8 @@ def test_cleanup_failure_with_baseexception_preserves_original(
     monkeypatch.setattr(routing, "record_routing_decision", _boom)
     monkeypatch.setattr(routing, "cleanup_seeded_feature", _cleanup_kbd_interrupt)
 
-    with pytest.raises(StateError, match="original routing failure"):
+    # KeyboardInterrupt from cleanup MUST propagate, not the StateError.
+    with pytest.raises(KeyboardInterrupt):
         seed_routed_feature(
             repo,
             idea="kbd interrupt during cleanup",
@@ -502,9 +673,13 @@ def test_cleanup_failure_with_baseexception_preserves_original(
         )
 
     captured = capsys.readouterr()
-    assert "cleanup_seeded_feature raised during post-seed rollback" in captured.err, (
-        "stderr must carry the WARN line so operators can correlate the "
-        "rollback failure with the original record_routing_decision exception"
+    assert "USER CANCELLED MID-ROLLBACK" in captured.err, (
+        "stderr must carry the 'USER CANCELLED MID-ROLLBACK' WARN so the "
+        "operator knows the partial folder may remain on disk"
+    )
+    assert "partial folder may remain" in captured.err, (
+        "stderr WARN must mention the partial folder may remain so the operator "
+        "knows to clean it up manually"
     )
 
 

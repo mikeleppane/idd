@@ -1,9 +1,10 @@
-"""Regression: P4 surface presence in AGENTS.md and README.md.
+"""Regression: pre-spec surface presence in AGENTS.md and README.md.
 
 Asserts:
 1. AGENTS.md skills table contains forge-refine and forge-domain rows.
 2. AGENTS.md commands table contains /forge:refine and /forge:domain rows.
-3. AGENTS.md lifecycle prose mentions the M3 P4 footprint (increment_refine_attempts).
+3. AGENTS.md lifecycle prose mentions the refine-loop footprint
+   (increment_refine_attempts).
 4. README.md contains the Pre-spec phases callout with both new commands.
 """
 

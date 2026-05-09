@@ -1,4 +1,4 @@
-"""Tests for cleanup_seeded_feature (M3 P6.1 T0.5 contract).
+"""Tests for cleanup_seeded_feature.
 
 The helper is a distinct call-site alias for cleanup_orphan_feature: same
 generalized predicate (refine|spec x in_progress + no commits + folder

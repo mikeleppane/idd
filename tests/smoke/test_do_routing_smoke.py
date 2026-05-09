@@ -1,4 +1,5 @@
-"""Smoke tests for the ``/forge:do`` post-confirm routing surface (M3 P6.1 T6).
+"""Smoke tests for the ``/forge:do`` post-confirm routing surface
+(focused / standard tiers).
 
 These tests drive :func:`tools.routing.seed_routed_feature` and the documented
 downstream Python helper sequence — no live LLM, no slash-command runtime,
@@ -6,16 +7,13 @@ no user dialogue.  They walk the post-user-confirm half of ``/forge:do``
 end-to-end against schema-validated ``state.json`` payloads and assert that
 ``next_phase_command`` returns the right slash literal at every boundary.
 
-Out-of-scope for pytest (manual / plugin-verified per the appended checklist
-at the bottom of ``docs/plans/2026-05-08-m3-p6-1-do-routing.md``):
+Out-of-scope for pytest (manual / plugin-verified):
 
   * Live LLM tier proposal.
   * User-confirm dialogue (numbered checkbox UI).
   * Constitution skip / bootstrap / cancel UI flow.
   * KeyboardInterrupt mid-confirm cleanup (between Constitution preflight
     and tier confirm).
-
-Coverage target: AC #6, #7, #11 from the M3 P6.1 plan.
 """
 
 from __future__ import annotations
@@ -204,10 +202,9 @@ def test_capability_scan_does_not_block_seeder_no_canonical_guard(tmp_path: Path
     second invocation collides because the FEATURE folder now exists, not
     because the canonical capability is in the way.
 
-    Renamed from ``test_capability_collision_suffix_disambig_branch``
-    (M3 P6.1 T7 finding p6-1-L7) — the old name overstated coverage; the
-    real suffix-disambig flow is locked by
-    ``test_suffix_disambig_yields_distinct_slug``.
+    Renamed from ``test_capability_collision_suffix_disambig_branch`` —
+    the old name overstated coverage; the real suffix-disambig flow is
+    locked by ``test_suffix_disambig_yields_distinct_slug``.
     """
     repo = _stage_repo(tmp_path)
 
@@ -257,8 +254,6 @@ def test_suffix_disambig_yields_distinct_slug(tmp_path: Path) -> None:
     test claimed to cover but actually didn't.  Drives two
     ``seed_routed_feature`` calls back-to-back with idea variants that
     slug-derive to different folders.
-
-    M3 P6.1 T7 finding p6-1-L7.
     """
     repo = _stage_repo(tmp_path)
     idea_a = "add OAuth login flow"
@@ -370,10 +365,10 @@ def test_record_routing_decision_failure_leaves_no_orphan(
 
 
 # ---------------------------------------------------------------------------
-# Full-tier smoke moved to tests/smoke/test_do_routing_full_tier_smoke.py
-# (P6.2 owns the end-to-end seed → refine → spec → domain walk plus
-# refined_idea persistence, capability-scan locking, and full-tier
-# post-seed cleanup. This file owns focused/standard only.)
+# Full-tier smoke lives in tests/smoke/test_do_routing_full_tier_smoke.py
+# (end-to-end seed → refine → spec → domain walk plus refined_idea
+# persistence, capability-scan locking, and full-tier post-seed cleanup).
+# This file owns focused/standard only.
 # ---------------------------------------------------------------------------
 
 
@@ -388,8 +383,8 @@ def test_schema_path_enforcement_refuses_bogus_tier_before_seed(tmp_path: Path) 
     The validation order in ``seed_routed_feature`` (step 1 of the
     docstring) catches any tier outside ``VALID_TIERS`` and refuses
     BEFORE the slug compute, the collision check, or any folder
-    creation.  As of P6.2 ``full`` is a legitimate tier and seeds
-    normally; only genuinely invalid values land here.
+    creation.  ``full`` is a legitimate tier and seeds normally; only
+    genuinely invalid values land here.
     """
     repo = _stage_repo(tmp_path)
 

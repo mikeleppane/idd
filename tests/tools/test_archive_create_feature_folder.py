@@ -1,4 +1,4 @@
-"""Tests for create_feature_folder (M3 P6.1 T2 contract).
+"""Tests for create_feature_folder.
 
 Composes existing templates/feature/ files (state.json, SPEC.md,
 decisions.md) into a fresh .forge/features/<feature_id>/ folder.  Per-file
@@ -24,6 +24,7 @@ from typing import Any
 
 import pytest
 
+from tools import archive as archive_mod
 from tools import constitution_amend
 from tools.archive import ArchiveError, create_feature_folder
 from tools.state import StateError
@@ -97,6 +98,35 @@ def test_create_feature_folder_collision_raises(tmp_path: Path) -> None:
     existing.mkdir(parents=True)
 
     with pytest.raises(ArchiveError, match="feature folder already exists"):
+        create_feature_folder(
+            tmp_path,
+            feature_id=feature_id,
+            tier="focused",
+            schema_path=SCHEMA_PATH,
+        )
+
+
+def test_create_feature_folder_toctou_race_wraps_file_exists_as_archive_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L3: a folder created between feature_folder_exists() and mkdir()
+    triggers FileExistsError. The helper must wrap it as ArchiveError so
+    callers see a consistent exception type, not a raw FileExistsError.
+    """
+    feature_id = "2026-05-08-toctou-race"
+
+    # Simulate the race: collision check returns False (folder doesn't
+    # exist), then a concurrent process creates it before our mkdir runs.
+    def _fake_exists(_repo_root: Path, _fid: str) -> bool:
+        return False
+
+    monkeypatch.setattr(archive_mod, "feature_folder_exists", _fake_exists)
+
+    # Pre-create the folder so the actual mkdir fails with FileExistsError.
+    (tmp_path / ".forge" / "features" / feature_id).mkdir(parents=True)
+
+    with pytest.raises(ArchiveError, match=r"race detected"):
         create_feature_folder(
             tmp_path,
             feature_id=feature_id,
@@ -290,7 +320,7 @@ def test_create_feature_folder_decisions_md_copied_byte_for_byte(tmp_path: Path)
 
 
 # ---------------------------------------------------------------------------
-# current_phase kwarg — P6.2 full-tier refine seed
+# current_phase kwarg — full-tier refine seed
 # ---------------------------------------------------------------------------
 
 
@@ -360,7 +390,7 @@ def test_create_feature_folder_invalid_current_phase_raises(tmp_path: Path, bad_
 
 
 def test_create_feature_folder_default_current_phase_is_spec(tmp_path: Path) -> None:
-    """Calling without current_phase= preserves P6.1 contract: phases.spec block."""
+    """Calling without current_phase= defaults to spec entry: phases.spec block."""
     feature_id = "2026-05-08-default-spec"
     create_feature_folder(
         tmp_path,

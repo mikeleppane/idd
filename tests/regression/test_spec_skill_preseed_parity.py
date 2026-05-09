@@ -1,6 +1,7 @@
 """Regression: forge-spec /forge:do pre-seed branch narrative parity.
 
-Locks the M3 P6.1 T4 narrative additions to ``skills/forge-spec/SKILL.md``:
+Locks the focused/standard pre-seed narrative additions to
+``skills/forge-spec/SKILL.md``:
 
 1. The pre-seed predicate has four conjuncts (all must hold) — ``--feature
    <id>`` resolved, ``state.json`` parses, ``routing`` block present,
@@ -8,12 +9,12 @@ Locks the M3 P6.1 T4 narrative additions to ``skills/forge-spec/SKILL.md``:
 2. The pre-seed branch skips steps 1, 2, 3, AND 4 (capability scan,
    feature-id compute, collision check, folder create) — ``/forge:do``
    already ran them.
-3. The M2 fallback branch fires when ANY conjunct fails (or the routing
+3. The direct fallback branch fires when ANY conjunct fails (or the routing
    block is absent) — runs all steps as today.
 4. Step 6 Intent honors a three-level idea-source precedence in order:
    ``state.json.refined_idea`` → ``state.json.routing.idea`` → CLI
    ``<idea>``. ``routing.idea`` is the secondary source slotted between
-   the P4 ``refined_idea`` and the M2 CLI fallback.
+   the upstream ``refined_idea`` and the direct CLI fallback.
 5. Step 8 phase transition guards against double-invoking ``start_phase``
    on the pre-seed path: ``/forge:do`` already wrote
    ``phases.spec.status: "in_progress"`` via ``create_feature_folder``'s
@@ -79,21 +80,21 @@ def test_pre_seed_branch_skips_steps_1_through_4() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. M2 fallback branch still runs all steps
+# 3. direct fallback branch still runs all steps
 # ---------------------------------------------------------------------------
 
 
-def test_m2_fallback_branch_runs_all_steps() -> None:
-    """The M2 fallback path must still be documented — when the routing block
-    is absent (direct ``/forge:spec "<idea>"`` invocation) the skill creates
-    the folder itself and runs all steps as today.
+def test_direct_fallback_branch_runs_all_steps() -> None:
+    """The direct-invocation fallback path must still be documented — when the
+    routing block is absent (direct ``/forge:spec "<idea>"`` invocation) the
+    skill creates the folder itself and runs all steps as today.
     """
-    assert "M2 fallback" in _BODY, (
-        "SKILL.md must label the no-routing path as the 'M2 fallback' branch"
+    assert "direct fallback" in _BODY, (
+        "SKILL.md must label the no-routing path as the 'direct fallback' branch"
     )
     # Spell out that the fallback path runs all steps (today's behavior).
     assert "all steps" in _BODY, (
-        "SKILL.md must state the M2 fallback branch runs all steps in order"
+        "SKILL.md must state the direct fallback branch runs all steps in order"
     )
 
 
@@ -205,13 +206,13 @@ def test_pre_seed_predicate_all_four_required() -> None:
     )
 
 
-def test_m2_fallback_predicate_negation() -> None:
-    """The M2 fallback path runs when ANY conjunct fails (the negation of the
-    pre-seed predicate). Prose must say so to make the branch decision
-    unambiguous.
+def test_direct_fallback_predicate_negation() -> None:
+    """The direct fallback path runs when ANY conjunct fails (the negation
+    of the pre-seed predicate). Prose must say so to make the branch
+    decision unambiguous.
     """
     lowered = _BODY.lower()
     assert ("any conjunct fails" in lowered) or ("otherwise" in lowered), (
-        "SKILL.md must state the M2 fallback runs when any conjunct fails "
+        "SKILL.md must state the direct fallback runs when any conjunct fails "
         "(or use 'otherwise' to negate the pre-seed predicate cleanly)"
     )

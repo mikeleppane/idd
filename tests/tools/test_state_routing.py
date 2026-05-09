@@ -109,19 +109,21 @@ def test_record_routing_decision_overwrites_existing_block(
     }
     state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
 
+    # final_tier MUST match state.json.tier under the M3 cross-check guard;
+    # base payload carries tier="standard" so the re-call uses "standard".
     result = state.record_routing_decision(
         target,
         idea="new idea",
-        proposed_tier="standard",
-        final_tier="full",
-        rationale="user override to full",
+        proposed_tier="focused",
+        final_tier="standard",
+        rationale="user override on second decision",
         constitution_present=True,
         schema_path=schemas_dir / "state.schema.json",
         now="2026-05-04T09:55:00Z",
     )
 
     assert result["routing"]["idea"] == "new idea"
-    assert result["routing"]["final_tier"] == "full"
+    assert result["routing"]["final_tier"] == "standard"
     assert result["routing"]["constitution_present"] is True
 
 
@@ -179,6 +181,38 @@ def test_record_routing_decision_rejects_unknown_proposed_tier_without_schema(
             idea="x",
             proposed_tier="exotic",
             final_tier="standard",
+        )
+
+
+def test_record_routing_decision_rejects_final_tier_mismatching_state_tier(
+    tmp_path: Path,
+) -> None:
+    """``final_tier`` must equal ``state.json.tier`` (M3 cross-check).
+
+    A focused/standard feature whose routing block somehow ends up with
+    ``final_tier="full"`` would corrupt downstream phase-pump logic. The
+    cross-check refuses the write so the inconsistency cannot reach disk.
+    """
+    target = tmp_path / "state.json"
+    # base payload tier is "standard"
+    state.write_state(target, _base_payload())
+
+    with pytest.raises(
+        state.StateError, match=r"final_tier 'full' mismatches state\.json\.tier 'standard'"
+    ):
+        state.record_routing_decision(
+            target,
+            idea="x",
+            final_tier="full",
+        )
+
+    with pytest.raises(
+        state.StateError, match=r"final_tier 'focused' mismatches state\.json\.tier 'standard'"
+    ):
+        state.record_routing_decision(
+            target,
+            idea="x",
+            final_tier="focused",
         )
 
 
@@ -686,7 +720,7 @@ def test_next_phase_command_returns_none_for_non_string_tier() -> None:
 
 
 # ---------------------------------------------------------------------------
-# routing.idea length cap (M3 P6.1 T7 finding p6-1-L5)
+# routing.idea length cap
 # ---------------------------------------------------------------------------
 
 
@@ -744,3 +778,55 @@ def test_routing_idea_at_cap_accepted(tmp_path: Path, schemas_dir: Path) -> None
     state.write_state(target, payload, schema_path=schemas_dir / "state.schema.json")
 
     assert len(json.loads(target.read_text(encoding="utf-8"))["routing"]["idea"]) == 4000
+
+
+# ---------------------------------------------------------------------------
+# guard_refine_entry — tier + phase preflight for /forge:refine direct entry
+# ---------------------------------------------------------------------------
+
+
+def _full_refine_payload(feature_id: str = "2026-05-04-demo") -> dict[str, Any]:
+    """Payload pinned at tier=full + current_phase=refine — guard happy path."""
+    return {
+        "feature_id": feature_id,
+        "tier": "full",
+        "current_phase": "refine",
+        "phases": {"refine": {"status": "in_progress", "started_at": "2026-05-04T10:00:00Z"}},
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+
+
+def test_guard_refine_entry_returns_payload_on_happy_path(tmp_path: Path) -> None:
+    """tier=full + current_phase=refine returns the parsed payload (no double-read)."""
+    target = tmp_path / "state.json"
+    state.write_state(target, _full_refine_payload())
+
+    payload = state.guard_refine_entry(target)
+
+    assert payload["tier"] == "full"
+    assert payload["current_phase"] == "refine"
+
+
+def test_guard_refine_entry_raises_on_wrong_tier(tmp_path: Path) -> None:
+    """tier=focused/standard refuses with a 'tier' diagnostic."""
+    target = tmp_path / "state.json"
+    payload = _full_refine_payload()
+    payload["tier"] = "focused"
+    state.write_state(target, payload)
+
+    with pytest.raises(state.StateError, match=r"refine.*full-tier|tier.*'focused'"):
+        state.guard_refine_entry(target)
+
+
+def test_guard_refine_entry_raises_on_wrong_phase(tmp_path: Path) -> None:
+    """current_phase != refine refuses with a 'phase' diagnostic."""
+    target = tmp_path / "state.json"
+    payload = _full_refine_payload()
+    payload["current_phase"] = "spec"
+    payload["phases"] = {"spec": {"status": "in_progress", "started_at": "2026-05-04T10:00:00Z"}}
+    state.write_state(target, payload)
+
+    with pytest.raises(state.StateError, match=r"current_phase.*'spec'.*expected 'refine'"):
+        state.guard_refine_entry(target)

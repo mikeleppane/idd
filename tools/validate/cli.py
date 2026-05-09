@@ -320,7 +320,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point for /forge:validate. See module-level exit-code contract."""
     parser = argparse.ArgumentParser(
         prog="python -m tools.validate",
-        description="FORGE validator (M3 P2a structural + P2b semantic)",
+        description="FORGE validator (structural + semantic checks)",
     )
     parser.add_argument(
         "--target",

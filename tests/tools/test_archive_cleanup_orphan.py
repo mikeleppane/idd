@@ -87,9 +87,9 @@ def test_happy_path_state_json_only(tmp_path: Path) -> None:
 def test_refuse_current_phase_not_refine(tmp_path: Path) -> None:
     """current_phase advanced past the seed-phase set → returns False, folder intact.
 
-    Post M3 P6.1 T0.5 the predicate accepts both ``refine`` and ``spec`` as
-    seed phases.  This test now asserts refusal once the phase has advanced
-    PAST those seeds (plan, execute, ...).
+    The predicate accepts both ``refine`` and ``spec`` as seed phases.
+    This test asserts refusal once the phase has advanced PAST those
+    seeds (plan, execute, ...).
     """
     feature_id = "2026-05-08-wrong-phase"
     folder = tmp_path / ".forge" / "features" / feature_id

@@ -46,10 +46,10 @@ re-running refine on an existing feature whose `current_phase` is already
 ## Mode resolution
 
 Two entry paths converge on this skill: the **`/forge:do --full` pre-seed**
-branch (M3 P6.2+, the routing entry-point seeded the feature folder +
+branch (the routing entry-point seeded the feature folder +
 `state.json.routing` block + advanced `current_phase` to `refine` before
-dispatching here) and the **direct-invocation fallback** (M3 P4 path —
-`/forge:refine --feature <id> "<idea>"` invoked standalone against an
+dispatching here) and the **direct-invocation fallback**
+(`/forge:refine --feature <id> "<idea>"` invoked standalone against an
 existing feature folder, no upstream `/forge:do` seed).
 
 **Pre-seed predicate (locked, four-conjunct AND).** The pre-seed branch
@@ -71,9 +71,8 @@ direct-invocation fallback path runs:
 
 All four conjuncts must hold for the pre-seed branch to fire. If any
 conjunct fails — including the routing block being absent — the
-**direct-invocation fallback** branch runs as today (M3 P4 behavior:
-seed the routing block from CLI `<idea>` if `routing.idea` is absent;
-abort if both are absent).
+**direct-invocation fallback** branch runs: seed the routing block from
+CLI `<idea>` if `routing.idea` is absent; abort if both are absent.
 
 **Pre-seed branch behavior.** When the predicate holds, `/forge:refine`
 ENTERS the Socratic loop directly using `state.json.routing.idea` as the
@@ -88,7 +87,7 @@ pre-seed and direct-invocation paths must satisfy `current_phase ==
 
 **Direct-invocation fallback behavior.** When ANY conjunct fails (e.g.,
 `routing` block absent because the user invoked `/forge:refine`
-standalone), retain existing M3 P4 behavior: seed the routing block via
+standalone), seed the routing block via
 `record_routing_decision(path, idea=<idea>, final_tier="full",
 proposed_tier="full", rationale="direct /forge:refine invocation")` from
 the CLI `<idea>` if `routing.idea` is absent; if both `routing.idea` AND
@@ -99,19 +98,24 @@ under "Inputs" above.
 
 1. **Resolve feature.** Read `--feature <id>` or apply the single-active rule.
    Locate `.forge/features/<id>/state.json`.
-2. **Guard phase.** Read state.json; require `current_phase == "refine"`.
-   Otherwise abort with the `StateError` raised by
-   `tools.state.increment_refine_attempts` itself — message format:
-   `"cannot increment refine_attempts: current_phase is '<X>', expected 'refine'"`.
-   Do not invent a custom abort string; the helper is the single source of
-   truth so users see consistent errors across phases.
-3. **Guard tier.** After the phase guard, also require `state.json.tier == "full"`.
-   The canonical helper `tools.state.increment_refine_attempts` calls
-   `tools.state.require_full_tier(payload, phase="refine")` and surfaces
-   the verbatim raise:
-   `"refine phase is full-tier only; current tier is '<X>'"`. Do not invent
-   a custom abort string here either; quote the helper. Refine is full-tier
-   only — focused and standard tiers do not enter this phase.
+2. **Guard tier + phase BEFORE any mutation.** Call
+   `tools.state.guard_refine_entry(state_path)` which reads state.json once
+   and refuses if `current_phase != "refine"` (message format:
+   `"cannot enter refine: current_phase is '<X>', expected 'refine'"`) OR
+   if `tier != "full"` (message format:
+   `"refine phase is full-tier only; current tier is '<X>'"`). The helper
+   returns the parsed payload so the rest of the skill does not need a
+   second read. Refine is full-tier only — focused and standard tiers do
+   not enter this phase. Do not invent a custom abort string; quote the
+   helper. This guard MUST run BEFORE any call to
+   `record_routing_decision` so a wrong-tier feature cannot have its
+   routing block clobbered with `final_tier="full"`.
+3. **(Per-round phase guard reminder.)** `tools.state.increment_refine_attempts`
+   ALSO checks `current_phase == "refine"` and `tier == "full"` on every
+   round (defense in depth) and raises with the same wording — message
+   format: `"cannot increment refine_attempts: current_phase is '<X>',
+   expected 'refine'"` and
+   `"refine phase is full-tier only; current tier is '<X>'"`.
 4. **Resolve idea source.** Branch on the pre-seed predicate (see "Mode
    resolution" above):
    - **Pre-seed branch** (all four conjuncts hold): `routing.idea` is
@@ -119,8 +123,8 @@ under "Inputs" above.
      it as the seed text and ignore any CLI `<idea>` argument — routing
      is the canonical record. Do **NOT** call `record_routing_decision`
      again; doing so would clobber the seed `decided_at` timestamp.
-   - **Direct-invocation fallback** (any conjunct fails): existing M3 P4
-     behavior. If `routing.idea` is present, use it and ignore any CLI
+   - **Direct-invocation fallback** (any conjunct fails). If
+     `routing.idea` is present, use it and ignore any CLI
      `<idea>`. If `routing.idea` is absent AND a CLI `<idea>` was passed,
      seed the routing block first via
      `tools.state.record_routing_decision(path, idea=<idea>, final_tier="full",

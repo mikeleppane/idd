@@ -36,9 +36,9 @@ def test_repo_with_committed_feature_returns_no_findings(tmp_path: Path) -> None
     """A feature folder that already has at least one commit recorded is
     NOT an orphan candidate, so the scan returns clean.
 
-    Renamed from ``test_clean_repo_returns_no_findings`` (M3 P6.1 T7
-    finding p6-1-M4): the original name overstated coverage because the
-    fixture has a commit, which is the inverse of "clean repo" semantics.
+    Renamed from ``test_clean_repo_returns_no_findings``: the original name
+    overstated coverage because the fixture has a commit, which is the
+    inverse of "clean repo" semantics.
     See ``test_archived_done_feature_returns_no_findings`` for the
     truly-clean repo case and
     ``test_fresh_feature_with_no_commits_produces_low_orphan_finding``
@@ -61,9 +61,8 @@ def test_archived_done_feature_returns_no_findings(tmp_path: Path) -> None:
     ``.forge/features/`` produces zero findings — the originally-intended
     "clean repo with one shipped feature" semantics.
 
-    M3 P6.1 T7 finding p6-1-M4 — restores the coverage that
-    ``test_clean_repo_returns_no_findings`` was supposed to provide
-    before T0.5 weakened it with a forced commit entry.
+    Restores the coverage that the prior ``test_clean_repo_returns_no_findings``
+    was supposed to provide before it was weakened with a forced commit entry.
     """
     canonical = tmp_path / ".forge" / "specs" / "shipped-feature"
     canonical.mkdir(parents=True)
@@ -86,9 +85,8 @@ def test_fresh_feature_with_no_commits_produces_low_orphan_finding(tmp_path: Pat
     """A freshly-seeded feature (current_phase=spec, no commits, only the
     canonical seed files) MUST produce exactly one LOW orphan finding.
 
-    Locks the post-T0.5 contract: orphan detection now fires for the
-    /forge:do focused/standard pre-seed, not just the legacy refine seed.
-    M3 P6.1 T7 finding p6-1-M4.
+    Locks the contract: orphan detection fires for the /forge:do
+    focused/standard pre-seed, not just the legacy refine seed.
     """
     folder = tmp_path / ".forge" / "features" / "2026-05-08-fresh"
     _seed_state(folder)  # default: current_phase=spec, in_progress, commits=[]

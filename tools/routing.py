@@ -20,13 +20,13 @@ The function composes T0.5 + T2 + existing P5/P1 helpers:
     folder was created on disk.
 
 All three tiers seed normally: ``focused`` / ``standard`` enter at
-``current_phase="spec"`` (P6.1 default), and ``full`` enters at
-``current_phase="refine"`` (P6.2 — refine is full-tier-only per the locked
-constraint enforced by ``create_feature_folder``).  Unknown tiers refuse
-via :class:`ValueError` BEFORE any mutation, so the seed slot can never
-leave a partial folder behind.
+``current_phase="spec"``, and ``full`` enters at ``current_phase="refine"``
+(refine is full-tier-only per the locked constraint enforced by
+``create_feature_folder``).  Unknown tiers refuse via :class:`ValueError`
+BEFORE any mutation, so the seed slot can never leave a partial folder
+behind.
 
-Coverage AC: 100% on this module (M3 P6.1 plan §AC #5; preserved by P6.2).
+Coverage AC: 100% on this module.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ from tools.archive import (
     ArchiveError,
     cleanup_seeded_feature,
     create_feature_folder,
+    scan_existing_capabilities,
     slug_from_idea,
 )
 from tools.state import (
@@ -49,11 +50,18 @@ from tools.state import (
 )
 
 # Schema-aligned capability slug pattern.  Mirrors
-# ``tools.archive._CAPABILITY_SLUG_SCHEMA_RE`` (≥3 chars, alnum-leading).  Used
-# to validate the operator-supplied ``feature_slug`` for the suffix-disambig
-# branch — the chosen ``<slug>-v2`` / ``<slug>-bulk`` slug must satisfy the
-# same shape as a slug derived from ``slug_from_idea``.
-_FEATURE_SLUG_RE: re.Pattern[str] = re.compile(r"^[a-z0-9][a-z0-9-]{2,}$")
+# ``tools.archive._CAPABILITY_SLUG_SCHEMA_RE`` (≥3 chars, alnum-leading,
+# no trailing hyphen, no consecutive hyphens).  Used to validate the
+# operator-supplied ``feature_slug`` for the suffix-disambig branch — the
+# chosen ``<slug>-v2`` / ``<slug>-bulk`` slug must satisfy the same shape
+# as a slug derived from ``slug_from_idea``.
+_FEATURE_SLUG_RE: re.Pattern[str] = re.compile(r"^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){2,}$")
+
+# Mirrors ``schemas/state.schema.json`` ``routing.idea.maxLength``.  The
+# helper pre-validates length BEFORE any disk mutation so an overlong idea
+# surfaces a clean cap error instead of the schema's verbose validation
+# dump (which inlines the entire payload).
+_IDEA_MAX_CHARS: int = 4000
 
 
 def seed_routed_feature(
@@ -84,7 +92,7 @@ def seed_routed_feature(
       2. Derive ``current_phase`` from ``final_tier``:
          ``full`` → ``"refine"``; ``focused`` / ``standard`` → ``"spec"``.
          The full-tier branch relies on ``create_feature_folder`` to enforce
-         the refine⇒full constraint (M3 P6.2 T1).
+         the refine⇒full constraint.
       3. Compute ``today_iso`` from ``today`` (or ``date.today()`` when
          omitted) and ``feature_id = f"{today_iso}-{slug_from_idea(idea)}"``
          (or ``feature_slug`` when given for suffix-disambig).
@@ -149,9 +157,20 @@ def seed_routed_feature(
             re-raising.
     """
     # Step 1: refuse unknown tiers BEFORE any disk mutation.  All three
-    # known tiers (focused/standard/full) survive this gate as of P6.2.
+    # known tiers (focused/standard/full) survive this gate.
     if final_tier not in VALID_TIERS:
         raise ValueError(f"invalid final_tier {final_tier!r}; must be one of {VALID_TIERS}")
+
+    # Pre-validate idea length BEFORE any other mutation so the operator
+    # sees a clean cap error instead of the schema's verbose ValidationError
+    # dump (which inlines the full payload). The schema mirrors the same
+    # 4000-char cap; we surface the friendly message here so the routing
+    # helper owns the user-visible wording.
+    if len(idea) > _IDEA_MAX_CHARS:
+        raise ValueError(
+            f"idea exceeds {_IDEA_MAX_CHARS}-char cap (got {len(idea)} chars); "
+            "trim before /forge:do"
+        )
 
     # Step 2: derive seed entry phase from tier.  Full tier enters at
     # refine (Socratic loop owns the spec hand-off via complete_phase +
@@ -173,14 +192,32 @@ def seed_routed_feature(
                 "expected slug matching ^[a-z0-9][a-z0-9-]{2,}$ "
                 "(≥3 chars, alnum-leading, lowercase + hyphens)"
             )
+        # An operator-supplied feature_slug bypasses the SKILL-layer
+        # capability scan (forge-do step 4). Re-run the scan here so an
+        # operator who hand-picks a slug naming an existing canonical
+        # capability cannot seed silently and waste downstream phases.
+        # Suffix-disambig slugs (`<canonical>-v2`, `<canonical>-bulk`) are
+        # NOT in the scan result (they are NEW slugs distinct from the
+        # canonical one) so this guard only fires on a literal collision.
+        if feature_slug in scan_existing_capabilities(repo_root):
+            raise ArchiveError(
+                f"feature_slug {feature_slug!r} clashes with existing canonical capability"
+            )
         slug = feature_slug
     else:
         slug = slug_from_idea(idea)
     feature_id = f"{today_iso}-{slug}"
 
     # Step 4: schema path passed to BOTH helpers so payload validation
-    # refuses BEFORE any disk write.
+    # refuses BEFORE any disk write. Pre-check the schema file exists and
+    # surface a clean RuntimeError naming the missing path so the operator
+    # does not see a raw FileNotFoundError bubble up from inside
+    # write_state.
     schema_path = repo_root / "schemas" / "state.schema.json"
+    if not schema_path.is_file():
+        raise RuntimeError(
+            f"schemas/state.schema.json missing under {repo_root}; verify plugin install path"
+        )
 
     # Step 5: collision check BEFORE seed.  ``create_feature_folder`` would
     # also raise on collision, but we surface the same ArchiveError earlier
@@ -215,7 +252,7 @@ def seed_routed_feature(
     # one-line WARN and re-raise the ORIGINAL exception via ``raise original``.
     # We catch ``BaseException`` from cleanup — not just ``Exception`` — so a
     # ``KeyboardInterrupt`` during rmtree can never mask the underlying
-    # ``record_routing_decision`` failure.  Addresses M3 P6.1 T7 finding p6-1-M3.
+    # ``record_routing_decision`` failure.
     state_path = folder / "state.json"
     try:
         record_routing_decision(
@@ -230,14 +267,33 @@ def seed_routed_feature(
     except BaseException as original:
         try:
             cleanup_seeded_feature(repo_root, feature_id)
-        except BaseException:
-            # Cleanup itself raised. Log and fall through to re-raise the
-            # ORIGINAL record_routing_decision exception, NOT the cleanup one.
+        except (KeyboardInterrupt, SystemExit):
+            # A user-cancel signal mid-rollback (Ctrl-C / SystemExit) MUST
+            # propagate so the operator sees the actual cancel, instead of
+            # being silently masked by the original routing exception. The
+            # partial folder may remain on disk —
+            # surface that in the WARN so the operator can clean up manually.
+            print(
+                "WARN: USER CANCELLED MID-ROLLBACK; "
+                f"partial folder may remain at .forge/features/{feature_id}",
+                file=sys.stderr,
+            )
+            raise
+        except Exception:
+            # Cleanup itself raised a non-cancel exception. Log and fall
+            # through to re-raise the ORIGINAL record_routing_decision
+            # exception, NOT the cleanup one — the original carries the
+            # actionable failure mode.
             print(
                 "WARN: cleanup_seeded_feature raised during post-seed rollback; "
                 "original exception below",
                 file=sys.stderr,
             )
-        raise original from None
+        # Re-raise the original exception WITHOUT ``from None`` so the
+        # ``__cause__`` / ``__context__`` chain is preserved. The cleanup
+        # exception is already swallowed via the inner except branches, so
+        # chaining cannot reintroduce it; the chain only carries the
+        # original record_routing_decision traceback.
+        raise original
 
     return folder

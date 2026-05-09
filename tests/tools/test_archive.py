@@ -83,7 +83,19 @@ def test_invalid_capability_slug_rejected(tmp_path: Path, bad: str) -> None:
         write_canonical_spec(tmp_path, bad, "---\n---\n")
 
 
-@pytest.mark.parametrize("bad", ["", "bad-id", "2026-13-99-x", "../escape"])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "",
+        "bad-id",
+        "2026-13-99-x",
+        "../escape",
+        # Trailing hyphen and double hyphen previously slipped through the
+        # lax ``[a-z0-9-]+`` slug pattern; the tightened regex rejects both.
+        "2026-05-08-foo-",
+        "2026-05-08-foo--bar",
+    ],
+)
 def test_invalid_feature_id_rejected(tmp_path: Path, bad: str) -> None:
     with pytest.raises(ArchiveError, match="invalid feature id"):
         archive_feature(tmp_path, bad)

@@ -169,7 +169,7 @@ def test_evaluate_blocks_junk_between_marker_and_json() -> None:
 
 def test_evaluate_allows_dispatch_with_optional_articles_field() -> None:
     """Pin the dispatch hook's permissiveness on the optional `articles[]`
-    field (M3 P3). `hooks/check_budget.py` only enforces `files_in_scope` +
+    field. `hooks/check_budget.py` only enforces `files_in_scope` +
     `forbidden`; the `articles[]` budget field rides through unchanged.
     Guards against a future hook tightening that silently regresses the
     dispatch contract.
