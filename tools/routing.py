@@ -289,6 +289,11 @@ def seed_routed_feature(
                 "original exception below",
                 file=sys.stderr,
             )
-        raise original from None
+        # L7: re-raise the original exception WITHOUT ``from None`` so the
+        # ``__cause__`` / ``__context__`` chain is preserved. The cleanup
+        # exception is already swallowed via the inner except branches, so
+        # chaining cannot reintroduce it; the chain only carries the
+        # original record_routing_decision traceback.
+        raise original
 
     return folder

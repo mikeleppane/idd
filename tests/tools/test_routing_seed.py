@@ -605,6 +605,40 @@ def test_cleanup_failure_with_baseexception_preserves_original(
     )
 
 
+def test_cleanup_wrapper_preserves_cause_chain_on_re_raise(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L7: the cleanup wrapper re-raises the original exception WITHOUT
+    ``from None`` so ``__context__`` is preserved (re-raise without
+    suppression). The cleanup exception itself is swallowed via the
+    inner except branches so chaining cannot reintroduce it.
+    """
+    repo = _stage_repo(tmp_path)
+
+    # Build the original exception with an explicit cause chain so we can
+    # assert the chain survives the re-raise unchanged.
+    inner_cause = ValueError("inner cause")
+    original = StateError("original routing failure")
+    original.__cause__ = inner_cause
+
+    def _boom(*args: Any, **kwargs: Any) -> None:
+        raise original
+
+    monkeypatch.setattr(routing, "record_routing_decision", _boom)
+
+    with pytest.raises(StateError) as excinfo:
+        seed_routed_feature(
+            repo,
+            idea="cause chain check",
+            final_tier="focused",
+            today=TODAY,
+        )
+    # Original cause must survive — ``raise original from None`` would
+    # have set ``__suppress_context__ = True`` and dropped the chain.
+    assert excinfo.value.__cause__ is inner_cause
+
+
 def test_cleanup_keyboard_interrupt_propagates_over_original(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
