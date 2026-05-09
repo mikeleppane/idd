@@ -11,6 +11,7 @@ from tools.harden.contract import (
     HardenError,
     ScenarioOutcome,
     ScenarioPlan,
+    ScenarioStatus,
     run_contract,
 )
 
@@ -60,7 +61,7 @@ def test_run_contract_one_fail_returns_fail(tmp_path: Path) -> None:
     _write_feature(tmp_path, feature_id, _spec_with_scenarios("alpha", "beta", "gamma"))
 
     def runner(plan: ScenarioPlan) -> ScenarioOutcome:
-        status = "fail" if plan.title == "beta" else "pass"
+        status: ScenarioStatus = "fail" if plan.title == "beta" else "pass"
         return ScenarioOutcome(
             scenario_id=plan.scenario_id,
             title=plan.title,
@@ -113,7 +114,7 @@ def test_run_contract_missing_spec_raises(tmp_path: Path) -> None:
     # Feature directory exists but SPEC.md absent.
     (tmp_path / ".forge" / "features" / feature_id).mkdir(parents=True)
 
-    with pytest.raises(HardenError, match="SPEC.md missing"):
+    with pytest.raises(HardenError, match=r"SPEC\.md missing"):
         run_contract(tmp_path, feature_id)
 
 
