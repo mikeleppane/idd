@@ -24,7 +24,6 @@ build/
 
 # FORGE runtime artifacts (per-project, never committed in plugin repo)
 .forge/
-.forge/logs/
 # Test fixtures intentionally ship a synthetic .forge/ tree under target_repo/.
 !tests/fixtures/**/target_repo/.forge/
 # Smoke fixtures intentionally ship a synthetic .forge/ tree per feature.
