@@ -228,9 +228,7 @@ def test_uat_replay_non_interactive_disconfirmed_fails(tmp_path: Path) -> None:
         "\n".join(
             [
                 json.dumps({"prompt_id": "prompt-1", "status": "confirmed", "detail": "ok"}),
-                json.dumps(
-                    {"prompt_id": "prompt-2", "status": "disconfirmed", "detail": "broke"}
-                ),
+                json.dumps({"prompt_id": "prompt-2", "status": "disconfirmed", "detail": "broke"}),
             ]
         )
         + "\n",
