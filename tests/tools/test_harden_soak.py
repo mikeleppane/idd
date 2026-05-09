@@ -48,7 +48,7 @@ def test_detect_entrypoint_python_script_from_pyproject(tmp_path: Path) -> None:
     pyproject.write_text(
         "[project]\n"
         'name = "demo"\n'
-        "version = \"0.1.0\"\n"
+        'version = "0.1.0"\n'
         "\n"
         "[project.scripts]\n"
         'foo = "demo.cli:main"\n'
@@ -171,8 +171,12 @@ def test_run_soak_fail_on_memory_growth(tmp_path: Path) -> None:
     base_rss = 100 * 1024 * 1024
     grown_samples = [
         SoakSample(sample_index=0, elapsed_seconds=0.0, rss_bytes=base_rss, cpu_percent=1.0),
-        SoakSample(sample_index=1, elapsed_seconds=30.0, rss_bytes=int(base_rss * 1.2), cpu_percent=1.5),
-        SoakSample(sample_index=2, elapsed_seconds=60.0, rss_bytes=int(base_rss * 1.5), cpu_percent=2.0),
+        SoakSample(
+            sample_index=1, elapsed_seconds=30.0, rss_bytes=int(base_rss * 1.2), cpu_percent=1.5
+        ),
+        SoakSample(
+            sample_index=2, elapsed_seconds=60.0, rss_bytes=int(base_rss * 1.5), cpu_percent=2.0
+        ),
     ]
 
     def runner(_info: EntrypointInfo, _minutes: int) -> list[SoakSample]:
@@ -250,7 +254,9 @@ def test_run_soak_growth_threshold_configurable(tmp_path: Path) -> None:
     base_rss = 100 * 1024 * 1024
     samples = [
         SoakSample(sample_index=0, elapsed_seconds=0.0, rss_bytes=base_rss, cpu_percent=1.0),
-        SoakSample(sample_index=1, elapsed_seconds=30.0, rss_bytes=int(base_rss * 1.3), cpu_percent=1.5),
+        SoakSample(
+            sample_index=1, elapsed_seconds=30.0, rss_bytes=int(base_rss * 1.3), cpu_percent=1.5
+        ),
     ]
 
     def runner(_info: EntrypointInfo, _minutes: int) -> list[SoakSample]:
