@@ -56,6 +56,12 @@ from tools.state import (
 # same shape as a slug derived from ``slug_from_idea``.
 _FEATURE_SLUG_RE: re.Pattern[str] = re.compile(r"^[a-z0-9][a-z0-9-]{2,}$")
 
+# Mirrors ``schemas/state.schema.json`` ``routing.idea.maxLength``.  The
+# helper pre-validates length BEFORE any disk mutation so an overlong idea
+# surfaces a clean cap error instead of the schema's verbose validation
+# dump (which inlines the entire payload — M6 finding M7).
+_IDEA_MAX_CHARS: int = 4000
+
 
 def seed_routed_feature(
     repo_root: Path,
@@ -153,6 +159,17 @@ def seed_routed_feature(
     # known tiers (focused/standard/full) survive this gate as of P6.2.
     if final_tier not in VALID_TIERS:
         raise ValueError(f"invalid final_tier {final_tier!r}; must be one of {VALID_TIERS}")
+
+    # M6 finding M7: pre-validate idea length BEFORE any other mutation
+    # so the operator sees a clean cap error instead of the schema's
+    # 6000-char ValidationError dump (which inlines the full payload).
+    # The schema mirrors the same 4000-char cap; we surface the friendly
+    # message here so the routing helper owns the user-visible wording.
+    if len(idea) > _IDEA_MAX_CHARS:
+        raise ValueError(
+            f"idea exceeds {_IDEA_MAX_CHARS}-char cap (got {len(idea)} chars); "
+            "trim before /forge:do"
+        )
 
     # Step 2: derive seed entry phase from tier.  Full tier enters at
     # refine (Socratic loop owns the spec hand-off via complete_phase +

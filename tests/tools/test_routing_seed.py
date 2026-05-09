@@ -342,6 +342,52 @@ def test_feature_slug_accepted_at_three_char_boundary(tmp_path: Path) -> None:
     assert folder.name == "2026-05-08-abc"
 
 
+def test_seed_routed_feature_idea_over_4000_chars_raises_clean_error(tmp_path: Path) -> None:
+    """M6 finding M7: a >4000-char idea must surface a clean cap error
+    rather than the 6000-char schema-validation dump that includes the
+    full payload inline.
+
+    The seeder pre-validates ``len(idea) <= 4000`` BEFORE any disk mutation
+    and raises ``ValueError`` with a message containing ``trim`` so the
+    operator knows what to do.
+    """
+    repo = _stage_repo(tmp_path)
+    overlong = "x" * 4001
+
+    with pytest.raises(ValueError, match=r"idea exceeds 4000-char cap.*trim"):
+        seed_routed_feature(
+            repo,
+            idea=overlong,
+            final_tier="focused",
+            today=TODAY,
+        )
+
+    features_root = repo / ".forge" / "features"
+    assert not features_root.exists() or not any(features_root.iterdir()), (
+        "no folder may be seeded when idea exceeds the 4000-char cap"
+    )
+
+
+def test_seed_routed_feature_idea_at_4000_char_boundary_accepted(tmp_path: Path) -> None:
+    """Boundary: an idea of exactly 4000 chars is accepted (cap is inclusive).
+
+    Uses an explicit ``feature_slug`` so the test does not depend on whether
+    the idea-derived slug fits in the filesystem's filename length cap; only
+    the helper-level cap check is being exercised here.
+    """
+    repo = _stage_repo(tmp_path)
+    at_cap = "x" * 4000
+
+    folder = seed_routed_feature(
+        repo,
+        idea=at_cap,
+        final_tier="focused",
+        today=TODAY,
+        feature_slug="cap-boundary",
+    )
+    assert folder.is_dir()
+
+
 def test_seed_routed_feature_feature_slug_canonical_collision_raises(tmp_path: Path) -> None:
     """``feature_slug`` that names an existing canonical capability must refuse.
 

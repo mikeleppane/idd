@@ -39,7 +39,12 @@ seed completes.
    `/forge:do "<idea>" --focused --standard`), abort with the literal
    message `Pass at most one of --focused / --standard / --full; got <list>`
    where `<list>` enumerates the supplied flags. No disk mutation
-   occurs; the user re-invokes with a single flag.
+   occurs; the user re-invokes with a single flag. **Idea length
+   cap:** abort with the literal cap if `idea > 4000 chars`. The
+   routing helper mirrors this check (`tools.routing.seed_routed_feature`
+   raises `ValueError` with `"idea exceeds 4000-char cap (got <n>
+   chars); trim before /forge:do"`); skill-side abort surfaces the
+   same wording without going through schema validation.
 2. **Constitution preflight (per spec §5.3.1 + D-10).** If
    `.forge/CONSTITUTION.md` is absent, present the user with three
    choices: skip, bootstrap, cancel. The default = skip so a brand-new
