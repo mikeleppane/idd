@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import re
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
@@ -33,6 +36,12 @@ _REFINED_IDEA_MAX_CHARS: Final[int] = 4000
 # ``routing.refine_attempts.maximum`` so a tampered state.json is rejected on
 # read/write too.
 _REFINE_ATTEMPTS_CAP: Final[int] = 5
+
+# Current state-machine generation written by new features. v1 is the legacy
+# 9-step standard tier; v2 collapsed standard to 5 steps; v3 adds the post-ship
+# ``harden`` phase. ``flow_version`` is optional in state.json — absence is
+# treated as v1 by application convention.
+_FLOW_VERSION_V3: Final[int] = 3
 
 
 def _validator_for(schema: dict[str, Any]) -> jsonschema.Draft202012Validator:
@@ -515,6 +524,92 @@ def complete_review_target(
 def feature_folder_exists(repo_root: Path, feature_id: str) -> bool:
     """Return True when .forge/features/<feature_id>/ exists under repo_root."""
     return (repo_root / ".forge" / "features" / feature_id).is_dir()
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    """Write ``payload`` to ``path`` via tempfile + ``os.replace``.
+
+    The intermediate file is created in the same directory as ``path`` so
+    ``os.replace`` is a same-filesystem rename (atomic on POSIX). On any
+    failure mid-write the partial tempfile is cleaned up so the caller
+    never sees a torn file.
+    """
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".state-", suffix=".json", dir=str(parent))
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, indent=2, sort_keys=False) + "\n")
+        tmp_path.replace(path)
+    except Exception:
+        with contextlib.suppress(FileNotFoundError):
+            tmp_path.unlink()
+        raise
+
+
+def migrate_to_v3(
+    repo_root: Path,
+    feature_id: str,
+    schema_path: Path | None = None,
+) -> dict[str, Any]:
+    """Bump a feature's state.json to ``flow_version: 3`` and add a pending harden phase.
+
+    The migration is gated on ship completion: a feature is considered shipped
+    when ``state.shipped_at`` is set OR ``phases.ship.status == "done"``.
+    Pre-ship features raise ``StateError`` so harden cannot run before the
+    feature has actually been merged.
+
+    The function is idempotent: calling it on a state that is already at
+    ``flow_version: 3`` is a no-op (no disk write, payload returned as-is).
+    Otherwise the bumped payload is persisted atomically via tempfile +
+    ``os.replace`` so a crash mid-write cannot corrupt state.json.
+
+    Args:
+        repo_root: Repository root containing the ``.forge/`` tree.
+        feature_id: Feature folder name under ``.forge/features/``.
+        schema_path: Optional schema path; defaults to
+            ``<repo_root>/schemas/state.schema.json``.
+
+    Returns:
+        The (possibly updated) state.json payload.
+
+    Raises:
+        StateError: state.json is missing/invalid, the feature has not
+            shipped yet, or schema validation fails after the bump.
+    """
+    if schema_path is None:
+        schema_path = repo_root / "schemas" / "state.schema.json"
+    state_path = repo_root / ".forge" / "features" / feature_id / "state.json"
+    payload = read_state(state_path, schema_path=schema_path)
+
+    if payload.get("flow_version") == _FLOW_VERSION_V3:
+        return payload
+
+    shipped_at = payload.get("shipped_at")
+    ship_block = payload.get("phases", {}).get("ship", {})
+    ship_done = isinstance(ship_block, dict) and ship_block.get("status") == "done"
+    if not shipped_at and not ship_done:
+        raise StateError(
+            f"cannot migrate to v3 before ship completes: "
+            f"feature {feature_id!r} has neither shipped_at nor phases.ship.status=='done'"
+        )
+
+    payload["flow_version"] = _FLOW_VERSION_V3
+    phases = payload.setdefault("phases", {})
+    if "harden" not in phases:
+        phases["harden"] = {"status": "pending"}
+
+    # Validate post-mutation against the schema before touching disk.
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    validator = _validator_for(schema)
+    errors = sorted(validator.iter_errors(payload), key=lambda e: list(e.path))
+    if errors:
+        messages = "; ".join(e.message for e in errors)
+        raise StateError(f"refusing to migrate: payload fails schema: {messages}")
+
+    _atomic_write_json(state_path, payload)
+    return payload
 
 
 def find_active_feature(

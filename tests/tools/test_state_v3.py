@@ -64,9 +64,7 @@ def _seed_feature(repo_root: Path, payload: dict[str, Any]) -> str:
     feature_id = str(payload["feature_id"])
     feature_dir = repo_root / ".forge" / "features" / feature_id
     feature_dir.mkdir(parents=True, exist_ok=True)
-    (feature_dir / "state.json").write_text(
-        json.dumps(payload, indent=2) + "\n", encoding="utf-8"
-    )
+    (feature_dir / "state.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return feature_id
 
 
@@ -155,9 +153,7 @@ def test_budget_schema_accepts_harden_phase(schemas_dir: Path) -> None:
 # --- migrate_to_v3 helper tests ------------------------------------------
 
 
-def test_migrate_to_v3_happy_path_post_ship(
-    tmp_path: Path, schemas_dir: Path
-) -> None:
+def test_migrate_to_v3_happy_path_post_ship(tmp_path: Path, schemas_dir: Path) -> None:
     """Feature with phases.ship done and no flow_version → bumps to v3 + adds harden pending."""
     payload = _base_state()
     feature_id = _seed_feature(tmp_path, payload)
@@ -165,16 +161,16 @@ def test_migrate_to_v3_happy_path_post_ship(
     # Sanity: helper exists.
     assert hasattr(state, "migrate_to_v3"), "migrate_to_v3 helper missing"
 
-    updated = state.migrate_to_v3(tmp_path, feature_id)
+    updated = state.migrate_to_v3(
+        tmp_path, feature_id, schema_path=schemas_dir / "state.schema.json"
+    )
 
     assert updated["flow_version"] == 3
     assert updated["phases"]["harden"] == {"status": "pending"}
 
     # Persisted to disk.
     on_disk = json.loads(
-        (tmp_path / ".forge" / "features" / feature_id / "state.json").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / ".forge" / "features" / feature_id / "state.json").read_text(encoding="utf-8")
     )
     assert on_disk["flow_version"] == 3
     assert on_disk["phases"]["harden"] == {"status": "pending"}
@@ -185,21 +181,22 @@ def test_migrate_to_v3_happy_path_post_ship(
     assert errors == [], f"migrated state.json fails schema: {errors}"
 
 
-def test_migrate_to_v3_idempotent(tmp_path: Path) -> None:
+def test_migrate_to_v3_idempotent(tmp_path: Path, schemas_dir: Path) -> None:
     """Running migrate_to_v3 twice produces byte-identical state.json."""
     payload = _base_state()
     feature_id = _seed_feature(tmp_path, payload)
+    schema_path = schemas_dir / "state.schema.json"
 
-    state.migrate_to_v3(tmp_path, feature_id)
+    state.migrate_to_v3(tmp_path, feature_id, schema_path=schema_path)
     first = (tmp_path / ".forge" / "features" / feature_id / "state.json").read_bytes()
 
-    state.migrate_to_v3(tmp_path, feature_id)
+    state.migrate_to_v3(tmp_path, feature_id, schema_path=schema_path)
     second = (tmp_path / ".forge" / "features" / feature_id / "state.json").read_bytes()
 
     assert first == second, "second migration must produce identical bytes"
 
 
-def test_migrate_to_v3_blocks_when_not_shipped(tmp_path: Path) -> None:
+def test_migrate_to_v3_blocks_when_not_shipped(tmp_path: Path, schemas_dir: Path) -> None:
     """migrate_to_v3 must refuse to bump a feature that has not shipped."""
     payload = _base_state()
     payload["current_phase"] = "execute"
@@ -207,10 +204,10 @@ def test_migrate_to_v3_blocks_when_not_shipped(tmp_path: Path) -> None:
     feature_id = _seed_feature(tmp_path, payload)
 
     with pytest.raises(state.StateError, match="ship"):
-        state.migrate_to_v3(tmp_path, feature_id)
+        state.migrate_to_v3(tmp_path, feature_id, schema_path=schemas_dir / "state.schema.json")
 
 
-def test_migrate_to_v3_already_v3_noop(tmp_path: Path) -> None:
+def test_migrate_to_v3_already_v3_noop(tmp_path: Path, schemas_dir: Path) -> None:
     """Feature already at flow_version=3 returns unchanged payload, no disk rewrite."""
     payload = _base_state()
     payload["flow_version"] = 3
@@ -221,7 +218,9 @@ def test_migrate_to_v3_already_v3_noop(tmp_path: Path) -> None:
     before = state_path.read_bytes()
     before_mtime = state_path.stat().st_mtime_ns
 
-    result = state.migrate_to_v3(tmp_path, feature_id)
+    result = state.migrate_to_v3(
+        tmp_path, feature_id, schema_path=schemas_dir / "state.schema.json"
+    )
     assert result["flow_version"] == 3
 
     after = state_path.read_bytes()

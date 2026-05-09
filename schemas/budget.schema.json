@@ -20,7 +20,8 @@
         "review",
         "execute",
         "verify",
-        "ship"
+        "ship",
+        "harden"
       ]
     },
     "spec_sections": {
