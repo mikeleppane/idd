@@ -546,3 +546,34 @@ def test_command_confirm_ui_lists_full_as_override() -> None:
         "commands/do.md step 6 must enumerate `--focused` / `--standard` / `--full` "
         "as the override flag list — P6.2 made full a legitimate override target"
     )
+
+
+# ---------------------------------------------------------------------------
+# M6 finding M4: SKILL + command reject multi-flag input at parse time
+# ---------------------------------------------------------------------------
+
+
+def test_do_skill_rejects_multi_flag_input() -> None:
+    """SKILL.md step 1 must explicitly reject multi-flag input
+    (e.g. ``--focused --standard`` simultaneously) with a literal abort
+    message naming the constraint ``Pass at most one of --focused /
+    --standard / --full``. Without this rule the LLM has no documented
+    behavior for multi-flag input and may pick one silently or seed
+    twice.
+    """
+    text = _read(SKILL_PATH)
+    assert "Pass at most one of --focused / --standard / --full" in text, (
+        "SKILL.md must carry the literal multi-flag rejection prose "
+        "'Pass at most one of --focused / --standard / --full'"
+    )
+
+
+def test_do_command_rejects_multi_flag_input() -> None:
+    """commands/do.md must mirror the SKILL multi-flag rejection prose
+    so users grepping the command file see the same constraint.
+    """
+    text = _read(COMMAND_PATH)
+    assert "Pass at most one of --focused / --standard / --full" in text, (
+        "commands/do.md must mirror the literal multi-flag rejection prose "
+        "'Pass at most one of --focused / --standard / --full'"
+    )

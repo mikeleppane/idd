@@ -33,7 +33,13 @@ seed completes.
 
    The `--focused`, `--standard`, and `--full` flags all seed normally
    via `tools.routing.seed_routed_feature`. The flag (when supplied)
-   wins over the LLM proposal at step 7.
+   wins over the LLM proposal at step 7. **Multi-flag input is
+   rejected at parse time:** if the user passes more than one of
+   `--focused` / `--standard` / `--full` simultaneously (e.g.
+   `/forge:do "<idea>" --focused --standard`), abort with the literal
+   message `Pass at most one of --focused / --standard / --full; got <list>`
+   where `<list>` enumerates the supplied flags. No disk mutation
+   occurs; the user re-invokes with a single flag.
 2. **Constitution preflight (per spec §5.3.1 + D-10).** If
    `.forge/CONSTITUTION.md` is absent, present the user with three
    choices: skip, bootstrap, cancel. The default = skip so a brand-new
