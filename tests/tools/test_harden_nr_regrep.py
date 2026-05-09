@@ -24,10 +24,7 @@ def _write_spec(repo_root: Path, feature_id: str, body: str) -> Path:
     return spec
 
 
-_NR_EVAL_BODY = (
-    "# Negative Requirements\n\n"
-    "- MUST NOT use `eval` for untrusted input\n"
-)
+_NR_EVAL_BODY = "# Negative Requirements\n\n- MUST NOT use `eval` for untrusted input\n"
 
 
 def test_run_nr_regrep_clean_pass(tmp_path: Path) -> None:
@@ -124,9 +121,7 @@ def test_run_nr_regrep_custom_filter_overrides_default(tmp_path: Path) -> None:
     result = run_nr_regrep(tmp_path, feature_id, file_filter=include_everything)
 
     assert result.status == "fail"
-    assert any(
-        v.file_path == Path("tests/test_thing.py") for v in result.violations
-    )
+    assert any(v.file_path == Path("tests/test_thing.py") for v in result.violations)
 
 
 def test_run_nr_regrep_violations_sorted_deterministically(tmp_path: Path) -> None:
@@ -174,10 +169,7 @@ def test_run_nr_regrep_fence_aware_nr_parse(tmp_path: Path) -> None:
 
 def test_run_nr_regrep_no_forbidden_patterns_no_violation(tmp_path: Path) -> None:
     feature_id = "2026-05-09-nr-no-pattern"
-    body = (
-        "# Negative Requirements\n\n"
-        "- MUST NOT regress.\n"
-    )
+    body = "# Negative Requirements\n\n- MUST NOT regress.\n"
     _write_spec(tmp_path, feature_id, body)
     (tmp_path / "tools").mkdir()
     (tmp_path / "tools" / "foo.py").write_text(
