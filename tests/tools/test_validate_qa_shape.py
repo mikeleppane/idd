@@ -172,8 +172,7 @@ def test_qa_shape_invalid_confidence_blocks(tmp_path: Path) -> None:
     _write_qa(feature_dir, _qa_md(confidence="medium"))
     findings = validate_qa_shape(tmp_path, FEATURE_ID)
     assert any(
-        f.severity == "BLOCK" and "qa_shape:invalid_confidence_value" in f.message
-        for f in findings
+        f.severity == "BLOCK" and "qa_shape:invalid_confidence_value" in f.message for f in findings
     ), findings
 
 
@@ -217,8 +216,7 @@ def test_qa_shape_invalid_section_status_blocks(tmp_path: Path) -> None:
     _write_qa(feature_dir, _qa_md(adversarial_status="pending"))
     findings = validate_qa_shape(tmp_path, FEATURE_ID)
     assert any(
-        f.severity == "BLOCK" and "qa_shape:invalid_section_status" in f.message
-        for f in findings
+        f.severity == "BLOCK" and "qa_shape:invalid_section_status" in f.message for f in findings
     ), findings
 
 
@@ -246,9 +244,9 @@ def test_qa_shape_qa_md_absent_post_qa_done_blocks(tmp_path: Path) -> None:
     feature_dir = _make_feature_dir(tmp_path)
     _write_state(feature_dir, qa_status="done")
     findings = validate_qa_shape(tmp_path, FEATURE_ID)
-    assert any(
-        f.severity == "BLOCK" and "qa_shape:qa_md_missing" in f.message for f in findings
-    ), findings
+    assert any(f.severity == "BLOCK" and "qa_shape:qa_md_missing" in f.message for f in findings), (
+        findings
+    )
 
 
 def test_qa_shape_section_out_of_order_medium(tmp_path: Path) -> None:
@@ -262,8 +260,7 @@ def test_qa_shape_section_out_of_order_medium(tmp_path: Path) -> None:
     )
     findings = validate_qa_shape(tmp_path, FEATURE_ID)
     assert any(
-        f.severity == "MEDIUM" and "qa_shape:section_out_of_order" in f.message
-        for f in findings
+        f.severity == "MEDIUM" and "qa_shape:section_out_of_order" in f.message for f in findings
     ), findings
 
 
@@ -273,8 +270,7 @@ def test_qa_shape_frontmatter_missing_key_blocks(tmp_path: Path) -> None:
     _write_qa(feature_dir, _qa_md(extra_frontmatter_drop="qa_at"))
     findings = validate_qa_shape(tmp_path, FEATURE_ID)
     assert any(
-        f.severity == "BLOCK" and "qa_shape:frontmatter_missing_key" in f.message
-        for f in findings
+        f.severity == "BLOCK" and "qa_shape:frontmatter_missing_key" in f.message for f in findings
     ), findings
 
 
@@ -304,15 +300,11 @@ def test_qa_shape_evidence_resolves_when_path(tmp_path: Path) -> None:
     assert all("qa_shape:evidence_path_missing" not in f.message for f in findings), findings
 
 
-def test_qa_shape_cli_target_registered(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_qa_shape_cli_target_registered(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     feature_dir = _make_feature_dir(tmp_path)
     _write_state(feature_dir)
     _write_qa(feature_dir, _qa_md())
-    rc = validate.main(
-        ["--target", "qa_shape", "--repo-root", str(tmp_path), str(feature_dir)]
-    )
+    rc = validate.main(["--target", "qa_shape", "--repo-root", str(tmp_path), str(feature_dir)])
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert rc == 0, captured

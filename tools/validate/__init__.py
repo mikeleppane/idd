@@ -21,6 +21,7 @@ from .delta import validate_delta
 from .domain_glossary import validate_domain_glossary
 from .health import validate_health
 from .plan import validate_plan_tasks, validate_verified_deps
+from .qa_shape import validate_qa_shape
 from .spec_semantic import validate_anchors, validate_scenarios
 from .spec_structural import (
     validate_capability_spec_sections,
@@ -48,6 +49,7 @@ __all__ = [
     "validate_health",
     "validate_negative_requirements",
     "validate_plan_tasks",
+    "validate_qa_shape",
     "validate_scenarios",
     "validate_tdd_evidence",
     "validate_verified_deps",
