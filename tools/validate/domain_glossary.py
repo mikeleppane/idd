@@ -31,9 +31,11 @@ import json
 import re
 from pathlib import Path
 
+import yaml
+
 from ._feature_layout import SPEC_FILENAME, STATE_FILENAME
 from ._finding import Finding, Severity
-from ._frontmatter import _read_text, _strip_code
+from ._frontmatter import _read_text
 
 TARGET = "domain_glossary"
 
@@ -41,7 +43,15 @@ DOMAIN_FILENAME = "DOMAIN.md"
 
 _GLOSSARY_REQUIRED_COLUMNS = 4
 _CONTEXT_PLACEHOLDERS: frozenset[str] = frozenset({"—", "-", ""})
+# DOMAIN.md frontmatter status lifecycle (per docs/plans/...m7...md P1.1):
+#   draft / ready  → BLOCK findings demote to advisory (MEDIUM)
+#   locked         → BLOCK findings stay BLOCK
+# Unknown / absent status is treated as ``draft`` (most permissive) so
+# first-pass authoring is never gated by a half-written DOMAIN.md.
+_LOCKED_STATUS = "locked"
+_ADVISORY_STATUSES: frozenset[str] = frozenset({"draft", "ready"})
 
+_FRONTMATTER_RE = re.compile(r"^---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
 _GLOSSARY_BLOCK = re.compile(r"(?ms)^# Glossary\b[^\n]*\n(?P<body>.*?)(?=^# |\Z)")
 _INTENT_BLOCK = re.compile(r"(?ms)^# Intent\b[^\n]*\n(?P<body>.*?)(?=^# |\Z)")
 _SCENARIOS_BLOCK = re.compile(r"(?ms)^# Scenarios\b[^\n]*\n(?P<body>.*?)(?=^# |\Z)")
@@ -157,18 +167,21 @@ def _extract_spec_terms(spec_text: str) -> set[str]:
     - Start with an uppercase ASCII letter.
     - Contain only letters / digits / underscore / dash (i.e., not dotted
       module paths like ``module.Symbol``).
+
+    Inline backticks are deliberately preserved here — the upstream
+    ``_strip_code`` helper would erase the term markers we extract below.
+    Per the locked plan, domain terms in SPEC.md are required to be
+    backtick-wrapped (``Order``) so the validator can distinguish them
+    from generic prose nouns; ``forge-domain`` instructs the author to
+    backtick-wrap when authoring SPEC.md.
     """
-    masked = _strip_code(spec_text)
-    # Re-extract intent/scenarios from the original text to keep the inline
-    # backtick spans intact, then mask each slice independently.
     terms: set[str] = set()
     for pattern in (_INTENT_BLOCK, _SCENARIOS_BLOCK):
         match = pattern.search(spec_text)
         if match is None:
             continue
         slice_body = match.group("body")
-        # Strip fenced code blocks but preserve inline backticks (those
-        # carry the domain term markers we want to extract).
+        # Strip fenced code blocks but preserve inline backticks.
         slice_no_fences = re.sub(r"(?ms)^```.*?^```", "", slice_body)
         for term_match in _BACKTICK_TERM.finditer(slice_no_fences):
             token = term_match.group(1).strip()
@@ -179,11 +192,41 @@ def _extract_spec_terms(spec_text: str) -> set[str]:
             if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_\-]*", token):
                 continue
             terms.add(token)
-    # ``masked`` is currently unused for term extraction but kept available
-    # so future maintainers see the canonical fence-mask helper imported and
-    # do not duplicate the logic.
-    del masked
     return terms
+
+
+def _read_domain_status(domain_text: str) -> str:
+    """Return the DOMAIN.md frontmatter ``status`` field, lowercased.
+
+    Returns ``"draft"`` when frontmatter is missing or malformed — the
+    most permissive default, matching the lifecycle described in
+    ``docs/plans/2026-05-08-m7-confidence-and-ux-polish.md`` P1.1.
+    """
+    match = _FRONTMATTER_RE.match(domain_text)
+    if match is None:
+        return "draft"
+    try:
+        parsed = yaml.safe_load(match.group(1))
+    except yaml.YAMLError:
+        return "draft"
+    if not isinstance(parsed, dict):
+        return "draft"
+    raw = parsed.get("status")
+    if not isinstance(raw, str):
+        return "draft"
+    return raw.strip().lower()
+
+
+def _gated(severity: Severity, status: str) -> Severity:
+    """Downgrade BLOCK to MEDIUM when ``status`` is draft/ready.
+
+    Per the locked plan: validator activates BLOCK-level findings only
+    when ``status == "locked"``. ``draft`` and ``ready`` emit advisory
+    findings (MEDIUM/LOW). Non-BLOCK severities pass through unchanged.
+    """
+    if severity == "BLOCK" and status in _ADVISORY_STATUSES:
+        return "MEDIUM"
+    return severity
 
 
 def _finding_sort_key(finding: Finding) -> tuple[int, str, str]:
@@ -242,15 +285,17 @@ def validate_domain_glossary(repo_root: Path, feature_id: str) -> list[Finding]:
             ]
         return []
 
+    status = _read_domain_status(domain_text)
+
     spec_text = _read_text(spec_path) or ""
     spec_terms = _extract_spec_terms(spec_text)
 
     raw_rows = _glossary_row_columns(domain_text)
     findings: list[Finding] = []
-    glossary_terms, malformed = _classify_rows(raw_rows, domain_path)
+    glossary_terms, malformed = _classify_rows(raw_rows, domain_path, status=status)
     findings.extend(malformed)
-    findings.extend(_duplicate_findings(glossary_terms, domain_path))
-    findings.extend(_orphan_findings(spec_terms, glossary_terms, spec_path))
+    findings.extend(_duplicate_findings(glossary_terms, domain_path, status=status))
+    findings.extend(_orphan_findings(spec_terms, glossary_terms, spec_path, status=status))
     findings.extend(_unused_findings(spec_terms, glossary_terms, domain_path))
     findings.extend(_undefined_context_findings(raw_rows, glossary_terms, domain_path))
 
@@ -260,6 +305,8 @@ def validate_domain_glossary(repo_root: Path, feature_id: str) -> list[Finding]:
 def _classify_rows(
     raw_rows: list[list[str]],
     domain_path: Path,
+    *,
+    status: str,
 ) -> tuple[list[tuple[str, str | None]], list[Finding]]:
     """Split raw glossary rows into well-formed term tuples + malformed-row findings."""
     glossary_terms: list[tuple[str, str | None]] = []
@@ -268,7 +315,7 @@ def _classify_rows(
         if len(cells) < _GLOSSARY_REQUIRED_COLUMNS or not cells[0].strip():
             malformed.append(
                 Finding(
-                    "BLOCK",
+                    _gated("BLOCK", status),
                     TARGET,
                     domain_path,
                     f"{TARGET}:malformed_glossary_row — row has wrong column count or "
@@ -280,7 +327,7 @@ def _classify_rows(
         if not term:
             malformed.append(
                 Finding(
-                    "BLOCK",
+                    _gated("BLOCK", status),
                     TARGET,
                     domain_path,
                     f"{TARGET}:malformed_glossary_row — empty Term cell in row {cells!r}",
@@ -294,6 +341,8 @@ def _classify_rows(
 def _duplicate_findings(
     glossary_terms: list[tuple[str, str | None]],
     domain_path: Path,
+    *,
+    status: str,
 ) -> list[Finding]:
     seen: dict[str, int] = {}
     duplicates: set[str] = set()
@@ -304,7 +353,7 @@ def _duplicate_findings(
             duplicates.add(term)
     return [
         Finding(
-            "BLOCK",
+            _gated("BLOCK", status),
             TARGET,
             domain_path,
             f"{TARGET}:duplicate_term — {term!r} appears more than once in the glossary",
@@ -317,12 +366,14 @@ def _orphan_findings(
     spec_terms: set[str],
     glossary_terms: list[tuple[str, str | None]],
     spec_path: Path,
+    *,
+    status: str,
 ) -> list[Finding]:
     glossary_lower = {term.lower() for term, _ in glossary_terms}
     orphans = sorted({t for t in spec_terms if t.lower() not in glossary_lower})
     return [
         Finding(
-            "BLOCK",
+            _gated("BLOCK", status),
             TARGET,
             spec_path,
             f"{TARGET}:orphan_term — SPEC term {term!r} is not defined in DOMAIN.md glossary",

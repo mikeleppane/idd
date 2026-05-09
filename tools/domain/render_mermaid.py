@@ -40,6 +40,7 @@ flagged here so the next maintainer notices.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 
@@ -48,6 +49,7 @@ from tools.validate._frontmatter import _strip_code
 _PLACEHOLDER_NODE = "ctx_placeholder[no contexts annotated]"
 _HEADER = "```mermaid\n%% auto-generated; do not edit\ngraph LR\n"
 _FOOTER = "```"
+_HASH_SUFFIX_LEN = 6
 
 _GLOSSARY_BLOCK = re.compile(r"(?ms)^# Glossary\b[^\n]*\n(?P<body>.*?)(?=^# |\Z)")
 _TABLE_SEPARATOR = re.compile(r"^\s*\|?\s*[:\-]+\s*(?:\|\s*[:\-]+\s*)+\|?\s*$")
@@ -78,9 +80,27 @@ class GlossaryRow:
 
 
 def _sanitize(context_id: str) -> str:
-    """Return ``ctx_<safe>`` where ``<safe>`` is alphanumeric + underscore."""
-    safe = _NON_ALNUM.sub("_", context_id).strip("_")
-    return f"ctx_{safe}" if safe else "ctx_"
+    """Return ``ctx_<safe>[_<hash6>]`` — collision-proof Mermaid node id.
+
+    Mermaid node ids must be alphanumeric + underscore. Naively replacing
+    every non-alnum run with ``_`` collapses distinct context-ids that
+    differ only in punctuation (``sales-orders`` vs ``sales_orders`` →
+    both ``ctx_sales_orders``). To preserve "one node per unique
+    context_id", append a short stable hash suffix whenever the raw
+    context-id contained any non-alphanumeric character. Pure-alnum ids
+    (the common case) keep their plain shape so the rendered diagram
+    stays readable.
+    """
+    safe = _NON_ALNUM.sub("_", context_id).strip("_") or "ctx"
+    if _NON_ALNUM.search(context_id):
+        # blake2s used as a non-cryptographic hash for stable disambiguation
+        # of distinct context-ids that sanitize to the same alnum form.
+        suffix = hashlib.blake2s(
+            context_id.encode("utf-8"),
+            digest_size=_HASH_SUFFIX_LEN // 2,
+        ).hexdigest()
+        return f"ctx_{safe}_{suffix}"
+    return f"ctx_{safe}"
 
 
 def _collect_nodes(rows: list[GlossaryRow]) -> list[str]:
@@ -90,6 +110,8 @@ def _collect_nodes(rows: list[GlossaryRow]) -> list[str]:
             continue
         node_id = _sanitize(row.context_id)
         # First occurrence wins for the label; sorted output makes order stable.
+        # The sanitize hash suffix prevents distinct context-ids from collapsing
+        # onto the same node_id key.
         seen.setdefault(node_id, row.context_id)
     return [f"  {node_id}[{label}]" for node_id, label in sorted(seen.items())]
 

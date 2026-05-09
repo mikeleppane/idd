@@ -15,6 +15,8 @@ These tests pin the exact output so any whitespace drift fails fast.
 
 from __future__ import annotations
 
+import re
+
 from tools.domain.render_mermaid import (
     GlossaryRow,
     render_bounded_context_mermaid,
@@ -96,18 +98,39 @@ def test_render_mermaid_edge_dedup_alphabetical() -> None:
 
 
 def test_render_mermaid_sanitizes_node_ids() -> None:
-    """Non-alphanumeric chars in context ids become underscores in node ids; label kept."""
+    """Non-alphanumeric chars in context ids become underscores plus a hash suffix.
+
+    The suffix prevents distinct context-ids that differ only in punctuation
+    (``sales-orders`` vs ``sales_orders``) from collapsing onto the same
+    Mermaid node id. The label preserves the original spelling.
+    """
     rows = [
         GlossaryRow(term="Manifest", context_id="multi-word ctx", cross_refs=[]),
     ]
-    expected = (
-        "```mermaid\n"
-        "%% auto-generated; do not edit\n"
-        "graph LR\n"
-        "  ctx_multi_word_ctx[multi-word ctx]\n"
-        "```"
-    )
-    assert render_bounded_context_mermaid(rows) == expected
+    rendered = render_bounded_context_mermaid(rows)
+    # Node id starts with sanitized base + underscore + 6-char hex suffix.
+    assert re.search(
+        r"^  ctx_multi_word_ctx_[0-9a-f]{6}\[multi-word ctx\]$",
+        rendered,
+        re.MULTILINE,
+    ), rendered
+
+
+def test_render_mermaid_no_collision_on_punctuation_difference() -> None:
+    """``sales-orders`` and ``sales_orders`` MUST render as two distinct nodes."""
+    rows = [
+        GlossaryRow(term="OrderA", context_id="sales-orders", cross_refs=[]),
+        GlossaryRow(term="OrderB", context_id="sales_orders", cross_refs=[]),
+    ]
+    rendered = render_bounded_context_mermaid(rows)
+    # Two distinct node lines; both labels preserved verbatim.
+    node_lines = [line for line in rendered.splitlines() if line.startswith("  ctx_")]
+    assert len(node_lines) == 2, rendered
+    assert any("[sales-orders]" in line for line in node_lines)
+    assert any("[sales_orders]" in line for line in node_lines)
+    # The two node ids are NOT identical (collision check).
+    ids = [line.strip().split("[")[0] for line in node_lines]
+    assert ids[0] != ids[1], ids
 
 
 def test_render_from_domain_md_parses_table() -> None:

@@ -41,12 +41,17 @@ def _write_spec(feature_dir: Path, intent: str, scenarios: str) -> None:
     (feature_dir / "SPEC.md").write_text(body, encoding="utf-8")
 
 
-def _write_domain(feature_dir: Path, glossary_rows: list[str]) -> None:
+def _write_domain(
+    feature_dir: Path,
+    glossary_rows: list[str],
+    *,
+    status: str = "locked",
+) -> None:
     rows = "\n".join(glossary_rows)
     body = (
         "---\n"
         f"id: {_FEATURE_ID}\n"
-        "status: locked\n"
+        f"status: {status}\n"
         "version: 0.1.0\n"
         "---\n\n"
         "# Glossary\n\n"
@@ -220,6 +225,48 @@ def test_domain_glossary_malformed_row_blocks(tmp_path: Path) -> None:
     malformed = [f for f in findings if "malformed_glossary_row" in f.message]
     assert malformed, findings
     assert malformed[0].severity == "BLOCK"
+
+
+def test_domain_glossary_draft_status_downgrades_orphan_to_medium(tmp_path: Path) -> None:
+    """Per locked plan P1.1: draft/ready emit advisory findings only."""
+    feature_dir = _make_feature(tmp_path)
+    _write_spec(
+        feature_dir,
+        "The `Customer` purchases an `Order`.",
+        "Scenario: stub\n  Given a `Customer`\n  When `Order` is placed\n",
+    )
+    _write_domain(
+        feature_dir,
+        ["| Order | An order. | — | — |"],
+        status="draft",
+    )
+
+    findings = validate_domain_glossary(tmp_path, _FEATURE_ID)
+
+    orphans = [f for f in findings if "orphan_term" in f.message]
+    assert orphans, findings
+    # BLOCK demoted to MEDIUM while the author is still drafting.
+    assert all(f.severity == "MEDIUM" for f in orphans)
+
+
+def test_domain_glossary_locked_status_keeps_orphan_block(tmp_path: Path) -> None:
+    feature_dir = _make_feature(tmp_path)
+    _write_spec(
+        feature_dir,
+        "The `Customer` purchases an `Order`.",
+        "Scenario: stub\n  Given a `Customer`\n  When `Order` is placed\n",
+    )
+    _write_domain(
+        feature_dir,
+        ["| Order | An order. | — | — |"],
+        status="locked",
+    )
+
+    findings = validate_domain_glossary(tmp_path, _FEATURE_ID)
+
+    orphans = [f for f in findings if "orphan_term" in f.message]
+    assert orphans, findings
+    assert all(f.severity == "BLOCK" for f in orphans)
 
 
 def test_domain_glossary_terms_inside_fenced_block_ignored(tmp_path: Path) -> None:

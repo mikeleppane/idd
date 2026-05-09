@@ -24,30 +24,50 @@ Behaviour by flag:
   lifecycle and dispatch to the delta-merge subroutine below. The
   Constitution gate (P3 §5.3.9) does NOT apply — there is no feature
   folder, no REVIEW.code.md, no `articles[]` to surface.
-- **With `--promote-domain`** — feature-ship lifecycle still runs, but
-  the repo-wide glossary promotion step fires before the archive call so
-  a conflict cannot leave a half-shipped feature.
+- **With `--promote-domain`** — feature-ship lifecycle runs unchanged.
+  After `tools.archive.ship_feature` returns successfully, an advisory
+  glossary-promotion step fires against the archived feature path.
+  Conflicts on diverging definitions are surfaced in the ship summary as
+  a non-blocking advisory; ship has already committed.
 
 ## Optional: repo-wide glossary promotion (`--promote-domain`)
 
-When the user invokes `/forge:ship --promote-domain` AND
-`state.json.tier == "full"` AND
-`.forge/features/<id>/DOMAIN.md` exists, run this step BEFORE the existing
-archive call (i.e., before step 4 below):
+Glossary promotion is **post-ship and advisory**. It runs only after
+`tools.archive.ship_feature` returns successfully (canonical spec written,
+feature folder moved into the archive). Two reasons:
 
-1. Call
-   `tools.archive.promote_domain_to_repo(repo_root, feature_id)`.
-2. **On success**, surface the count of promoted and skipped terms (e.g.
+- The ship is the only transactional unit. Mutating
+  `.forge/domain/glossary.md` before ship preflight runs would leave a
+  repo glossary that references a feature that did not actually ship.
+- The locked plan
+  (`docs/plans/2026-05-08-m7-confidence-and-ux-polish.md` P1.7) requires
+  that conflicts on diverging definitions never block ship.
+
+When the user invokes `/forge:ship --promote-domain` AND
+`state.json.tier == "full"` AND the feature carried a `DOMAIN.md`,
+proceed as follows:
+
+1. Capture the archived feature directory returned by step 4 (it is the
+   second element of the `ship_feature` return tuple). The archived path
+   is `.forge/features/archive/<feature_id>/`. Call:
+   ```python
+   result = tools.archive.promote_domain_to_repo(
+       repo_root, feature_id, feature_dir=archived_path,
+   )
+   ```
+2. When `result.status == "ok"`, surface the count of promoted and
+   skipped terms (e.g.
    `Promoted 2 term(s); skipped 1 term(s) already in repo glossary.`).
-   Continue with the rest of the ship lifecycle.
-3. **On `ArchiveError`** raised by conflicts (`glossary conflicts:
-   <term1>, <term2>, ...`), abort the ship phase and print the conflict
-   list. The user must resolve the repo-wide glossary manually before
-   retrying. No state mutation has occurred.
+3. When `result.status == "skipped"` (one or more glossary conflicts),
+   surface the conflict list as a non-blocking advisory in the ship
+   summary. Each row in `result.conflicts` carries `term`,
+   `feature_definition`, `repo_definition`. **Do NOT abort the ship —
+   ship has already committed.** Recommend that the user reconcile
+   `.forge/domain/glossary.md` manually before promoting the next
+   feature.
 
 If the flag is set but the tier is not `full` or the feature has no
-`DOMAIN.md`, surface a single-line notice and continue without promotion;
-do not abort the ship.
+`DOMAIN.md`, surface a single-line notice and continue without promotion.
 
 ## Mode: delta merge (`--change <id>`)
 
