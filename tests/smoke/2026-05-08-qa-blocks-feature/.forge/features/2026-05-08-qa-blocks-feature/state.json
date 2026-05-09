@@ -1,0 +1,14 @@
+{
+  "feature_id": "2026-05-08-qa-blocks-feature",
+  "tier": "standard",
+  "current_phase": "qa",
+  "flow_version": 3,
+  "phases": {
+    "qa": {
+      "status": "done"
+    }
+  },
+  "skipped": [],
+  "deviations": [],
+  "commits": []
+}
