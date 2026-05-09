@@ -689,7 +689,8 @@ _STANDARD_NEXT: dict[str, str | None] = {
     "crucible": "/forge:review --target plan",
     "execute": "/forge:review --target code",
     "verify": "/forge:ship",
-    "ship": None,
+    "ship": "/forge:qa --against merged",
+    "qa": None,
 }
 
 _FULL_NEXT: dict[str, str | None] = {

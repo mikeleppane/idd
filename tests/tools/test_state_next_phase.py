@@ -50,11 +50,23 @@ def test_next_phase_focused_tier(phase: str, expected: str | None) -> None:
         ("crucible", "/forge:review --target plan"),
         ("execute", "/forge:review --target code"),
         ("verify", "/forge:ship"),
-        ("ship", None),
+        ("ship", "/forge:qa --against merged"),
+        ("qa", None),
     ],
 )
 def test_next_phase_standard_tier(phase: str, expected: str | None) -> None:
     assert state.next_phase_command(_state("standard", phase)) == expected
+
+
+@pytest.mark.parametrize(
+    "tier",
+    ["standard", "full"],
+)
+def test_next_phase_ship_routes_to_qa(tier: str) -> None:
+    """Standard and full tiers both end in qa: ``ship → /forge:qa --against merged``,
+    ``qa → None``. Focused tier finishes earlier (at verify) and never reaches ship."""
+    assert state.next_phase_command(_state(tier, "ship")) == "/forge:qa --against merged"
+    assert state.next_phase_command(_state(tier, "qa")) is None
 
 
 def test_next_phase_standard_tier_refine_returns_none() -> None:
