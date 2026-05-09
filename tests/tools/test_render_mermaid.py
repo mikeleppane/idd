@@ -49,13 +49,7 @@ def test_render_mermaid_single_context_no_edges() -> None:
         GlossaryRow(term="LineItem", context_id="billing", cross_refs=[]),
         GlossaryRow(term="TaxCode", context_id="billing", cross_refs=[]),
     ]
-    expected = (
-        "```mermaid\n"
-        "%% auto-generated; do not edit\n"
-        "graph LR\n"
-        "  ctx_billing[billing]\n"
-        "```"
-    )
+    expected = "```mermaid\n%% auto-generated; do not edit\ngraph LR\n  ctx_billing[billing]\n```"
     assert render_bounded_context_mermaid(rows) == expected
 
 

@@ -77,14 +77,15 @@ tiers fill `# Domain` at spec time and never enter this phase.
      extracted candidate terms. Each row needs a non-empty Definition. When
      a term spans bounded contexts, annotate it inline as
      `[term](context: <ctx-id>)` so downstream tooling can wire edges.
-   - **Bounded Contexts.** Embed the placeholder Mermaid block from the
-     template **verbatim** — do not hand-author the bounded-context map.
-     The auto-render pass (`tools.domain.render_mermaid`) is a follow-up
-     task; until it ships, the placeholder block stands in. Record this gap
-     as a self-review note: "Mermaid auto-rendering will replace the
-     placeholder when `tools.domain.render_mermaid` ships." Do not add the
-     gap to `state.json.deviations[]` — it is a known follow-up, not a
-     per-run unresolvable.
+   - **Bounded Contexts.** Do not hand-author the bounded-context map.
+     After the Glossary section is populated, call
+     `tools.domain.render_mermaid.render_from_domain_md(domain_md_text)`
+     and splice the returned block into the `# Bounded Contexts` section
+     of the in-memory DOMAIN.md text, replacing the placeholder Mermaid
+     block byte-for-byte. The renderer is deterministic and idempotent —
+     re-running the domain phase against an unchanged glossary returns a
+     byte-identical block, so manual edits inside the fenced block are
+     overwritten on the next pass.
    - **Aggregates.** One H2 subsection per aggregate; list value-objects as
      bullets and aggregate-local invariants beneath them.
    - **Invariants.** Cross-aggregate rules only. Aggregate-local rules
@@ -160,6 +161,8 @@ a follow-up task — not a per-run decision this skill makes.
 ## See also
 
 - `templates/feature/DOMAIN.md` — the artifact contract this skill produces.
+- `tools.domain.render_mermaid` — the deterministic bounded-context Mermaid
+  renderer this skill calls in Step 6 to populate `# Bounded Contexts`.
 - `tools.state.complete_phase` — closes the `domain` phase.
 - `tools.state.start_phase` — opens `scenarios`.
 - `commands/domain.md` — slash spec.
