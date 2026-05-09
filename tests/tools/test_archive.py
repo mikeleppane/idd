@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ import tools.archive as archive_mod
 from tools.archive import (
     ArchiveError,
     archive_feature,
+    archive_feature_after_qa,
     canonical_spec_path,
     ship_feature,
     write_canonical_spec,
@@ -355,3 +357,234 @@ def test_ship_feature_rolls_back_canonical_when_pre_archive_hook_raises(tmp_path
     assert not canonical.exists(), "canonical rolled back on hook failure"
     assert (tmp_path / ".forge" / "features" / feature_id / "SPEC.md").exists()
     assert not (tmp_path / ".forge" / "features" / "archive" / feature_id).exists()
+
+
+# ---------------------------------------------------------------------------
+# v3 live-until-qa lifecycle
+# ---------------------------------------------------------------------------
+
+
+_V3_BODY = (
+    "---\ncapability: feature-flag\nstatus: shipped\n"
+    "created: 2026-05-09\nlast_updated: 2026-05-09\n"
+    "evidence:\n"
+    "  - 2026-05-09-toggle-add: features/archive/2026-05-09-toggle-add/\n"
+    "bounded_context: null\n---\n# Feature Flag\n"
+)
+
+
+def _v3_state(*, qa_status: str = "pending") -> dict[str, object]:
+    """A minimal post-ship v3 state.json payload."""
+    return {
+        "feature_id": "2026-05-09-toggle-add",
+        "tier": "standard",
+        "current_phase": "qa",
+        "flow_version": 3,
+        "phases": {
+            "ship": {
+                "status": "done",
+                "started_at": "2026-05-09T11:00:00Z",
+                "completed_at": "2026-05-09T11:15:00Z",
+            },
+            "qa": {"status": qa_status},
+        },
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+        "shipped_at": "2026-05-09T11:15:00Z",
+    }
+
+
+def _v1_state() -> dict[str, object]:
+    """A legacy state.json without flow_version (treated as v1)."""
+    return {
+        "feature_id": "2026-05-09-toggle-add",
+        "tier": "standard",
+        "current_phase": "ship",
+        "phases": {
+            "ship": {"status": "in_progress", "started_at": "2026-05-09T11:00:00Z"},
+        },
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+
+
+def test_ship_v3_feature_does_not_archive_folder(tmp_path: Path) -> None:
+    """v3 ship publishes canonical spec and leaves the feature folder in active."""
+    feature_id = "2026-05-09-toggle-add"
+    capability = "feature-flag"
+    _seed_feature(
+        tmp_path,
+        feature_id,
+        files={
+            "SPEC.md": "# spec\n",
+            "state.json": json.dumps(_v1_state() | {"flow_version": 3}) + "\n",
+        },
+    )
+
+    canonical, archived = ship_feature(tmp_path, feature_id, capability, _V3_BODY)
+
+    # Canonical spec was written (v3 must publish too).
+    assert canonical.is_file()
+    assert canonical.read_text(encoding="utf-8") == _V3_BODY
+    # Feature folder remains in active dir.
+    assert (tmp_path / ".forge" / "features" / feature_id).is_dir()
+    # No archive folder yet.
+    assert not (tmp_path / ".forge" / "features" / "archive" / feature_id).exists()
+    # Returned "archive" path points at the still-live source for v3 callers.
+    assert archived == tmp_path / ".forge" / "features" / feature_id
+
+
+def test_ship_v1_feature_archives_at_ship_legacy(tmp_path: Path) -> None:
+    """v1 features (no flow_version) preserve the historical archive-at-ship behavior."""
+    feature_id = "2026-05-09-toggle-add"
+    capability = "feature-flag"
+    _seed_feature(
+        tmp_path,
+        feature_id,
+        files={
+            "SPEC.md": "# spec\n",
+            "state.json": json.dumps(_v1_state()) + "\n",
+        },
+    )
+
+    canonical, archived = ship_feature(tmp_path, feature_id, capability, _V3_BODY)
+
+    assert canonical.is_file()
+    # Folder moved to archive at ship.
+    assert archived == tmp_path / ".forge" / "features" / "archive" / feature_id
+    assert archived.is_dir()
+    assert not (tmp_path / ".forge" / "features" / feature_id).exists()
+
+
+def test_v3_ship_publishes_canonical_spec_normally(tmp_path: Path) -> None:
+    """Canonical spec publishing runs for v3 just like v1."""
+    feature_id = "2026-05-09-toggle-add"
+    capability = "feature-flag"
+    _seed_feature(
+        tmp_path,
+        feature_id,
+        files={
+            "SPEC.md": "# spec\n",
+            "state.json": json.dumps(_v1_state() | {"flow_version": 3}) + "\n",
+        },
+    )
+
+    ship_feature(tmp_path, feature_id, capability, _V3_BODY)
+
+    canonical = tmp_path / ".forge" / "specs" / capability / "SPEC.md"
+    assert canonical.is_file()
+    assert canonical.read_text(encoding="utf-8") == _V3_BODY
+
+
+def test_archive_feature_after_qa_v3_moves_folder(tmp_path: Path) -> None:
+    """Calling archive_feature_after_qa on a qa-done v3 feature moves the folder."""
+    feature_id = "2026-05-09-toggle-add"
+    _seed_feature(
+        tmp_path,
+        feature_id,
+        files={
+            "SPEC.md": "# spec\n",
+            "QA.md": "# qa\n",
+            "state.json": json.dumps(_v3_state(qa_status="done")) + "\n",
+        },
+    )
+
+    result = archive_feature_after_qa(tmp_path, feature_id)
+
+    target = tmp_path / ".forge" / "features" / "archive" / feature_id
+    assert target.is_dir()
+    assert (target / "SPEC.md").read_text(encoding="utf-8") == "# spec\n"
+    assert (target / "QA.md").read_text(encoding="utf-8") == "# qa\n"
+    assert not (tmp_path / ".forge" / "features" / feature_id).exists()
+    # Result reports the destination.
+    assert result == target
+
+
+def test_archive_feature_after_qa_blocks_if_qa_not_done(tmp_path: Path) -> None:
+    """Refuses to archive when phases.qa.status is not done."""
+    feature_id = "2026-05-09-toggle-add"
+    _seed_feature(
+        tmp_path,
+        feature_id,
+        files={
+            "SPEC.md": "# spec\n",
+            "state.json": json.dumps(_v3_state(qa_status="pending")) + "\n",
+        },
+    )
+
+    with pytest.raises(ArchiveError, match="qa"):
+        archive_feature_after_qa(tmp_path, feature_id)
+
+    # Folder still in active.
+    assert (tmp_path / ".forge" / "features" / feature_id).is_dir()
+
+
+def test_archive_feature_after_qa_blocks_if_v1_feature(tmp_path: Path) -> None:
+    """Refuses to archive a v1 (no flow_version) feature even if qa state is fabricated."""
+    feature_id = "2026-05-09-toggle-add"
+    payload = _v1_state()
+    # Even with fabricated qa-done, a v1 feature is out of scope for this helper.
+    phases = payload["phases"]
+    assert isinstance(phases, dict)
+    phases["qa"] = {"status": "done"}
+    _seed_feature(
+        tmp_path,
+        feature_id,
+        files={
+            "SPEC.md": "# spec\n",
+            "state.json": json.dumps(payload) + "\n",
+        },
+    )
+
+    with pytest.raises(ArchiveError, match="v3"):
+        archive_feature_after_qa(tmp_path, feature_id)
+
+    assert (tmp_path / ".forge" / "features" / feature_id).is_dir()
+
+
+def test_archive_feature_after_qa_idempotent_when_already_archived(tmp_path: Path) -> None:
+    """Calling twice succeeds: second call is a silent no-op when only the archive exists."""
+    feature_id = "2026-05-09-toggle-add"
+    _seed_feature(
+        tmp_path,
+        feature_id,
+        files={
+            "SPEC.md": "# spec\n",
+            "state.json": json.dumps(_v3_state(qa_status="done")) + "\n",
+        },
+    )
+
+    first = archive_feature_after_qa(tmp_path, feature_id)
+    second = archive_feature_after_qa(tmp_path, feature_id)
+
+    target = tmp_path / ".forge" / "features" / "archive" / feature_id
+    assert first == target
+    assert second == target
+    assert target.is_dir()
+    assert not (tmp_path / ".forge" / "features" / feature_id).exists()
+
+
+def test_archive_feature_after_qa_collision_raises(tmp_path: Path) -> None:
+    """When BOTH source and archive exist, refuse to clobber."""
+    feature_id = "2026-05-09-toggle-add"
+    _seed_feature(
+        tmp_path,
+        feature_id,
+        files={
+            "SPEC.md": "# spec\n",
+            "state.json": json.dumps(_v3_state(qa_status="done")) + "\n",
+        },
+    )
+    # Manually place a colliding archive folder.
+    archive_target = tmp_path / ".forge" / "features" / "archive" / feature_id
+    archive_target.mkdir(parents=True)
+    (archive_target / "SPEC.md").write_text("# old\n", encoding="utf-8")
+
+    with pytest.raises(ArchiveError, match="collision"):
+        archive_feature_after_qa(tmp_path, feature_id)
+
+    # Both still present; nothing destroyed.
+    assert (tmp_path / ".forge" / "features" / feature_id).is_dir()
+    assert archive_target.is_dir()
