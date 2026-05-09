@@ -304,6 +304,15 @@ def record_routing_decision(
     if proposed_tier is not None and proposed_tier not in VALID_TIERS:
         raise StateError(f"invalid proposed_tier {proposed_tier!r}; must be one of {VALID_TIERS}")
     payload = read_state(path, schema_path=schema_path)
+    # M3 cross-check: final_tier must match the seeded state.json.tier so a
+    # focused/standard feature cannot quietly end up with routing.final_tier
+    # set to "full" (which would corrupt downstream phase-pump tables and
+    # next_phase_command resolution). seed_routed_feature already passes
+    # final_tier == state.tier on the happy path, so this guard never trips
+    # the canonical seeded route — only mismatched re-calls.
+    state_tier = payload.get("tier")
+    if final_tier != state_tier:
+        raise StateError(f"final_tier {final_tier!r} mismatches state.json.tier {state_tier!r}")
     block: dict[str, Any] = {
         "idea": idea,
         "final_tier": final_tier,

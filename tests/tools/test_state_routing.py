@@ -109,19 +109,21 @@ def test_record_routing_decision_overwrites_existing_block(
     }
     state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
 
+    # final_tier MUST match state.json.tier under the M3 cross-check guard;
+    # base payload carries tier="standard" so the re-call uses "standard".
     result = state.record_routing_decision(
         target,
         idea="new idea",
-        proposed_tier="standard",
-        final_tier="full",
-        rationale="user override to full",
+        proposed_tier="focused",
+        final_tier="standard",
+        rationale="user override on second decision",
         constitution_present=True,
         schema_path=schemas_dir / "state.schema.json",
         now="2026-05-04T09:55:00Z",
     )
 
     assert result["routing"]["idea"] == "new idea"
-    assert result["routing"]["final_tier"] == "full"
+    assert result["routing"]["final_tier"] == "standard"
     assert result["routing"]["constitution_present"] is True
 
 
@@ -179,6 +181,38 @@ def test_record_routing_decision_rejects_unknown_proposed_tier_without_schema(
             idea="x",
             proposed_tier="exotic",
             final_tier="standard",
+        )
+
+
+def test_record_routing_decision_rejects_final_tier_mismatching_state_tier(
+    tmp_path: Path,
+) -> None:
+    """``final_tier`` must equal ``state.json.tier`` (M3 cross-check).
+
+    A focused/standard feature whose routing block somehow ends up with
+    ``final_tier="full"`` would corrupt downstream phase-pump logic. The
+    cross-check refuses the write so the inconsistency cannot reach disk.
+    """
+    target = tmp_path / "state.json"
+    # base payload tier is "standard"
+    state.write_state(target, _base_payload())
+
+    with pytest.raises(
+        state.StateError, match=r"final_tier 'full' mismatches state\.json\.tier 'standard'"
+    ):
+        state.record_routing_decision(
+            target,
+            idea="x",
+            final_tier="full",
+        )
+
+    with pytest.raises(
+        state.StateError, match=r"final_tier 'focused' mismatches state\.json\.tier 'standard'"
+    ):
+        state.record_routing_decision(
+            target,
+            idea="x",
+            final_tier="focused",
         )
 
 
