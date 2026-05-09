@@ -168,32 +168,35 @@ Promote a verified feature to a canonical capability and move the feature folder
    ```
 
    This single helper:
-   - preflights all three target paths (feature source exists, archive target absent, canonical spec absent);
+   - preflights the canonical-spec target (and, for legacy v1 features, the archive target);
    - writes the canonical spec at `.forge/specs/<capability>/SPEC.md`;
-   - runs `_composed` against the still-live source folder so the archived `state.json` reflects the ACK deviation (when present) AND `current_phase: done` / `phases.ship.status: done`;
-   - moves the feature folder to `.forge/features/archive/<feature-id>/`;
-   - rolls back the canonical-spec write if the hook OR the archive move fails.
-   - On any preflight failure, raises `ArchiveError` with the M2 limitation message and leaves the repo untouched (state.json was never mutated, no ghost deviation — Open Scoping #14). The skill should append the failure to `decisions.md` § Open and halt.
+   - runs `_composed` against the still-live source folder so the in-place `state.json` reflects the ACK deviation (when present) AND `phases.ship.status: done`;
+   - **For v3 features (default for new features):** the feature folder remains at `.forge/features/<id>/` after ship; archival is deferred to `/forge:qa` post-merge completion via `tools.archive.archive_feature_after_qa`. The returned `archive_path` is the still-live source folder.
+   - **For v1 features (legacy, no `flow_version`):** moves the feature folder to `.forge/features/archive/<feature-id>/` at ship time and rolls back the canonical-spec write if the move fails.
+   - On any preflight failure, raises `ArchiveError` with the limitation message and leaves the repo untouched (state.json was never mutated, no ghost deviation — Open Scoping #14). The skill should append the failure to `decisions.md` § Open and halt.
 
-   When `_composed` runs successfully and the archive move then fails, `ship_feature` rolls back the canonical spec but the live `state.json` retains both the ACK deviation and the `current_phase: done` mutation. This matches the existing retry contract (`tools/archive.py:128-129`); forge-ship surfaces the failure and instructs the user to re-run after resolving the archive blocker.
+   For v1 features, when `_composed` runs successfully and the archive move then fails, `ship_feature` rolls back the canonical spec but the live `state.json` retains both the ACK deviation and the `phases.ship.status: done` mutation. The retry contract is documented in `tools/archive.py`; forge-ship surfaces the failure and instructs the user to re-run after resolving the archive blocker. v3 features have no archive-move step at ship and therefore cannot hit this retry path.
 
    When the §5.3.9 gate produced an ACKNOWLEDGE, the ship summary printed to the user includes a banner: `WITH UNRESOLVED CONSTITUTION FINDINGS - see decisions.md`. The audit trail (`state.json.deviations[]` entry + `decisions.md` heading) persists into the archive folder. Note: M3 does NOT modify the ship-feature commit subject itself — `tools.archive.ship_feature` composes its own subject and accepting a prefix arg is M4 work (see "Out of scope"). The deviation + decisions.md trail makes "didn't see it" non-credible after the fact even without a commit-subject signal.
 5. **Self-review gate:**
    - Canonical spec exists at the expected path.
-   - Feature folder no longer exists at `.forge/features/<id>/`.
-   - Archive folder exists at `.forge/features/archive/<id>/` with the full set of feature artifacts (SPEC.md, PLAN.md, UNDERSTANDING.md, `REVIEW.plan.md`, `REVIEW.code.md`, VERIFICATION.md, decisions.md, state.json).
-   - state.json (now under the archive) shows `current_phase == "done"`, `phases.ship.status == "done"`.
+   - **v1 features:** Feature folder no longer exists at `.forge/features/<id>/`; archive folder exists at `.forge/features/archive/<id>/` with the full set of feature artifacts (SPEC.md, PLAN.md, UNDERSTANDING.md, `REVIEW.plan.md`, `REVIEW.code.md`, VERIFICATION.md, decisions.md, state.json); state.json (now under the archive) shows `current_phase == "done"`, `phases.ship.status == "done"`.
+   - **v3 features:** Feature folder still present at `.forge/features/<id>/`; live state.json shows `phases.ship.status == "done"` and (after `complete_phase("ship")`) carries `shipped_at`. The folder will move to `.forge/features/archive/<id>/` at qa completion.
 6. **Surface to user:** canonical spec path, archive path, capability slug, summary of what shipped (criteria count, scenarios count, evidence link).
 
 ## Done
 
-Canonical capability SPEC.md exists at `.forge/specs/<capability>/SPEC.md`. Feature folder archived. State (now under the archive) reflects done.
+Canonical capability SPEC.md exists at `.forge/specs/<capability>/SPEC.md`.
+
+- **v1 features:** Feature folder archived at `.forge/features/archive/<id>/`; archived state reflects `done`.
+- **v3 features:** Feature folder remains at `.forge/features/<id>/` with `shipped_at` recorded; archival is deferred to `/forge:qa` post-merge completion (`archive_feature_after_qa`).
 
 ## State writes
 
-- `state.json` — `current_phase` advances to `done`; `phases.ship.status` flips to `done`; on a `§5.3.9` ACKNOWLEDGE, an entry is appended to `state.json.deviations[]` (`phase: "ship"`, `resolution: "user_acknowledged"`).
-- `.forge/specs/<capability>/SPEC.md` — canonical spec written (or rolled back on archive failure).
-- Feature folder moved from `.forge/features/<id>/` to `.forge/features/archive/<id>/`.
+- `state.json` — `phases.ship.status` flips to `done` and `shipped_at` is recorded by `complete_phase("ship")`. For v1 features, `current_phase` also advances to `done` via `finish_feature`. For v3 features, `current_phase` advances to `qa` (the terminal phase before `done`); the qa phase entry is created with `status: pending`. On a `§5.3.9` ACKNOWLEDGE, an entry is appended to `state.json.deviations[]` (`phase: "ship"`, `resolution: "user_acknowledged"`).
+- `.forge/specs/<capability>/SPEC.md` — canonical spec written for both v1 and v3 (rolled back on hook or archive failure for v1; v3 has no archive-move rollback path because the move is deferred).
+- **v1 features only:** feature folder moved from `.forge/features/<id>/` to `.forge/features/archive/<id>/` at ship.
+- **v3 features:** feature folder remains at `.forge/features/<id>/` until `/forge:qa --against merged` completes; the deferred move runs in `archive_feature_after_qa`.
 - `.forge/domain/glossary.md` — modified only when `--promote-domain` is set, the tier is `full`, and no glossary conflict is surfaced (advisory; never blocks ship).
 - `.forge/features/<id>/QA.md` — written by the optional pre-PR QA gate (step 3.6) when the operator accepts the prompt. Authored by `forge-qa`; ship does not edit it.
 - `.forge/features/<id>/decisions.md` — appended to in two cases unrelated to the canonical lifecycle: (1) a `## QA Override` ADR when `--qa-override-with-rationale` is supplied or when the operator chooses to continue past a `partial` QA verdict; (2) `§5.3.9` ACKNOWLEDGE deviation entry.

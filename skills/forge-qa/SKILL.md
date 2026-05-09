@@ -97,7 +97,11 @@ Two entry paths:
       to gate the PR.
     - Post-merge mode: `tools.state.start_phase(path, "qa")` (idempotent
       when already `in_progress`) → run sections → `complete_phase("qa")`
-      → advance `current_phase` to `done` if not already terminal.
+      → advance `current_phase` to `done` if not already terminal → call
+      `tools.archive.archive_feature_after_qa(repo_root, feature_id)` to
+      perform the deferred folder move from `.forge/features/<id>/` to
+      `.forge/features/archive/<id>/`. The helper is idempotent and
+      version-guarded; a retry after partial failure is safe.
 12. **Surface to operator.** Print verdict, confidence, blocker count, and
     the path to `QA.md`.
 
@@ -122,8 +126,12 @@ Two entry paths:
 - `QA.md` — created (or replaced) under `.forge/features/<id>/`.
 - `current_phase` — transitions only in post-merge mode (`qa → done`).
 - `state.json.phases.qa` — created/updated only in post-merge mode.
+- `archive_feature_after_qa` runs at qa-done in post-merge mode; the
+  feature folder moves to `.forge/features/archive/<id>/` once
+  `phases.qa.status == "done"`.
 - Pre-PR mode performs NO state mutation; ship-phase state is owned by
-  `forge-ship`.
+  `forge-ship`. Pre-PR mode does NOT trigger archive (it is a gate, not
+  a phase transition).
 
 ## Out of scope
 

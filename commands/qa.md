@@ -55,9 +55,12 @@ Run the FORGE QA pass against a feature.
 5. On completion, surface verdict, confidence, blocker count, and the
    `QA.md` path.
    - Pre-PR mode returns the result to `/forge:ship`; ship decides whether
-     to gate the PR.
+     to gate the PR. No archival occurs in this mode.
    - Post-merge mode advances state to `phases.qa.status == "done"` and
-     `current_phase == "done"`.
+     `current_phase == "done"`, then calls
+     `tools.archive.archive_feature_after_qa` to move the feature folder
+     from `.forge/features/<id>/` to `.forge/features/archive/<id>/`. The
+     helper is idempotent and version-guarded; safe to retry.
 
 ## Precondition
 

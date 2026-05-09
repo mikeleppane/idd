@@ -45,6 +45,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - non-POSIX (Windows)
     fcntl = None
 
+_FLOW_VERSION_V3 = 3
 _CAPABILITY_RE = re.compile(r"^[a-z0-9-]+$")
 # Schema-aligned slug: must start with alnum, at least 3 chars total.
 # Matches schemas/capability-spec-frontmatter.schema.json and
@@ -578,6 +579,117 @@ def archive_feature(repo_root: Path, feature_id: str) -> Path:
     return target
 
 
+def _read_flow_version(state_path: Path) -> int:
+    """Return the integer ``flow_version`` recorded in state.json, defaulting to 1.
+
+    Absence of the field is treated as ``1`` per the schema's documented
+    application convention. Any read or parse failure returns ``1`` as well —
+    the caller treats unreadable state as legacy v1 so the historical
+    archive-at-ship behavior is preserved when state.json is malformed.
+    """
+    if not state_path.is_file():
+        return 1
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return 1
+    raw = payload.get("flow_version") if isinstance(payload, dict) else None
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return raw
+    return 1
+
+
+def archive_feature_after_qa(repo_root: Path, feature_id: str) -> Path:
+    """Move a v3 feature folder to ``.forge/features/archive/<id>/`` once qa is done.
+
+    The v3 lifecycle keeps the feature folder live in
+    ``.forge/features/<id>/`` between ship and qa so post-merge
+    ``/forge:qa --against merged`` can find it. This helper performs the
+    deferred move once ``phases.qa.status == "done"``.
+
+    Idempotency:
+        When the source folder is already absent and the archive target
+        exists, the call returns the archive path without raising. This
+        matches retry-safety expectations of the qa skill, which calls this
+        helper after ``complete_phase("qa")`` succeeds.
+
+    Collision:
+        When BOTH the source and the archive target exist, the call raises
+        ``ArchiveError`` rather than clobbering either folder. The caller
+        must reconcile manually.
+
+    Args:
+        repo_root: Repository root containing the ``.forge/`` tree.
+        feature_id: Feature folder name in YYYY-MM-DD-slug form.
+
+    Returns:
+        Path to the archived feature folder.
+
+    Raises:
+        ArchiveError: ``feature_id`` slug malformed, the feature is not v3,
+            ``phases.qa.status`` is not ``"done"``, both source and archive
+            exist (collision), or the source is missing AND no archive
+            entry exists.
+    """
+    _validate_feature_id(feature_id)
+    source = repo_root / ".forge" / "features" / feature_id
+    archive_root = repo_root / ".forge" / "features" / "archive"
+    target = archive_root / feature_id
+
+    # Idempotent fast-path: source already moved, target present.
+    if not source.exists() and target.is_dir():
+        return target
+
+    if not source.is_dir():
+        raise ArchiveError(f"feature folder not found: {source}")
+
+    if target.exists():
+        raise ArchiveError(
+            f"archive collision for {feature_id!r}: both source {source} "
+            f"and archive {target} exist; manual reconciliation required"
+        )
+
+    state_path = source / "state.json"
+    if not state_path.is_file():
+        raise ArchiveError(
+            f"archive_feature_after_qa requires v3 feature with qa.status=done; "
+            f"got missing state.json at {state_path}"
+        )
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ArchiveError(
+            f"archive_feature_after_qa: cannot parse state.json at {state_path}: {exc}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ArchiveError(
+            f"archive_feature_after_qa: state.json at {state_path} is not a JSON object"
+        )
+
+    flow_version = payload.get("flow_version")
+    if flow_version != _FLOW_VERSION_V3:
+        raise ArchiveError(
+            f"archive_feature_after_qa requires v3 feature with qa.status=done; "
+            f"got flow_version={flow_version!r}"
+        )
+
+    phases = payload.get("phases")
+    qa_status: object = None
+    if isinstance(phases, dict):
+        qa_block = phases.get("qa")
+        if isinstance(qa_block, dict):
+            qa_status = qa_block.get("status")
+    if qa_status != "done":
+        raise ArchiveError(
+            f"archive_feature_after_qa requires v3 feature with qa.status=done; "
+            f"got qa.status={qa_status!r}"
+        )
+
+    archive_root.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(target))
+    return target
+
+
 def canonical_spec_path(repo_root: Path, capability: str) -> Path:
     """Return .forge/specs/<capability>/SPEC.md (does not validate existence).
 
@@ -676,12 +788,26 @@ def ship_feature(
     The transactional contract for /forge:ship: all preflight checks pass before any
     write, and the canonical spec write is rolled back if archival fails.
 
+    Lifecycle by ``state.json.flow_version``:
+        - **Absent or ``< 3`` (legacy v1/v2):** archives the feature folder at
+          ship time. The returned tuple's second element is the archive path
+          ``.forge/features/archive/<id>/``.
+        - **``3`` (live-until-qa):** the feature folder is left in place under
+          ``.forge/features/<id>/`` so post-merge ``/forge:qa --against merged``
+          can resolve it. The deferred folder move is performed by
+          :func:`archive_feature_after_qa` once qa completes. The returned
+          tuple's second element is the still-live source path.
+
+        Canonical spec publishing runs for both versions — only the
+        feature-folder move differs.
+
     Preflight (all-or-nothing):
         1. Validate `feature_id` slug.
         2. Validate `capability` slug.
         3. Source `.forge/features/<feature_id>/` must be a directory.
         4. Canonical `.forge/specs/<capability>/SPEC.md` must NOT exist.
-        5. Archive target `.forge/features/archive/<feature_id>/` must NOT exist.
+        5. Archive target `.forge/features/archive/<feature_id>/` must NOT
+           exist (legacy v1/v2 only — v3 does not consult this path at ship).
 
     Mutation:
         1. Write canonical spec via `write_canonical_spec`.
@@ -689,11 +815,11 @@ def ship_feature(
            if provided. Use this to mutate ``state.json`` (e.g., mark
            ``current_phase: done``) so the live state and the archived copy
            agree. Hook failure rolls back the canonical write before re-raising.
-        3. Move feature folder via `archive_feature`.
-        4. On move failure, delete the canonical spec file (and its parent dir
-           if it was newly created and is now empty), then re-raise. The
-           pre-archive hook's effects on the live state.json are NOT undone —
-           callers that mutate state must idempotently re-apply on retry.
+        3. **v1/v2 only:** move feature folder via `archive_feature`. v3
+           skips this step; the folder is archived later by
+           ``archive_feature_after_qa``.
+        4. On move failure (v1/v2), delete the canonical spec file (and its
+           parent dir if it was newly created and is now empty), then re-raise.
 
     Args:
         repo_root: Repository root containing the .forge/ tree.
@@ -705,7 +831,9 @@ def ship_feature(
             exception is treated as ship failure and triggers canonical rollback.
 
     Returns:
-        Tuple of (canonical_spec_path, archive_path) on success.
+        Tuple of (canonical_spec_path, archive_path) on success. For v3
+        features ``archive_path`` is the still-live source folder (the
+        deferred move runs at qa).
 
     Raises:
         ArchiveError: any preflight failure (invalid slug, missing source,
@@ -734,8 +862,11 @@ def ship_feature(
             "feature already shipped — delta proposals (M3+) required for changes",
         )
 
+    flow_version = _read_flow_version(source / "state.json")
+    defer_archive = flow_version >= _FLOW_VERSION_V3
+
     archive_target = repo_root / ".forge" / "features" / "archive" / feature_id
-    if archive_target.exists():
+    if not defer_archive and archive_target.exists():
         raise ArchiveError(f"feature already archived at {archive_target}")
 
     capability_dir_existed = canonical_target.parent.exists()
@@ -757,6 +888,12 @@ def ship_feature(
             raise ArchiveError(
                 f"ship_feature: pre_archive_hook failed; canonical spec rolled back: {exc}",
             ) from exc
+
+    if defer_archive:
+        # v3 lifecycle: feature folder stays under .forge/features/<id>/
+        # until /forge:qa --against merged completes. The deferred move is
+        # performed by archive_feature_after_qa.
+        return canonical, source
 
     try:
         archived = archive_feature(repo_root, feature_id)
