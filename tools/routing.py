@@ -208,8 +208,15 @@ def seed_routed_feature(
     feature_id = f"{today_iso}-{slug}"
 
     # Step 4: schema path passed to BOTH helpers so payload validation
-    # refuses BEFORE any disk write.
+    # refuses BEFORE any disk write. M6 finding M9: pre-check the schema
+    # file exists and surface a clean RuntimeError naming the missing
+    # path so the operator does not see a raw FileNotFoundError bubble
+    # up from inside write_state.
     schema_path = repo_root / "schemas" / "state.schema.json"
+    if not schema_path.is_file():
+        raise RuntimeError(
+            f"schemas/state.schema.json missing under {repo_root}; verify plugin install path"
+        )
 
     # Step 5: collision check BEFORE seed.  ``create_feature_folder`` would
     # also raise on collision, but we surface the same ArchiveError earlier

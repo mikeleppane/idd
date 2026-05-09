@@ -342,6 +342,22 @@ def test_feature_slug_accepted_at_three_char_boundary(tmp_path: Path) -> None:
     assert folder.name == "2026-05-08-abc"
 
 
+def test_seed_routed_feature_missing_schema_raises_runtime_error(tmp_path: Path) -> None:
+    """M6 finding M9: a missing schemas/state.schema.json must surface a
+    clean RuntimeError naming the missing path, not a raw FileNotFoundError
+    bubbled up from inside write_state.
+    """
+    # NOTE: do NOT call _stage_repo — the test exercises the no-schema branch.
+    repo = tmp_path
+    with pytest.raises(RuntimeError, match=r"schemas/state\.schema\.json missing"):
+        seed_routed_feature(
+            repo,
+            idea="any idea",
+            final_tier="focused",
+            today=TODAY,
+        )
+
+
 def test_seed_routed_feature_idea_over_4000_chars_raises_clean_error(tmp_path: Path) -> None:
     """M6 finding M7: a >4000-char idea must surface a clean cap error
     rather than the 6000-char schema-validation dump that includes the
