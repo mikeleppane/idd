@@ -87,7 +87,7 @@ def _check_feature_payload(
         )
         return findings
 
-    # L8: fail-closed against malformed ``commits`` values (parity with
+    # Fail-closed against malformed ``commits`` values (parity with
     # archive.py).  ``payload.get("commits") or []`` previously coerced
     # ``None`` / ``0`` / ``False`` / ``""`` / non-list to ``[]`` and treated
     # them as orphan-eligible.  The orphan branch must require commits to
@@ -108,8 +108,8 @@ def _check_feature_payload(
         and not extra_files
     ):
         # Helper hint differs by entry point: refine seeds come from
-        # /forge:refine (existing P5 path → cleanup_orphan_feature); spec
-        # seeds come from /forge:do focused/standard (P6.1 → cleanup_seeded_feature).
+        # /forge:refine (cleanup_orphan_feature); spec seeds come from
+        # /forge:do focused/standard (cleanup_seeded_feature).
         helper = "cleanup_orphan_feature" if current_phase == "refine" else "cleanup_seeded_feature"
         findings.append(
             Finding(

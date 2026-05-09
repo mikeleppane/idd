@@ -122,7 +122,7 @@ def test_seed_routed_feature_standard_happy_path(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Full-tier seed — P6.2 contract (refine entry phase, refine⇒full locked)
+# Full-tier seed contract (refine entry phase, refine⇒full locked)
 # ---------------------------------------------------------------------------
 
 

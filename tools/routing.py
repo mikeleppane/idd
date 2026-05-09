@@ -157,7 +157,7 @@ def seed_routed_feature(
             re-raising.
     """
     # Step 1: refuse unknown tiers BEFORE any disk mutation.  All three
-    # known tiers (focused/standard/full) survive this gate as of P6.2.
+    # known tiers (focused/standard/full) survive this gate.
     if final_tier not in VALID_TIERS:
         raise ValueError(f"invalid final_tier {final_tier!r}; must be one of {VALID_TIERS}")
 
@@ -192,7 +192,7 @@ def seed_routed_feature(
                 "expected slug matching ^[a-z0-9][a-z0-9-]{2,}$ "
                 "(≥3 chars, alnum-leading, lowercase + hyphens)"
             )
-        # H1: an operator-supplied feature_slug bypasses the SKILL-layer
+        # An operator-supplied feature_slug bypasses the SKILL-layer
         # capability scan (forge-do step 4). Re-run the scan here so an
         # operator who hand-picks a slug naming an existing canonical
         # capability cannot seed silently and waste downstream phases.
@@ -289,7 +289,7 @@ def seed_routed_feature(
                 "original exception below",
                 file=sys.stderr,
             )
-        # L7: re-raise the original exception WITHOUT ``from None`` so the
+        # Re-raise the original exception WITHOUT ``from None`` so the
         # ``__cause__`` / ``__context__`` chain is preserved. The cleanup
         # exception is already swallowed via the inner except branches, so
         # chaining cannot reintroduce it; the chain only carries the

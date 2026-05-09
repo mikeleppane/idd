@@ -350,7 +350,7 @@ def test_start_phase_rejects_unknown_phase(tmp_path: Path, schemas_dir: Path) ->
 
 
 # ---------------------------------------------------------------------------
-# M6 finding M5: start_phase enforces tier-allowed phase set
+# start_phase enforces tier-allowed phase set
 # ---------------------------------------------------------------------------
 
 

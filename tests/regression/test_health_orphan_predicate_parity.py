@@ -58,8 +58,7 @@ def test_orphan_seed_phases_shared_via_feature_layout() -> None:
     """archive.py and health.py both bind the SAME _ORPHAN_SEED_PHASES object.
 
     Identity check (via the canonical module) ensures a future change to one
-    predicate's phase set cannot silently desync from the other.  M3 P6.1 T7
-    finding p6-1-M1.
+    predicate's phase set cannot silently desync from the other.
     """
     canonical = layout_mod._ORPHAN_SEED_PHASES
     archive_attr = getattr(archive_mod, "_ORPHAN_SEED_PHASES")  # noqa: B009

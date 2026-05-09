@@ -135,7 +135,7 @@ def slug_from_idea(text: str, *, max_words: int = 5) -> str:
     """
     if max_words < 1:
         raise ValueError(f"max_words must be >= 1, got {max_words}")
-    # M8: normalize via NFKD + ascii-ignore so accented Latin (``café`` ->
+    # Normalize via NFKD + ascii-ignore so accented Latin (``café`` ->
     # ``cafe``) and German umlauts (``über`` -> ``uber``) collapse to their
     # base form before the existing ``[^a-z0-9 ]`` cleanup. Non-decomposable
     # characters (CJK, Devanagari, etc.) are stripped entirely; the existing
@@ -156,7 +156,7 @@ def slug_from_idea(text: str, *, max_words: int = 5) -> str:
         if len(distinct) == max_words:
             break
     slug = "-".join(distinct)
-    # Validate final slug matches the schema-aligned pattern.  L2 splits the
+    # Validate final slug matches the schema-aligned pattern.  Split the
     # empty-slug failure into two paths so the operator can tell whether the
     # input had no tokens at all (empty / whitespace) versus tokens that all
     # got filtered as stopwords or too-short.
@@ -374,10 +374,10 @@ _RESEARCH_SKIPPED_ENTRY: dict[str, str] = {
 }
 
 # Seed-time entry phases accepted by ``create_feature_folder``.  ``"spec"`` is
-# the P6.1 focused/standard path; ``"refine"`` is the P6.2 full-tier path.
-# Any other lifecycle phase value (e.g. ``"plan"``, ``"execute"``) is post-
-# seed territory and is rejected here so /forge:do callers cannot accidentally
-# create a folder mid-lifecycle.
+# the focused/standard entry; ``"refine"`` is the full-tier entry.  Any other
+# lifecycle phase value (e.g. ``"plan"``, ``"execute"``) is post-seed territory
+# and is rejected here so /forge:do callers cannot accidentally create a
+# folder mid-lifecycle.
 _VALID_SEED_PHASES: frozenset[str] = frozenset({"spec", "refine"})
 
 
@@ -420,9 +420,8 @@ def create_feature_folder(
     Composes the three ``templates/feature/`` files (state.json, SPEC.md,
     decisions.md) into a new feature folder with substitutions for
     ``feature_id`` and ``tier``.  The ``current_phase`` keyword controls the
-    seed entry: ``"spec"`` (P6.1, focused/standard) or ``"refine"`` (P6.2,
-    full-tier only).  Any other lifecycle phase is post-seed territory and is
-    refused.
+    seed entry: ``"spec"`` (focused/standard) or ``"refine"`` (full-tier
+    only).  Any other lifecycle phase is post-seed territory and is refused.
 
     Per-file write is atomic via ``atomic_replace`` (tempfile +
     ``Path.replace`` on the same directory — POSIX-rename semantics).
@@ -460,9 +459,9 @@ def create_feature_folder(
         feature_id: Feature folder name in YYYY-MM-DD-slug form.
         tier: One of ``VALID_TIERS`` (focused/standard/full).
         current_phase: Seed entry phase; one of ``{"spec", "refine"}``.
-            Defaults to ``"spec"`` to preserve the P6.1 focused/standard
-            contract.  ``"refine"`` opens the P6.2 full-tier path and
-            additionally requires ``tier == "full"``.
+            Defaults to ``"spec"`` for the focused/standard entry.
+            ``"refine"`` opens the full-tier entry and additionally requires
+            ``tier == "full"``.
         schema_path: Optional path to ``schemas/state.schema.json``.  When
             given, ``write_state`` validates the seed payload before any disk
             mutation.
@@ -492,7 +491,7 @@ def create_feature_folder(
         raise ArchiveError(f"feature folder already exists: {feature_id!r}")
 
     folder = repo_root / ".forge" / "features" / feature_id
-    # L3: wrap mkdir's FileExistsError as ArchiveError so callers see a
+    # Wrap mkdir's FileExistsError as ArchiveError so callers see a
     # consistent exception type when a TOCTOU race fires (folder created
     # between the feature_folder_exists check above and this mkdir).
     try:

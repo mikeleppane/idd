@@ -22,7 +22,7 @@ Asserts:
 10. SKILL.md cleanup hook references ``tools.archive.cleanup_seeded_feature``
     AND ``KeyboardInterrupt``.
 11. commands/do.md ``argument-hint`` matches the refine-style convention.
-12. commands/do.md no longer carries the ``--full raises`` P6.1 caveat.
+12. commands/do.md no longer carries any ``--full raises`` caveat.
 13. SKILL.md self-review checklist covers the required state-shape
     invariants for both ``spec`` and ``refine`` seed phases.
 14. SKILL.md Constitution preflight defaults to skip.
@@ -33,7 +33,7 @@ Asserts:
 17. SKILL.md self-review accepts ``current_phase ∈ {"spec", "refine"}``
     rather than hard-coding ``spec``.
 18. SKILL.md LLM tier proposal prompt widens to all three tiers.
-19. SKILL.md drops the P6.1 "refuse if LLM picks full" prose.
+19. SKILL.md does not carry any "refuse if LLM picks full" prose.
 """
 
 from __future__ import annotations
@@ -113,12 +113,12 @@ def test_skill_secrets_warning_literal() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. --full raise pointer to P6.2 — REMOVED (P6.2 shipped the full tier)
+# 5. --full raise pointer is REMOVED — full tier seeds normally
 # ---------------------------------------------------------------------------
 
 
 def test_skill_full_tier_raise_pointer_removed() -> None:
-    """The P6.1 raise pointer is gone now that P6.2 ships full-tier routing.
+    """The full-tier raise pointer is gone now that full-tier routing ships.
 
     The skill no longer raises ``NotImplementedError`` for ``--full``; the
     routing helper seeds ``current_phase="refine"`` and the skill dispatches
@@ -249,7 +249,7 @@ def test_command_argument_hint_matches_refine_convention() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 12. commands/do.md drops the P6.1 --full raises caveat
+# 12. commands/do.md drops any legacy --full raises caveat
 # ---------------------------------------------------------------------------
 
 
@@ -283,9 +283,8 @@ def test_command_drops_full_raises_caveat() -> None:
 
 def test_skill_self_review_checklist_present() -> None:
     text = _read(SKILL_PATH)
-    # P6.2 widened the phase invariant from hard-coded ``spec`` to the
-    # tier-deterministic union ``{spec, refine}``; the per-phase status
-    # check generalizes to ``phases.<current_phase>.status``.
+    # The phase invariant is the tier-deterministic union ``{spec, refine}``;
+    # the per-phase status check generalizes to ``phases.<current_phase>.status``.
     expected_substrings = [
         'current_phase ∈ {"spec", "refine"}',
         "research",
@@ -383,7 +382,7 @@ def test_skill_cleanup_caveat_decisions_md_lost() -> None:
 
 
 def test_skill_full_tier_dispatch_literal() -> None:
-    """P6.2 full-tier dispatch literal must appear as its own line.
+    """The full-tier dispatch literal must appear as its own line.
 
     Mirrors the focused/standard line-anchored assertion: the literal must
     appear as a complete line (optionally inline-coded with backticks), not
@@ -424,8 +423,8 @@ def test_skill_full_tier_dispatch_literal() -> None:
 def test_skill_dispatch_resolves_by_current_phase() -> None:
     """The skill must name ``state.json.current_phase`` as the resolver.
 
-    Tier-deterministic dispatch is the P6.2 contract: the dispatch literal
-    is chosen by reading ``state.json.current_phase`` after the seed (``spec``
+    Tier-deterministic dispatch is the contract: the dispatch literal is
+    chosen by reading ``state.json.current_phase`` after the seed (``spec``
     → ``/forge:spec``; ``refine`` → ``/forge:refine``).  The skill prose
     MUST name this resolver explicitly so a future edit cannot silently
     regress to a flag-based or LLM-proposal-based dispatch.
@@ -444,11 +443,10 @@ def test_skill_dispatch_resolves_by_current_phase() -> None:
 def test_skill_full_tier_self_review_accepts_refine_phase() -> None:
     """The self-review checklist must accept refine as a valid seed phase.
 
-    P6.1 hard-coded ``current_phase == "spec"``.  P6.2 widens to
-    ``current_phase ∈ {"spec", "refine"}`` so full-tier seeds (which seed
-    ``current_phase="refine"``) survive the self-review without false
-    positives.  The hard-coded ``current_phase == "spec"`` line MUST be
-    gone so the checklist generalizes correctly.
+    The self-review checklist must accept ``current_phase ∈ {"spec",
+    "refine"}`` so full-tier seeds (which seed ``current_phase="refine"``)
+    survive without false positives.  Any hard-coded ``current_phase ==
+    "spec"`` line MUST be gone so the checklist generalizes correctly.
     """
     text = _read(SKILL_PATH)
     assert 'current_phase ∈ {"spec", "refine"}' in text, (
@@ -459,7 +457,7 @@ def test_skill_full_tier_self_review_accepts_refine_phase() -> None:
     # falsely fail on full-tier seeds.
     assert 'current_phase == "spec"' not in text, (
         "SKILL.md self-review must NOT hard-code current_phase == 'spec'; "
-        "the P6.2 widening replaces it with the {'spec', 'refine'} union"
+        "the contract is the {'spec', 'refine'} union"
     )
 
 
@@ -471,41 +469,38 @@ def test_skill_full_tier_self_review_accepts_refine_phase() -> None:
 def test_skill_llm_proposal_widens_to_focused_standard_full() -> None:
     """The step-5 LLM prompt must include all three tiers.
 
-    P6.1 limited the proposal space to focused/standard.  P6.2 widens to
-    focused/standard/full so the LLM can propose any tier and the override
-    flag (when supplied) still wins at step 7.
+    The proposal space is focused/standard/full so the LLM can propose any
+    tier and the override flag (when supplied) still wins at step 7.
     """
     text = _read(SKILL_PATH)
     assert "focused/standard/full" in text, (
         "SKILL.md step-5 LLM prompt must enumerate all three tiers "
-        "(focused/standard/full) — the P6.2 widening removes the "
-        "P6.1 focused/standard-only restriction"
+        "(focused/standard/full) — no focused/standard-only restriction"
     )
 
 
 # ---------------------------------------------------------------------------
-# 20. Drop the P6.1 "refuse if LLM picks full" prose
+# 20. Skill does not carry "refuse if LLM picks full" prose
 # ---------------------------------------------------------------------------
 
 
 def test_skill_drops_full_excluded_refusal_prose() -> None:
-    """The P6.1 hallucination-refusal prose is gone in P6.2.
+    """No hallucination-refusal prose for the LLM picking ``full``.
 
-    P6.1 instructed the skill to refuse if the LLM picked ``full`` despite
-    the prompt excluding it.  P6.2 makes ``full`` a legitimate proposal
-    target, so the refusal prose ("If the LLM hallucinates `full` ...") MUST
-    be absent.  Pinning the absence prevents a future edit from silently
-    re-introducing the refusal and breaking the LLM-proposes-full path.
+    ``full`` is a legitimate proposal target, so any refusal prose ("If
+    the LLM hallucinates `full` ...") MUST be absent.  Pinning the absence
+    prevents a future edit from silently re-introducing the refusal and
+    breaking the LLM-proposes-full path.
     """
     text = _read(SKILL_PATH)
     lowered = text.lower()
     assert "hallucinates" not in lowered, (
-        "SKILL.md must NOT carry the P6.1 'LLM hallucinates full' refusal "
-        "prose — full is a legitimate proposal target in P6.2"
+        "SKILL.md must NOT carry the 'LLM hallucinates full' refusal "
+        "prose — full is a legitimate proposal target"
     )
-    assert "p6.1 excludes full" not in lowered, (
-        "SKILL.md must NOT carry the P6.1 'excludes full from the proposal "
-        "space' restriction — P6.2 widens the proposal space"
+    assert "excludes full from" not in lowered, (
+        "SKILL.md must NOT carry an 'excludes full from the proposal "
+        "space' restriction — the proposal space is all three tiers"
     )
 
 
@@ -518,8 +513,8 @@ def test_skill_confirm_ui_lists_full_as_override() -> None:
     """Step-6 confirm-UI prose must list ``--full`` alongside ``--focused`` /
     ``--standard`` as a valid override.
 
-    P6.2 made ``full`` a legitimate proposal and override target. If the
-    confirm-UI guidance enumerates only ``--focused`` / ``--standard``, an
+    ``full`` is a legitimate proposal and override target. If the confirm-UI
+    guidance enumerates only ``--focused`` / ``--standard``, an
     LLM-proposes-standard path silently blocks the user from overriding to
     full at confirm time. This test pins the three-tier override list so a
     future edit cannot drop ``--full`` again.
@@ -527,7 +522,7 @@ def test_skill_confirm_ui_lists_full_as_override() -> None:
     text = _read(SKILL_PATH)
     assert "`--focused` / `--standard` / `--full`" in text, (
         "SKILL.md step 6 must enumerate `--focused` / `--standard` / `--full` "
-        "as the override flag list — P6.2 made full a legitimate override target"
+        "as the override flag list — full is a legitimate override target"
     )
 
 
@@ -542,7 +537,7 @@ def test_command_confirm_ui_lists_full_as_override() -> None:
     text = _read(COMMAND_PATH)
     assert "`--focused` / `--standard` / `--full`" in text, (
         "commands/do.md step 6 must enumerate `--focused` / `--standard` / `--full` "
-        "as the override flag list — P6.2 made full a legitimate override target"
+        "as the override flag list — full is a legitimate override target"
     )
 
 

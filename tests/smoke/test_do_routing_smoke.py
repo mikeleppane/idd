@@ -365,10 +365,10 @@ def test_record_routing_decision_failure_leaves_no_orphan(
 
 
 # ---------------------------------------------------------------------------
-# Full-tier smoke moved to tests/smoke/test_do_routing_full_tier_smoke.py
-# (P6.2 owns the end-to-end seed → refine → spec → domain walk plus
-# refined_idea persistence, capability-scan locking, and full-tier
-# post-seed cleanup. This file owns focused/standard only.)
+# Full-tier smoke lives in tests/smoke/test_do_routing_full_tier_smoke.py
+# (end-to-end seed → refine → spec → domain walk plus refined_idea
+# persistence, capability-scan locking, and full-tier post-seed cleanup).
+# This file owns focused/standard only.
 # ---------------------------------------------------------------------------
 
 
@@ -383,8 +383,8 @@ def test_schema_path_enforcement_refuses_bogus_tier_before_seed(tmp_path: Path) 
     The validation order in ``seed_routed_feature`` (step 1 of the
     docstring) catches any tier outside ``VALID_TIERS`` and refuses
     BEFORE the slug compute, the collision check, or any folder
-    creation.  As of P6.2 ``full`` is a legitimate tier and seeds
-    normally; only genuinely invalid values land here.
+    creation.  ``full`` is a legitimate tier and seeds normally; only
+    genuinely invalid values land here.
     """
     repo = _stage_repo(tmp_path)
 

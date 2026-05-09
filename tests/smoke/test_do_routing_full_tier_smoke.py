@@ -86,7 +86,7 @@ def _state_path(folder: Path) -> Path:
 def test_full_tier_seed_produces_refine_phase(tmp_path: Path) -> None:
     """``final_tier='full'`` seeds a folder anchored at ``current_phase='refine'``.
 
-    Locks AC #5 from the P6.2 plan: the helper returns a folder whose
+    The helper returns a folder whose
     ``state.json`` validates against the live schema and carries
     ``current_phase='refine'`` + ``phases.refine.status='in_progress'`` +
     a populated ``routing`` block.  The ``phases`` map contains ONLY
@@ -199,9 +199,9 @@ def test_full_tier_walk_seed_to_domain_via_state_helpers(tmp_path: Path) -> None
 def test_full_tier_refined_idea_consumed_by_spec_phase(tmp_path: Path) -> None:
     """``refined_idea`` survives ``complete_phase('refine') + start_phase('spec')``.
 
-    The P4 contract: ``/forge:refine`` populates ``state.json.refined_idea``;
-    ``/forge:spec`` reads it as the Intent draft.  Phase transitions must NOT
-    clear the field — locks AC #8 from the P6.2 plan.
+    Contract: ``/forge:refine`` populates ``state.json.refined_idea``;
+    ``/forge:spec`` reads it as the Intent draft.  Phase transitions must
+    NOT clear the field.
     """
     repo = _stage_repo(tmp_path)
 
@@ -245,8 +245,8 @@ def test_full_tier_capability_scan_runs_at_do_time_not_refine_time(
 ) -> None:
     """The slug is locked at ``/forge:do`` time via ``feature_slug`` override.
 
-    Locks AC #10 from the P6.2 plan: the capability scan runs in
-    ``/forge:do`` (not in ``/forge:refine``), so an operator who picks a
+    The capability scan runs in ``/forge:do`` (not in ``/forge:refine``),
+    so an operator who picks a
     suffix-disambig slug like ``billing-v2`` carries it through the seed
     unchanged.  The audit record (``routing.idea``) keeps the ORIGINAL
     idea verbatim — only the folder slug is overridden.
@@ -303,7 +303,7 @@ def test_full_tier_post_seed_cleanup_on_record_routing_failure(
 ) -> None:
     """A StateError from ``record_routing_decision`` cleans up the full-tier seed.
 
-    The P6.1 cleanup wrapper in ``seed_routed_feature`` is tier-agnostic; this
+    The cleanup wrapper in ``seed_routed_feature`` is tier-agnostic; this
     test pins that the full-tier path (which seeds ``phases.refine`` instead
     of ``phases.spec``) still triggers ``cleanup_seeded_feature`` on a
     routing-block failure.  Locks the risk-table mitigation for orphan

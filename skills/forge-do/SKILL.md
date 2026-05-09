@@ -86,12 +86,12 @@ seed completes.
 5. **LLM tier proposal.** Issue a pure LLM call with project signals
    (top-level dir tree plus `pyproject.toml` / `package.json` /
    `Cargo.toml` if present) and the relevance-filtered Constitution
-   article list (per P3). Prompt verbatim:
+   article list. Prompt verbatim:
 
    `Given idea + project signals + Constitution (if any), propose tier (focused/standard/full) + phase list. One-sentence rationale.`
 
-   All three tiers are valid proposal targets in P6.2; the override flag
-   (when supplied) still wins per step 7.
+   All three tiers are valid proposal targets; the override flag (when
+   supplied) still wins per step 7.
 6. **Print proposal as numbered checkbox list.** Render the LLM's
    tier + phase list as a numbered checkbox list in the terminal. Ask
    the user to confirm with `y` or override by re-invoking with
@@ -170,7 +170,7 @@ seed completes.
   without seeding. No state mutation.
 - **Health preflight surfaces findings.** Default is to halt and ask
   the user. If the user opts to abort, no folder is created. `--force`
-  is a P6.2 affordance.
+  is not exposed today.
 - **Capability collision with no suffix offered.** Skill exits and
   dispatches `/forge:change` per the disambig contract. No folder is
   created.

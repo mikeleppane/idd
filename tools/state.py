@@ -19,7 +19,7 @@ class StateError(RuntimeError):
 
 
 # Strict feature-id: ``YYYY-MM-DD`` + alnum-leading slug with no trailing
-# hyphen and no consecutive hyphens (M6 finding L1). Mirrors the regex in
+# hyphen and no consecutive hyphens. Mirrors the regex in
 # tools.archive._FEATURE_ID_RE.
 _FEATURE_ID_RE = re.compile(
     r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9]))+$"
@@ -218,8 +218,8 @@ def _tier_allowed_phases(tier: str) -> frozenset[str]:
     ``_STANDARD_NEXT``, ``_FULL_NEXT``) plus the ``review`` phase (whose
     next-command lives in ``_next_review_command`` rather than the table)
     on tiers that flow through review, plus the post-ship ``qa`` phase
-    introduced by ``flow_version: 3``. M6 finding M5: ``start_phase`` must
-    refuse a tier-incompatible phase (e.g. ``start_phase("refine")`` on a
+    introduced by ``flow_version: 3``. ``start_phase`` refuses a
+    tier-incompatible phase (e.g. ``start_phase("refine")`` on a
     focused-tier feature) so the next-phase pump cannot end up on a
     dead-end ``None``.
 
@@ -426,7 +426,7 @@ def guard_refine_entry(path: Path, schema_path: Path | None = None) -> dict[str,
     Returns the parsed payload so the caller can continue without a second
     read. The two error wordings are deliberately distinct so the SKILL
     prose can quote them verbatim and the operator sees which precondition
-    failed (M6 finding M1).
+    failed.
 
     Args:
         path: state.json path.

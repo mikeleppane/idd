@@ -320,7 +320,7 @@ def test_create_feature_folder_decisions_md_copied_byte_for_byte(tmp_path: Path)
 
 
 # ---------------------------------------------------------------------------
-# current_phase kwarg — P6.2 full-tier refine seed
+# current_phase kwarg — full-tier refine seed
 # ---------------------------------------------------------------------------
 
 
@@ -390,7 +390,7 @@ def test_create_feature_folder_invalid_current_phase_raises(tmp_path: Path, bad_
 
 
 def test_create_feature_folder_default_current_phase_is_spec(tmp_path: Path) -> None:
-    """Calling without current_phase= preserves P6.1 contract: phases.spec block."""
+    """Calling without current_phase= defaults to spec entry: phases.spec block."""
     feature_id = "2026-05-08-default-spec"
     create_feature_folder(
         tmp_path,
