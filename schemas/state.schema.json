@@ -134,6 +134,11 @@
     "refined_idea": {
       "type": "string",
       "maxLength": 4000
+    },
+    "shipped_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 UTC timestamp recorded when /forge:ship completes the ship phase. Required for post-merge /forge:qa to find the feature; absence means ship has not completed."
     }
   }
 }

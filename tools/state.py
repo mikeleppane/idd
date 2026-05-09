@@ -195,6 +195,13 @@ def complete_phase(
     payload["phases"][phase]["status"] = "done"
     payload["phases"][phase]["completed_at"] = timestamp
 
+    # Anchor for post-merge /forge:qa: stamp top-level ``shipped_at`` exactly
+    # once on ship completion. If a prior completion already wrote the field
+    # (e.g. an artificial fixture or replay) preserve the original timestamp
+    # so the post-merge guard reads a stable point-in-time value.
+    if phase == "ship" and "shipped_at" not in payload:
+        payload["shipped_at"] = timestamp
+
     write_state(path, payload, schema_path=schema_path)
     return payload
 

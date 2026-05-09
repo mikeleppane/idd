@@ -193,9 +193,7 @@ def test_complete_phase_ship_sets_shipped_at(tmp_path: Path, schemas_dir: Path) 
     assert on_disk["shipped_at"] == "2026-05-09T11:00:00Z"
 
 
-def test_complete_phase_non_ship_does_not_set_shipped_at(
-    tmp_path: Path, schemas_dir: Path
-) -> None:
+def test_complete_phase_non_ship_does_not_set_shipped_at(tmp_path: Path, schemas_dir: Path) -> None:
     """Only ship completion stamps shipped_at; other phases leave it absent."""
     target = tmp_path / "state.json"
     initial = {
