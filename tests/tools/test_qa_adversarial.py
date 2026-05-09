@@ -1,4 +1,4 @@
-"""Tests for `tools.harden.adversarial` — capped red-team probe dispatch."""
+"""Tests for `tools.qa.adversarial` — capped red-team probe dispatch."""
 
 from __future__ import annotations
 
@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from tools.harden.adversarial import (
+from tools.qa import QAError
+from tools.qa.adversarial import (
     AdversarialAttempt,
     AdversarialBudget,
     AdversarialResult,
     run_adversarial,
 )
-from tools.harden.contract import HardenError
 
 
 def _write_spec(repo_root: Path, feature_id: str) -> Path:
@@ -207,7 +207,7 @@ def test_adversarial_default_runner_returns_partial(tmp_path: Path) -> None:
 def test_adversarial_missing_spec_raises(tmp_path: Path) -> None:
     feature_id = "2026-05-09-adv-no-spec"
     # No SPEC.md created.
-    with pytest.raises(HardenError, match=r"SPEC\.md missing"):
+    with pytest.raises(QAError, match=r"SPEC\.md missing"):
         run_adversarial(tmp_path, feature_id, clock=_make_clock())
 
 

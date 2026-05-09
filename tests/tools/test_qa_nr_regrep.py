@@ -1,4 +1,4 @@
-"""Tests for `tools.harden.nr_regrep` — re-greps merged tree against SPEC NRs."""
+"""Tests for `tools.qa.nr_regrep` — re-greps merged tree against SPEC NRs."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from tools.harden.contract import HardenError
-from tools.harden.nr_regrep import (
+from tools.qa import QAError
+from tools.qa.nr_regrep import (
     NegativeRequirement,
     NRResult,
     NRViolation,
@@ -85,7 +85,7 @@ def test_run_nr_regrep_missing_spec_raises(tmp_path: Path) -> None:
     feature_id = "2026-05-09-nr-no-spec"
     (tmp_path / ".forge" / "features" / feature_id).mkdir(parents=True)
 
-    with pytest.raises(HardenError, match=r"SPEC\.md missing"):
+    with pytest.raises(QAError, match=r"SPEC\.md missing"):
         run_nr_regrep(tmp_path, feature_id)
 
 

@@ -1,8 +1,8 @@
-"""Adversarial probe module for `/forge:harden`.
+"""Adversarial probe module for the post-ship QA phase.
 
 Coordinates a capped red-team subagent dispatch and folds per-attempt
 outcomes into a structured :class:`AdversarialResult`. The actual
-subagent invocation lives in the harden orchestrator skill — this module
+subagent invocation lives in the QA orchestrator skill — this module
 applies the cap policy (5 minutes walltime, 50 attempted-breakage
 scenarios by default) and aggregates results from an injected runner.
 
@@ -14,8 +14,8 @@ attempt count or accumulated walltime reaches the configured budget.
 Default runner returns a single ``info`` attempt so the module remains
 importable and exercisable in tests without a real subagent backend.
 
-Reuses :class:`HardenError` from :mod:`tools.harden.contract` so harden
-modules surface a single error type.
+Reuses :class:`QAError` from :mod:`tools.qa` so QA modules surface a
+single error type.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Literal
 
-from tools.harden.contract import HardenError
+from tools.qa import QAError
 from tools.validate._frontmatter import _read_text
 
 DEFAULT_WALLTIME_BUDGET_MIN: Final[int] = 5
@@ -36,7 +36,7 @@ AdversarialStatus = Literal["pass", "fail", "partial"]
 AttemptSeverity = Literal["high", "medium", "low", "info"]
 
 # Detail returned by the no-op runner so callers can distinguish a
-# genuinely-clean probe from an unconfigured harden run.
+# genuinely-clean probe from an unconfigured QA run.
 _DEFAULT_RUNNER_DESCRIPTION: Final[str] = "no adversarial runner configured"
 
 
@@ -95,7 +95,7 @@ class AdversarialResult:
             ``True``.
         findings: Attempts whose ``breakage_found`` is ``True``, in
             dispatch order. Clean attempts are not included to keep the
-            harden record focused on actionable findings.
+            QA record focused on actionable findings.
     """
 
     status: AdversarialStatus
@@ -110,7 +110,7 @@ def _default_runner(attempt_number: int) -> AdversarialAttempt:
 
     Keeps the module importable and exercisable without a subagent
     backend. The caller treats default-runner runs as ``partial`` so the
-    harden record never claims confidence the probe did not earn.
+    QA record never claims confidence the probe did not earn.
     """
     return AdversarialAttempt(
         attempt_id=f"attempt-{attempt_number - 1}",
@@ -175,12 +175,12 @@ def run_adversarial(
         dispatch (clean and breaking).
 
     Raises:
-        HardenError: If the feature's SPEC.md is missing.
+        QAError: If the feature's SPEC.md is missing.
     """
     spec_path = repo_root / ".forge" / "features" / feature_id / "SPEC.md"
     spec_text = _read_text(spec_path)
     if spec_text is None:
-        raise HardenError(f"SPEC.md missing for feature {feature_id!r} at {spec_path}")
+        raise QAError(f"SPEC.md missing for feature {feature_id!r} at {spec_path}")
 
     active_budget = budget if budget is not None else AdversarialBudget()
     active_clock = clock if clock is not None else time.monotonic

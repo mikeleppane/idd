@@ -1,13 +1,13 @@
-"""Negative-Requirement re-grep module for `/forge:harden`.
+"""Negative-Requirement re-grep module for the post-ship QA phase.
 
 Re-greps the merged tree against every Negative Requirement parsed from a
 feature's ``SPEC.md`` and returns a structured :class:`NRResult`. Catches
 re-introduced violations the merge itself may have re-added under a different
-file path — a regression the contract / UAT layers cannot see because they
-re-run scenarios, not source-tree pattern checks.
+file path — a regression scenario replays cannot see because they re-run
+behavior, not source-tree pattern checks.
 
 The module is pure-Python (no subprocess) so it can run in any sandbox the
-harden orchestrator hands it. Both file walking and pattern matching are
+QA orchestrator hands it. Both file walking and pattern matching are
 :class:`Callable` overrides so tests can inject deterministic alternatives.
 
 Negative-Requirement parsing is fence-aware: ``_strip_code`` is applied to the
@@ -20,7 +20,7 @@ The NR parser here is local to this module by design. The existing
 anchor parsers but no public NR parser — only the placement validator
 (``validate_negative_requirements`` in :mod:`tools.validate.spec_structural`).
 A follow-up consolidation should promote :func:`parse_negative_requirements`
-into :mod:`tools.validate.spec_semantic` so the harden and validate layers
+into :mod:`tools.validate.spec_semantic` so the QA and validate layers
 share one parser; until then this duplication is intentional and minimal.
 """
 
@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Literal
 
-from tools.harden.contract import HardenError
+from tools.qa import QAError
 from tools.validate._frontmatter import _read_text
 
 NRStatus = Literal["pass", "fail"]
@@ -83,7 +83,7 @@ _DEFAULT_TEXT_SUFFIXES: Final[frozenset[str]] = frozenset(
 )
 
 # Default path-segment exclusions. Any path containing one of these segments
-# (e.g. `.git/...`, `tests/...`, `docs/...`) is skipped. The harden orchestrator
+# (e.g. `.git/...`, `tests/...`, `docs/...`) is skipped. The QA orchestrator
 # can override the whole filter via the ``file_filter`` argument to
 # :func:`run_nr_regrep`.
 _DEFAULT_EXCLUDED_SEGMENTS: Final[frozenset[str]] = frozenset(
@@ -273,7 +273,7 @@ def _default_grepper(file_path: Path, pattern: str) -> list[tuple[int, str]]:
     Case-sensitive; returns ``(line_number, line_text)`` tuples with
     ``line_number`` 1-indexed and ``line_text`` rstripped of trailing
     whitespace. Files that fail to read (binary, permission denied) yield no
-    matches rather than crashing the harden run.
+    matches rather than crashing the QA run.
     """
     try:
         text = file_path.read_text(encoding="utf-8")
@@ -335,11 +335,11 @@ def run_nr_regrep(
         ``(nr_id, file_path, line_number)``.
 
     Raises:
-        HardenError: When the feature's SPEC.md is missing.
+        QAError: When the feature's SPEC.md is missing.
     """
     spec_path = repo_root / ".forge" / "features" / feature_id / "SPEC.md"
     if not spec_path.is_file():
-        raise HardenError(f"SPEC.md missing for feature {feature_id!r} at {spec_path}")
+        raise QAError(f"SPEC.md missing for feature {feature_id!r} at {spec_path}")
 
     nrs = parse_negative_requirements(spec_path)
     if not nrs:

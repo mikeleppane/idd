@@ -39,7 +39,7 @@ _REFINE_ATTEMPTS_CAP: Final[int] = 5
 
 # Current state-machine generation written by new features. v1 is the legacy
 # 9-step standard tier; v2 collapsed standard to 5 steps; v3 adds the post-ship
-# ``harden`` phase. ``flow_version`` is optional in state.json — absence is
+# ``qa`` phase. ``flow_version`` is optional in state.json — absence is
 # treated as v1 by application convention.
 _FLOW_VERSION_V3: Final[int] = 3
 
@@ -553,11 +553,11 @@ def migrate_to_v3(
     feature_id: str,
     schema_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Bump a feature's state.json to ``flow_version: 3`` and add a pending harden phase.
+    """Bump a feature's state.json to ``flow_version: 3`` and add a pending qa phase.
 
     The migration is gated on ship completion: a feature is considered shipped
     when ``state.shipped_at`` is set OR ``phases.ship.status == "done"``.
-    Pre-ship features raise ``StateError`` so harden cannot run before the
+    Pre-ship features raise ``StateError`` so qa cannot run before the
     feature has actually been merged.
 
     The function is idempotent: calling it on a state that is already at
@@ -597,8 +597,8 @@ def migrate_to_v3(
 
     payload["flow_version"] = _FLOW_VERSION_V3
     phases = payload.setdefault("phases", {})
-    if "harden" not in phases:
-        phases["harden"] = {"status": "pending"}
+    if "qa" not in phases:
+        phases["qa"] = {"status": "pending"}
 
     # Validate post-mutation against the schema before touching disk.
     schema = json.loads(schema_path.read_text(encoding="utf-8"))

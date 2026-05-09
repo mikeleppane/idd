@@ -1,8 +1,8 @@
-"""Tests for state schema v3 bump: harden phase + flow_version + migrate_to_v3.
+"""Tests for state schema v3 bump: qa phase + flow_version + migrate_to_v3.
 
 The v3 generation introduces:
 
-1. ``harden`` as a new lifecycle phase appended to every phase enum in
+1. ``qa`` as a new lifecycle phase appended to every phase enum in
    ``schemas/state.schema.json`` and ``schemas/budget.schema.json``.
 2. An optional top-level ``flow_version`` field on state.json accepting
    ``1 | 2 | 3``. Absence is valid (legacy v1 by application convention).
@@ -71,14 +71,14 @@ def _seed_feature(repo_root: Path, payload: dict[str, Any]) -> str:
 # --- Schema-level tests --------------------------------------------------
 
 
-def test_state_schema_accepts_harden_in_current_phase(schemas_dir: Path) -> None:
-    """current_phase enum must include 'harden' so a state.json mid-harden validates."""
+def test_state_schema_accepts_qa_in_current_phase(schemas_dir: Path) -> None:
+    """current_phase enum must include 'qa' so a state.json mid-qa validates."""
     payload = _base_state()
-    payload["current_phase"] = "harden"
-    payload["phases"]["harden"] = {"status": "in_progress"}
+    payload["current_phase"] = "qa"
+    payload["phases"]["qa"] = {"status": "in_progress"}
     validator = _validator_for(schemas_dir / "state.schema.json")
     errors = list(validator.iter_errors(payload))
-    assert errors == [], f"validator rejected harden current_phase: {errors}"
+    assert errors == [], f"validator rejected qa current_phase: {errors}"
 
 
 def test_state_schema_accepts_flow_version_3(schemas_dir: Path) -> None:
@@ -106,55 +106,55 @@ def test_state_schema_optional_flow_version_passes(schemas_dir: Path) -> None:
     assert errors == [], f"validator must accept absent flow_version: {errors}"
 
 
-def test_state_schema_phases_propertynames_includes_harden(schemas_dir: Path) -> None:
+def test_state_schema_phases_propertynames_includes_qa(schemas_dir: Path) -> None:
     schema = json.loads((schemas_dir / "state.schema.json").read_text(encoding="utf-8"))
     enum = schema["properties"]["phases"]["propertyNames"]["enum"]
-    assert "harden" in enum
+    assert "qa" in enum
 
 
-def test_state_schema_skipped_and_deviations_and_commits_accept_harden(
+def test_state_schema_skipped_and_deviations_and_commits_accept_qa(
     schemas_dir: Path,
 ) -> None:
-    """Every per-array phase enum must include 'harden' so post-ship audits write cleanly."""
+    """Every per-array phase enum must include 'qa' so post-ship audits write cleanly."""
     payload = _base_state()
-    payload["skipped"].append({"phase": "harden", "reason": "library — soak skipped"})
+    payload["skipped"].append({"phase": "qa", "reason": "no adversarial runner configured"})
     payload["deviations"].append(
         {
-            "phase": "harden",
-            "cause": "soak entrypoint missing",
-            "resolution": "library — skip",
+            "phase": "qa",
+            "cause": "adversarial runner unconfigured",
+            "resolution": "default no-op runner",
             "logged_at": "2026-05-09T12:00:00Z",
         }
     )
     payload["commits"].append(
         {
             "sha": "abcdef0",
-            "phase": "harden",
-            "subject": "feat(harden): record post-ship confidence",
+            "phase": "qa",
+            "subject": "feat(qa): record post-ship acceptance",
         }
     )
     validator = _validator_for(schemas_dir / "state.schema.json")
     errors = list(validator.iter_errors(payload))
-    assert errors == [], f"harden phase rejected by an array enum: {errors}"
+    assert errors == [], f"qa phase rejected by an array enum: {errors}"
 
 
-def test_budget_schema_accepts_harden_phase(schemas_dir: Path) -> None:
-    """budget.schema.json's phase enum must mirror state.schema.json + 'harden'."""
+def test_budget_schema_accepts_qa_phase(schemas_dir: Path) -> None:
+    """budget.schema.json's phase enum must mirror state.schema.json + 'qa'."""
     payload = {
-        "phase": "harden",
+        "phase": "qa",
         "files_in_scope": ["docs/some.md"],
         "forbidden": ["read entire repo"],
     }
     validator = _budget_validator(schemas_dir / "budget.schema.json")
     errors = list(validator.iter_errors(payload))
-    assert errors == [], f"budget schema rejected harden: {errors}"
+    assert errors == [], f"budget schema rejected qa: {errors}"
 
 
 # --- migrate_to_v3 helper tests ------------------------------------------
 
 
 def test_migrate_to_v3_happy_path_post_ship(tmp_path: Path, schemas_dir: Path) -> None:
-    """Feature with phases.ship done and no flow_version → bumps to v3 + adds harden pending."""
+    """Feature with phases.ship done and no flow_version → bumps to v3 + adds qa pending."""
     payload = _base_state()
     feature_id = _seed_feature(tmp_path, payload)
 
@@ -166,14 +166,14 @@ def test_migrate_to_v3_happy_path_post_ship(tmp_path: Path, schemas_dir: Path) -
     )
 
     assert updated["flow_version"] == 3
-    assert updated["phases"]["harden"] == {"status": "pending"}
+    assert updated["phases"]["qa"] == {"status": "pending"}
 
     # Persisted to disk.
     on_disk = json.loads(
         (tmp_path / ".forge" / "features" / feature_id / "state.json").read_text(encoding="utf-8")
     )
     assert on_disk["flow_version"] == 3
-    assert on_disk["phases"]["harden"] == {"status": "pending"}
+    assert on_disk["phases"]["qa"] == {"status": "pending"}
 
     # Result still validates against the schema.
     validator = _validator_for(schemas_dir / "state.schema.json")
@@ -211,7 +211,7 @@ def test_migrate_to_v3_already_v3_noop(tmp_path: Path, schemas_dir: Path) -> Non
     """Feature already at flow_version=3 returns unchanged payload, no disk rewrite."""
     payload = _base_state()
     payload["flow_version"] = 3
-    payload["phases"]["harden"] = {"status": "pending"}
+    payload["phases"]["qa"] = {"status": "pending"}
     feature_id = _seed_feature(tmp_path, payload)
 
     state_path = tmp_path / ".forge" / "features" / feature_id / "state.json"

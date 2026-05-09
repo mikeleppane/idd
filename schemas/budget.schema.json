@@ -21,7 +21,7 @@
         "execute",
         "verify",
         "ship",
-        "harden"
+        "qa"
       ]
     },
     "spec_sections": {
