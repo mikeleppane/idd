@@ -366,6 +366,40 @@ def record_refined_idea(
     return payload
 
 
+def guard_refine_entry(path: Path, schema_path: Path | None = None) -> dict[str, Any]:
+    """Guard ``/forge:refine`` entry on tier + phase BEFORE any mutation.
+
+    Reads ``state.json`` once and refuses if the feature is not actually on
+    the refine entry slot:
+
+      * ``current_phase != "refine"``  → ``StateError`` (wrong phase).
+      * ``tier != "full"``             → ``StateError`` (wrong tier).
+
+    Returns the parsed payload so the caller can continue without a second
+    read. The two error wordings are deliberately distinct so the SKILL
+    prose can quote them verbatim and the operator sees which precondition
+    failed (M6 finding M1).
+
+    Args:
+        path: state.json path.
+        schema_path: Optional schema for validation on read.
+
+    Returns:
+        Parsed state.json payload (already-validated when ``schema_path`` is given).
+
+    Raises:
+        StateError: ``current_phase != "refine"`` OR ``tier != "full"``.
+    """
+    payload = read_state(path, schema_path=schema_path)
+    current_phase = payload.get("current_phase")
+    if current_phase != "refine":
+        raise StateError(
+            f"cannot enter refine: current_phase is {current_phase!r}, expected 'refine'"
+        )
+    require_full_tier(payload, phase="refine")
+    return payload
+
+
 def require_full_tier(payload: dict[str, Any], *, phase: str) -> None:
     """Raise ``StateError`` when ``payload['tier'] != 'full'``.
 

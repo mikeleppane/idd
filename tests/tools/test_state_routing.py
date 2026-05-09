@@ -778,3 +778,55 @@ def test_routing_idea_at_cap_accepted(tmp_path: Path, schemas_dir: Path) -> None
     state.write_state(target, payload, schema_path=schemas_dir / "state.schema.json")
 
     assert len(json.loads(target.read_text(encoding="utf-8"))["routing"]["idea"]) == 4000
+
+
+# ---------------------------------------------------------------------------
+# guard_refine_entry — tier + phase preflight for /forge:refine direct entry
+# ---------------------------------------------------------------------------
+
+
+def _full_refine_payload(feature_id: str = "2026-05-04-demo") -> dict[str, Any]:
+    """Payload pinned at tier=full + current_phase=refine — guard happy path."""
+    return {
+        "feature_id": feature_id,
+        "tier": "full",
+        "current_phase": "refine",
+        "phases": {"refine": {"status": "in_progress", "started_at": "2026-05-04T10:00:00Z"}},
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+
+
+def test_guard_refine_entry_returns_payload_on_happy_path(tmp_path: Path) -> None:
+    """tier=full + current_phase=refine returns the parsed payload (no double-read)."""
+    target = tmp_path / "state.json"
+    state.write_state(target, _full_refine_payload())
+
+    payload = state.guard_refine_entry(target)
+
+    assert payload["tier"] == "full"
+    assert payload["current_phase"] == "refine"
+
+
+def test_guard_refine_entry_raises_on_wrong_tier(tmp_path: Path) -> None:
+    """tier=focused/standard refuses with a 'tier' diagnostic."""
+    target = tmp_path / "state.json"
+    payload = _full_refine_payload()
+    payload["tier"] = "focused"
+    state.write_state(target, payload)
+
+    with pytest.raises(state.StateError, match=r"refine.*full-tier|tier.*'focused'"):
+        state.guard_refine_entry(target)
+
+
+def test_guard_refine_entry_raises_on_wrong_phase(tmp_path: Path) -> None:
+    """current_phase != refine refuses with a 'phase' diagnostic."""
+    target = tmp_path / "state.json"
+    payload = _full_refine_payload()
+    payload["current_phase"] = "spec"
+    payload["phases"] = {"spec": {"status": "in_progress", "started_at": "2026-05-04T10:00:00Z"}}
+    state.write_state(target, payload)
+
+    with pytest.raises(state.StateError, match=r"current_phase.*'spec'.*expected 'refine'"):
+        state.guard_refine_entry(target)
