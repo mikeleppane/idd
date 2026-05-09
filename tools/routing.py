@@ -50,11 +50,12 @@ from tools.state import (
 )
 
 # Schema-aligned capability slug pattern.  Mirrors
-# ``tools.archive._CAPABILITY_SLUG_SCHEMA_RE`` (≥3 chars, alnum-leading).  Used
+# ``tools.archive._CAPABILITY_SLUG_SCHEMA_RE`` (≥3 chars, alnum-leading,
+# no trailing hyphen, no consecutive hyphens — M6 finding L1).  Used
 # to validate the operator-supplied ``feature_slug`` for the suffix-disambig
 # branch — the chosen ``<slug>-v2`` / ``<slug>-bulk`` slug must satisfy the
 # same shape as a slug derived from ``slug_from_idea``.
-_FEATURE_SLUG_RE: re.Pattern[str] = re.compile(r"^[a-z0-9][a-z0-9-]{2,}$")
+_FEATURE_SLUG_RE: re.Pattern[str] = re.compile(r"^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){2,}$")
 
 # Mirrors ``schemas/state.schema.json`` ``routing.idea.maxLength``.  The
 # helper pre-validates length BEFORE any disk mutation so an overlong idea

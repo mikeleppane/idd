@@ -18,7 +18,12 @@ class StateError(RuntimeError):
     """Raised when state.json cannot be read, parsed, or transitioned."""
 
 
-_FEATURE_ID_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9-]+$")
+# Strict feature-id: ``YYYY-MM-DD`` + alnum-leading slug with no trailing
+# hyphen and no consecutive hyphens (M6 finding L1). Mirrors the regex in
+# tools.archive._FEATURE_ID_RE.
+_FEATURE_ID_RE = re.compile(
+    r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9]))+$"
+)
 
 
 VALID_TIERS = ("focused", "standard", "full")

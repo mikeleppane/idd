@@ -48,13 +48,20 @@ except ModuleNotFoundError:  # pragma: no cover - non-POSIX (Windows)
 
 _FLOW_VERSION_V3 = 3
 _CAPABILITY_RE = re.compile(r"^[a-z0-9-]+$")
-# Schema-aligned slug: must start with alnum, at least 3 chars total.
+# Schema-aligned slug: must start with alnum, at least 3 chars total, and
+# never carry a trailing hyphen or two consecutive hyphens (M6 finding L1).
 # Matches schemas/capability-spec-frontmatter.schema.json and
 # delta-proposal-frontmatter.schema.json:affects_capability.
-_CAPABILITY_SLUG_SCHEMA_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,}$")
-_FEATURE_ID_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9-]+$")
+_CAPABILITY_SLUG_SCHEMA_RE = re.compile(r"^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){2,}$")
+# Strict feature-id: ``YYYY-MM-DD`` + alnum-leading slug with no trailing
+# hyphen and no consecutive hyphens (M6 finding L1).
+_FEATURE_ID_RE = re.compile(
+    r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9]))+$"
+)
 # Schema-aligned change id: strict month/day, schema-aligned slug suffix.
-_CHANGE_ID_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9][a-z0-9-]{2,}$")
+_CHANGE_ID_RE = re.compile(
+    r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){2,}$"
+)
 
 # Minimum token length to survive the content-word filter (step 5 of slug_from_idea).
 _SLUG_MIN_TOKEN_LEN: int = 2
