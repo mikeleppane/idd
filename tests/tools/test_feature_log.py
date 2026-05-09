@@ -260,6 +260,55 @@ def test_read_events_rejects_corrupted_payload_type(tmp_path: Path) -> None:
         read_events(tmp_path, "2026-05-08-foo")
 
 
+def test_append_event_invokes_single_write_per_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``append_event`` must serialize each event in ONE underlying ``write``.
+
+    Two separate ``write`` calls (line + trailing newline) leave the JSONL
+    file in a partially-written state if the second call fails (disk-full,
+    interrupted system call, signal): the file ends with a JSON line missing
+    its terminating ``\\n``, which silently corrupts the boundaries that
+    ``read_events`` walks. A single combined ``write`` of ``serialized + "\\n"``
+    is atomic at the OS level for sub-blocksize buffers and removes the race.
+    """
+    import tools.feature_log as fl
+
+    write_calls: list[str] = []
+    orig_path_open = fl.Path.open
+
+    class _Counter:
+        def __init__(self, inner: object) -> None:
+            self._inner = inner
+
+        def write(self, data: str) -> int:
+            write_calls.append(data)
+            return self._inner.write(data)  # type: ignore[no-any-return,attr-defined]
+
+        def __enter__(self) -> "_Counter":
+            self._inner.__enter__()  # type: ignore[attr-defined]
+            return self
+
+        def __exit__(self, *args: object) -> object:
+            return self._inner.__exit__(*args)  # type: ignore[no-any-return,attr-defined]
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+    def patched_open(self: Path, *args: object, **kwargs: object) -> object:
+        return _Counter(orig_path_open(self, *args, **kwargs))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(fl.Path, "open", patched_open)
+
+    append_event(tmp_path, _event())
+
+    assert len(write_calls) == 1, (
+        f"expected exactly one write per append_event; got "
+        f"{len(write_calls)}: {write_calls!r}"
+    )
+    assert write_calls[0].endswith("\n"), write_calls[0]
+
+
 def test_append_event_round_trips_unicode_payload(tmp_path: Path) -> None:
     payload: dict[str, object] = {"summary": "résumé naïve — 日本語 🚀"}
     append_event(

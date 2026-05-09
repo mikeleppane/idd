@@ -168,8 +168,10 @@ def append_event(repo_root: Path, event: FeatureLogEvent) -> None:
     target = log_path(repo_root, event.feature_id)
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("a", encoding="utf-8", newline="\n") as fh:
-        fh.write(serialized)
-        fh.write("\n")
+        # Single combined write: a partial-write failure (disk-full, signal)
+        # leaves the file either fully extended by this line or untouched —
+        # never with a JSON record missing its terminating newline.
+        fh.write(serialized + "\n")
 
 
 def read_events(repo_root: Path, feature_id: str) -> list[FeatureLogEvent]:
