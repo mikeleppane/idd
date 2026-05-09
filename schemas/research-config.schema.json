@@ -3,6 +3,12 @@
   "$id": "https://forge.dev/schemas/research-config.schema.json",
   "type": "object",
   "additionalProperties": false,
+  "$defs": {
+    "ecosystem_name": {
+      "type": "string",
+      "enum": ["python", "node", "rust", "go", "ruby", "java", "dotnet", "elixir", "php", "swift", "dart", "generic"]
+    }
+  },
   "properties": {
     "websearch_fallback": {"type": "boolean", "default": false},
     "websearch_max_queries_per_run": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
@@ -10,15 +16,13 @@
     "byod_stale_days": {"type": "integer", "minimum": 1, "maximum": 3650, "default": 90},
     "ecosystems": {
       "type": "array",
-      "items": {
-        "type": "string",
-        "enum": ["python", "node", "rust", "go", "ruby", "java", "dotnet", "elixir", "php", "swift", "dart", "generic"]
-      },
+      "items": {"$ref": "#/$defs/ecosystem_name"},
       "uniqueItems": true,
       "description": "User pin: limit ecosystem detector to listed plugins. When absent, detector runs all available plugins."
     },
     "ecosystem_overrides": {
       "type": "object",
+      "propertyNames": {"$ref": "#/$defs/ecosystem_name"},
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,

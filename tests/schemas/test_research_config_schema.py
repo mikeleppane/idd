@@ -75,3 +75,29 @@ def test_unknown_top_level_property_rejected(schemas_dir: Path) -> None:
     validator = _validator_for(schemas_dir)
     errors = list(validator.iter_errors({"surprise": True}))
     assert errors, "unknown top-level property must be rejected"
+
+
+def test_ecosystem_overrides_known_key_validates(schemas_dir: Path) -> None:
+    """Case (h): a known ecosystem name as override key is accepted."""
+    validator = _validator_for(schemas_dir)
+    errors = list(
+        validator.iter_errors(
+            {"ecosystem_overrides": {"python": {"manifest_paths": ["pyproject.toml"]}}}
+        )
+    )
+    assert errors == [], f"known ecosystem override key rejected: {errors}"
+
+
+def test_ecosystem_overrides_unknown_key_rejected(schemas_dir: Path) -> None:
+    """Case (i): a typo'd ecosystem name as override key is rejected.
+
+    Without ``propertyNames`` keyed to the closed enum, ``pyhton`` would slip
+    through as an orphaned override that never matches a detector run.
+    """
+    validator = _validator_for(schemas_dir)
+    errors = list(
+        validator.iter_errors(
+            {"ecosystem_overrides": {"pyhton": {"manifest_paths": ["pyproject.toml"]}}}
+        )
+    )
+    assert errors, "typo'd ecosystem override key must be rejected by propertyNames"
