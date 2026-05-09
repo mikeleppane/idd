@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -31,7 +31,7 @@ def _stepping_clock(start: float = 0.0, step: float = 0.1) -> Iterator[float]:
         current += step
 
 
-def _make_clock(start: float = 0.0, step: float = 0.1) -> "callable[[], float]":
+def _make_clock(start: float = 0.0, step: float = 0.1) -> Callable[[], float]:
     iterator = _stepping_clock(start=start, step=step)
 
     def _clock() -> float:
