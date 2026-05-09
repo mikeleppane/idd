@@ -206,6 +206,39 @@ def complete_phase(
     return payload
 
 
+def _tier_allowed_phases(tier: str) -> frozenset[str]:
+    """Return the set of phases legitimately reachable on the given tier.
+
+    Computed from the per-tier next-phase tables (``_FOCUSED_NEXT``,
+    ``_STANDARD_NEXT``, ``_FULL_NEXT``) plus the ``review`` phase (whose
+    next-command lives in ``_next_review_command`` rather than the table)
+    on tiers that flow through review, plus the post-ship ``qa`` phase
+    introduced by ``flow_version: 3``. M6 finding M5: ``start_phase`` must
+    refuse a tier-incompatible phase (e.g. ``start_phase("refine")`` on a
+    focused-tier feature) so the next-phase pump cannot end up on a
+    dead-end ``None``.
+
+    Unknown tier returns an empty set so the caller refuses defensively.
+    """
+    table_keys: set[str] = set()
+    extras: set[str] = {"qa"}
+    if tier == "focused":
+        table_keys = set(_FOCUSED_NEXT.keys())
+    elif tier == "standard":
+        table_keys = set(_STANDARD_NEXT.keys())
+        # Standard tier flows through review (crucible -> review --target plan,
+        # execute -> review --target code); review's next-command resolves via
+        # _next_review_command, so it isn't a key in _STANDARD_NEXT but is a
+        # legitimately reachable phase on this tier.
+        extras.add("review")
+    elif tier == "full":
+        table_keys = set(_FULL_NEXT.keys())
+        extras.add("review")
+    else:
+        return frozenset()
+    return frozenset(table_keys | extras)
+
+
 def start_phase(
     path: Path,
     phase: str,
@@ -224,13 +257,23 @@ def start_phase(
         Updated state payload.
 
     Raises:
-        StateError: Unknown phase or schema failure.
+        StateError: Unknown phase, phase not allowed on the seeded
+            ``state.json.tier``, or schema failure.
     """
     if phase not in VALID_LIFECYCLE_PHASES:
         raise StateError(f"unknown phase '{phase}'; must be one of {VALID_LIFECYCLE_PHASES}")
 
     payload = read_state(path, schema_path=schema_path)
     timestamp = now or _utc_now_iso()
+
+    # M6 M5: cross-check phase against seeded tier so a focused/standard
+    # feature cannot end up on a refine/domain slot (where the next-phase
+    # pump returns None and the lifecycle gets stuck).
+    tier = payload.get("tier")
+    if isinstance(tier, str):
+        allowed = _tier_allowed_phases(tier)
+        if phase not in allowed:
+            raise StateError(f"phase {phase!r} not allowed on tier {tier!r}")
 
     if "phases" not in payload or not isinstance(payload["phases"], dict):
         raise StateError("state.json is missing the required `phases` mapping")

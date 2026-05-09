@@ -349,6 +349,80 @@ def test_start_phase_rejects_unknown_phase(tmp_path: Path, schemas_dir: Path) ->
         )
 
 
+# ---------------------------------------------------------------------------
+# M6 finding M5: start_phase enforces tier-allowed phase set
+# ---------------------------------------------------------------------------
+
+
+def _seed_state_for_tier(target: Path, schemas_dir: Path, tier: str) -> None:
+    initial = {
+        "feature_id": "2026-05-03-demo-feature",
+        "tier": tier,
+        "current_phase": "spec",
+        "phases": {"spec": {"status": "in_progress"}},
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+
+
+def test_start_phase_rejects_refine_on_focused_tier(tmp_path: Path, schemas_dir: Path) -> None:
+    """A focused-tier feature has no refine slot; start_phase must refuse."""
+    target = tmp_path / "state.json"
+    _seed_state_for_tier(target, schemas_dir, "focused")
+    with pytest.raises(state.StateError, match=r"phase 'refine' not allowed on tier 'focused'"):
+        state.start_phase(target, phase="refine", schema_path=schemas_dir / "state.schema.json")
+
+
+def test_start_phase_rejects_refine_on_standard_tier(tmp_path: Path, schemas_dir: Path) -> None:
+    """Standard tier never enters refine — it's full-tier only."""
+    target = tmp_path / "state.json"
+    _seed_state_for_tier(target, schemas_dir, "standard")
+    with pytest.raises(state.StateError, match=r"phase 'refine' not allowed on tier 'standard'"):
+        state.start_phase(target, phase="refine", schema_path=schemas_dir / "state.schema.json")
+
+
+def test_start_phase_rejects_domain_on_focused_tier(tmp_path: Path, schemas_dir: Path) -> None:
+    """Focused tier skips domain — it's full-tier-only."""
+    target = tmp_path / "state.json"
+    _seed_state_for_tier(target, schemas_dir, "focused")
+    with pytest.raises(state.StateError, match=r"phase 'domain' not allowed on tier 'focused'"):
+        state.start_phase(target, phase="domain", schema_path=schemas_dir / "state.schema.json")
+
+
+def test_start_phase_rejects_scenarios_on_focused_tier(tmp_path: Path, schemas_dir: Path) -> None:
+    """Focused tier collapses scenarios; it's standard/full only."""
+    target = tmp_path / "state.json"
+    _seed_state_for_tier(target, schemas_dir, "focused")
+    with pytest.raises(state.StateError, match=r"phase 'scenarios' not allowed on tier 'focused'"):
+        state.start_phase(target, phase="scenarios", schema_path=schemas_dir / "state.schema.json")
+
+
+def test_start_phase_accepts_refine_on_full_tier(tmp_path: Path, schemas_dir: Path) -> None:
+    """Full tier still permits refine (it's the canonical full-tier entry phase)."""
+    target = tmp_path / "state.json"
+    _seed_state_for_tier(target, schemas_dir, "full")
+    result = state.start_phase(
+        target,
+        phase="refine",
+        schema_path=schemas_dir / "state.schema.json",
+    )
+    assert result["current_phase"] == "refine"
+
+
+def test_start_phase_accepts_execute_on_focused_tier(tmp_path: Path, schemas_dir: Path) -> None:
+    """Focused-tier execute is allowed (it's in _FOCUSED_NEXT)."""
+    target = tmp_path / "state.json"
+    _seed_state_for_tier(target, schemas_dir, "focused")
+    result = state.start_phase(
+        target,
+        phase="execute",
+        schema_path=schemas_dir / "state.schema.json",
+    )
+    assert result["current_phase"] == "execute"
+
+
 def test_complete_phase_rejects_when_not_current_phase(tmp_path: Path, schemas_dir: Path) -> None:
     target = tmp_path / "state.json"
     initial = {
