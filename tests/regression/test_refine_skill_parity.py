@@ -380,3 +380,29 @@ def test_refine_pre_seed_does_not_clobber_decided_at() -> None:
         "SKILL.md must call out that re-calling `record_routing_decision` "
         "would clobber the seed `decided_at` timestamp"
     )
+
+
+# ---------------------------------------------------------------------------
+# 21. M6 finding M2: guard_refine_entry called BEFORE any state mutation
+# ---------------------------------------------------------------------------
+
+
+def test_refine_skill_calls_guard_refine_entry_before_record_routing() -> None:
+    """The tier+phase guard helper ``guard_refine_entry`` must appear in
+    SKILL.md prose AND must be referenced inside the ``## Steps`` section
+    BEFORE the first ``record_routing_decision`` call inside the same
+    Steps section, so an LLM following steps in order cannot write a
+    routing block before the guard fires (M6 M2).
+    """
+    text = _read(SKILL_PATH)
+    assert "guard_refine_entry" in text, (
+        "SKILL.md must reference tools.state.guard_refine_entry as the tier+phase preflight helper"
+    )
+    steps_idx = text.index("## Steps")
+    steps_body = text[steps_idx:]
+    guard_idx = steps_body.index("guard_refine_entry")
+    record_idx = steps_body.index("record_routing_decision")
+    assert guard_idx < record_idx, (
+        "SKILL.md ## Steps section must mention guard_refine_entry BEFORE "
+        "record_routing_decision so the guard fires before any state mutation"
+    )

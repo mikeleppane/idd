@@ -99,19 +99,24 @@ under "Inputs" above.
 
 1. **Resolve feature.** Read `--feature <id>` or apply the single-active rule.
    Locate `.forge/features/<id>/state.json`.
-2. **Guard phase.** Read state.json; require `current_phase == "refine"`.
-   Otherwise abort with the `StateError` raised by
-   `tools.state.increment_refine_attempts` itself — message format:
-   `"cannot increment refine_attempts: current_phase is '<X>', expected 'refine'"`.
-   Do not invent a custom abort string; the helper is the single source of
-   truth so users see consistent errors across phases.
-3. **Guard tier.** After the phase guard, also require `state.json.tier == "full"`.
-   The canonical helper `tools.state.increment_refine_attempts` calls
-   `tools.state.require_full_tier(payload, phase="refine")` and surfaces
-   the verbatim raise:
-   `"refine phase is full-tier only; current tier is '<X>'"`. Do not invent
-   a custom abort string here either; quote the helper. Refine is full-tier
-   only — focused and standard tiers do not enter this phase.
+2. **Guard tier + phase BEFORE any mutation.** Call
+   `tools.state.guard_refine_entry(state_path)` which reads state.json once
+   and refuses if `current_phase != "refine"` (message format:
+   `"cannot enter refine: current_phase is '<X>', expected 'refine'"`) OR
+   if `tier != "full"` (message format:
+   `"refine phase is full-tier only; current tier is '<X>'"`). The helper
+   returns the parsed payload so the rest of the skill does not need a
+   second read. Refine is full-tier only — focused and standard tiers do
+   not enter this phase. Do not invent a custom abort string; quote the
+   helper. This guard MUST run BEFORE any call to
+   `record_routing_decision` so a wrong-tier feature cannot have its
+   routing block clobbered with `final_tier="full"`.
+3. **(Per-round phase guard reminder.)** `tools.state.increment_refine_attempts`
+   ALSO checks `current_phase == "refine"` and `tier == "full"` on every
+   round (defense in depth) and raises with the same wording — message
+   format: `"cannot increment refine_attempts: current_phase is '<X>',
+   expected 'refine'"` and
+   `"refine phase is full-tier only; current tier is '<X>'"`.
 4. **Resolve idea source.** Branch on the pre-seed predicate (see "Mode
    resolution" above):
    - **Pre-seed branch** (all four conjuncts hold): `routing.idea` is
