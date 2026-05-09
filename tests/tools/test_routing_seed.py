@@ -342,6 +342,40 @@ def test_feature_slug_accepted_at_three_char_boundary(tmp_path: Path) -> None:
     assert folder.name == "2026-05-08-abc"
 
 
+def test_seed_routed_feature_feature_slug_canonical_collision_raises(tmp_path: Path) -> None:
+    """``feature_slug`` that names an existing canonical capability must refuse.
+
+    Without this guard, an operator could pass ``feature_slug="auth"`` while
+    ``.forge/specs/auth/SPEC.md`` already exists. The seed would succeed
+    silently and ship would later detect the canonical collision after wasted
+    spec/execute/verify work. This test pre-creates the canonical capability,
+    invokes ``seed_routed_feature`` with the colliding slug, and asserts:
+
+      * ``ArchiveError`` is raised with a clear "clashes with existing canonical
+        capability" message.
+      * No ``.forge/features/<feature_id>/`` folder is created.
+    """
+    repo = _stage_repo(tmp_path)
+    canonical_slug = "auth"
+    canonical_dir = repo / ".forge" / "specs" / canonical_slug
+    canonical_dir.mkdir(parents=True)
+    (canonical_dir / "SPEC.md").write_text("# canonical\n", encoding="utf-8")
+
+    with pytest.raises(ArchiveError, match="clashes with existing canonical capability"):
+        seed_routed_feature(
+            repo,
+            idea="add a different idea entirely",
+            final_tier="focused",
+            today=TODAY,
+            feature_slug=canonical_slug,
+        )
+
+    features_root = repo / ".forge" / "features"
+    assert not features_root.exists() or not any(features_root.iterdir()), (
+        "no folder may be seeded when feature_slug clashes with a canonical capability"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Slug derivation + collision
 # ---------------------------------------------------------------------------

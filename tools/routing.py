@@ -40,6 +40,7 @@ from tools.archive import (
     ArchiveError,
     cleanup_seeded_feature,
     create_feature_folder,
+    scan_existing_capabilities,
     slug_from_idea,
 )
 from tools.state import (
@@ -172,6 +173,17 @@ def seed_routed_feature(
                 f"invalid feature_slug {feature_slug!r}; "
                 "expected slug matching ^[a-z0-9][a-z0-9-]{2,}$ "
                 "(≥3 chars, alnum-leading, lowercase + hyphens)"
+            )
+        # H1: an operator-supplied feature_slug bypasses the SKILL-layer
+        # capability scan (forge-do step 4). Re-run the scan here so an
+        # operator who hand-picks a slug naming an existing canonical
+        # capability cannot seed silently and waste downstream phases.
+        # Suffix-disambig slugs (`<canonical>-v2`, `<canonical>-bulk`) are
+        # NOT in the scan result (they are NEW slugs distinct from the
+        # canonical one) so this guard only fires on a literal collision.
+        if feature_slug in scan_existing_capabilities(repo_root):
+            raise ArchiveError(
+                f"feature_slug {feature_slug!r} clashes with existing canonical capability"
             )
         slug = feature_slug
     else:
