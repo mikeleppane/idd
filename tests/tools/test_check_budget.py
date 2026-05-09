@@ -210,6 +210,115 @@ def test_evaluate_allows_dispatch_without_articles_field() -> None:
     assert reason == "ok"
 
 
+def test_check_budget_execute_with_tests_in_scope_passes() -> None:
+    """Execute-phase dispatch with non-empty tests_in_scope is allowed."""
+    prompt = (
+        "context_budget:\n"
+        "{\n"
+        '  "phase": "execute",\n'
+        '  "files_in_scope": ["tools/state.py"],\n'
+        '  "tests_in_scope": ["tests/tools/test_state.py"],\n'
+        '  "forbidden": ["read entire repo"]\n'
+        "}\n"
+    )
+    allow, reason = check_budget.evaluate(prompt)
+    assert allow, reason
+    assert reason == "ok"
+
+
+def test_check_budget_execute_missing_tests_in_scope_blocks() -> None:
+    """Execute-phase dispatch missing tests_in_scope is denied."""
+    prompt = (
+        "context_budget:\n"
+        "{\n"
+        '  "phase": "execute",\n'
+        '  "files_in_scope": ["tools/state.py"],\n'
+        '  "forbidden": ["read entire repo"]\n'
+        "}\n"
+    )
+    allow, reason = check_budget.evaluate(prompt)
+    assert not allow
+    assert "tests_in_scope" in reason
+
+
+def test_check_budget_execute_empty_tests_in_scope_blocks() -> None:
+    """Execute-phase dispatch with empty tests_in_scope and no exception is denied."""
+    prompt = (
+        "context_budget:\n"
+        "{\n"
+        '  "phase": "execute",\n'
+        '  "files_in_scope": ["tools/state.py"],\n'
+        '  "tests_in_scope": [],\n'
+        '  "forbidden": ["read entire repo"]\n'
+        "}\n"
+    )
+    allow, reason = check_budget.evaluate(prompt)
+    assert not allow
+    assert "tests_in_scope" in reason
+
+
+def test_check_budget_execute_empty_tests_in_scope_with_exception_passes() -> None:
+    """Empty tests_in_scope is allowed when budget block declares tdd_exception_ref."""
+    prompt = (
+        "context_budget:\n"
+        "{\n"
+        '  "phase": "execute",\n'
+        '  "files_in_scope": ["tools/state.py"],\n'
+        '  "tests_in_scope": [],\n'
+        '  "tdd_exception_ref": "ADR-3",\n'
+        '  "forbidden": ["read entire repo"]\n'
+        "}\n"
+    )
+    allow, reason = check_budget.evaluate(prompt)
+    assert allow, reason
+    assert reason == "ok"
+
+
+def test_check_budget_non_execute_tests_in_scope_optional() -> None:
+    """Non-execute (or absent) phase makes tests_in_scope optional."""
+    prompt = (
+        "context_budget:\n"
+        "{\n"
+        '  "phase": "review",\n'
+        '  "files_in_scope": ["tools/state.py"],\n'
+        '  "forbidden": ["read entire repo"]\n'
+        "}\n"
+    )
+    allow, reason = check_budget.evaluate(prompt)
+    assert allow, reason
+    assert reason == "ok"
+
+
+def test_check_budget_phase_absent_tests_in_scope_optional() -> None:
+    """Absent phase field is treated as non-execute; tests_in_scope optional."""
+    prompt = (
+        "context_budget:\n"
+        "{\n"
+        '  "files_in_scope": ["tools/state.py"],\n'
+        '  "forbidden": ["read entire repo"]\n'
+        "}\n"
+    )
+    allow, reason = check_budget.evaluate(prompt)
+    assert allow, reason
+    assert reason == "ok"
+
+
+def test_check_budget_execute_tests_in_scope_must_be_array() -> None:
+    """tests_in_scope under execute phase must be a JSON array, not a string."""
+    prompt = (
+        "context_budget:\n"
+        "{\n"
+        '  "phase": "execute",\n'
+        '  "files_in_scope": ["tools/state.py"],\n'
+        '  "tests_in_scope": "tests/tools/test_state.py",\n'
+        '  "forbidden": ["read entire repo"]\n'
+        "}\n"
+    )
+    allow, reason = check_budget.evaluate(prompt)
+    assert not allow
+    assert "tests_in_scope" in reason
+
+
 def test_main_denies_agent_payload_with_modern_pretooluse_shape() -> None:
     payload = {
         "hook_event_name": "PreToolUse",

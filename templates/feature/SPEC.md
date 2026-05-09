@@ -17,13 +17,9 @@ capability: <stable-capability-handle>
 
 # Domain
 
-> Ubiquitous-language glossary. Add or remove rows as needed. Keep examples concrete.
-
-| Term | Definition | Example |
-|---|---|---|
-| <Term> | <Definition> | <Example sentence using the term> |
-
-> Optional: Mermaid sketch of key concepts. Add only if it clarifies. Delete this line if unused.
+> See [DOMAIN.md](./DOMAIN.md) for the glossary, bounded contexts, aggregates, and invariants.
+> The domain phase populates DOMAIN.md and replaces this pointer. Do not maintain a parallel
+> glossary here — DOMAIN.md is the source of truth.
 
 # Codebase Anchors
 

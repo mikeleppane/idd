@@ -158,6 +158,106 @@ def test_complete_phase_marks_current_done(tmp_path: Path, schemas_dir: Path) ->
     assert result["current_phase"] == "spec"
 
 
+def test_complete_phase_ship_sets_shipped_at(tmp_path: Path, schemas_dir: Path) -> None:
+    """Completing the ship phase must stamp top-level shipped_at with the timestamp."""
+    target = tmp_path / "state.json"
+    initial = {
+        "feature_id": "2026-05-09-shipped-at-fix",
+        "tier": "standard",
+        "current_phase": "ship",
+        "phases": {
+            "ship": {
+                "status": "in_progress",
+                "started_at": "2026-05-09T10:00:00Z",
+            }
+        },
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+
+    result = state.complete_phase(
+        target,
+        phase="ship",
+        schema_path=schemas_dir / "state.schema.json",
+        now="2026-05-09T11:00:00Z",
+    )
+
+    assert result["phases"]["ship"]["status"] == "done"
+    assert result["phases"]["ship"]["completed_at"] == "2026-05-09T11:00:00Z"
+    assert result["shipped_at"] == "2026-05-09T11:00:00Z"
+
+    # Persisted to disk.
+    on_disk = json.loads(target.read_text(encoding="utf-8"))
+    assert on_disk["shipped_at"] == "2026-05-09T11:00:00Z"
+
+
+def test_complete_phase_non_ship_does_not_set_shipped_at(tmp_path: Path, schemas_dir: Path) -> None:
+    """Only ship completion stamps shipped_at; other phases leave it absent."""
+    target = tmp_path / "state.json"
+    initial = {
+        "feature_id": "2026-05-09-no-shipped-at",
+        "tier": "focused",
+        "current_phase": "verify",
+        "phases": {
+            "verify": {
+                "status": "in_progress",
+                "started_at": "2026-05-09T10:00:00Z",
+            }
+        },
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+
+    result = state.complete_phase(
+        target,
+        phase="verify",
+        schema_path=schemas_dir / "state.schema.json",
+        now="2026-05-09T11:00:00Z",
+    )
+
+    assert result["phases"]["verify"]["status"] == "done"
+    assert "shipped_at" not in result
+
+
+def test_complete_phase_ship_idempotent_does_not_overwrite_shipped_at(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    """If shipped_at is already set, complete_phase preserves the original timestamp."""
+    target = tmp_path / "state.json"
+    original_shipped = "2026-05-09T09:00:00Z"
+    initial = {
+        "feature_id": "2026-05-09-idempotent-ship",
+        "tier": "standard",
+        "current_phase": "ship",
+        "shipped_at": original_shipped,
+        "phases": {
+            "ship": {
+                "status": "in_progress",
+                "started_at": "2026-05-09T10:00:00Z",
+            }
+        },
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+
+    result = state.complete_phase(
+        target,
+        phase="ship",
+        schema_path=schemas_dir / "state.schema.json",
+        now="2026-05-09T12:00:00Z",
+    )
+
+    # Original shipped_at preserved; completed_at uses the new now value.
+    assert result["shipped_at"] == original_shipped
+    assert result["phases"]["ship"]["completed_at"] == "2026-05-09T12:00:00Z"
+
+
 def test_start_phase_marks_next_in_progress(tmp_path: Path, schemas_dir: Path) -> None:
     target = tmp_path / "state.json"
     initial = {

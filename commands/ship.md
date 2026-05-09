@@ -18,6 +18,28 @@ Run the FORGE ship phase against the active feature.
   `pre_archive_hook`. On success, prints the canonical path, archive
   path, and the two retained snapshots. On `ArchiveError`, surfaces the
   error and exits without retry.
+- `--promote-domain` — full-tier only. After ship completes, merge this
+  feature's `DOMAIN.md` glossary into the repo-wide
+  `.forge/domain/glossary.md`. Promotion is post-ship advisory:
+  conflicts (duplicate term with diverging definition) are surfaced in
+  the ship summary as a non-blocking advisory and never block ship. The
+  on-disk glossary is left untouched on conflict; reconcile manually
+  before promoting the next feature.
+- `--no-qa-prompt` — skip the pre-PR QA prompt. Treat as if the user
+  accepted the tier-aware default (`Y` for `standard` / `full`, `N` for
+  `focused`).
+- `--qa-override-with-rationale "<text>"` — bypass the pre-PR QA gate
+  entirely. Appends a `## QA Override` ADR to
+  `.forge/features/<id>/decisions.md` with the supplied rationale,
+  reviewer, and date. Use only when there is a justified reason to ship
+  without QA.
+- `--artifact-kind {cli|library|service|ui|other}` — required when the
+  operator accepts the QA prompt. Identifies the kind of artifact the QA
+  agent will exercise. Forwarded verbatim to `forge-qa`; see
+  `/forge:qa` for details.
+- `--artifact-identifier <string>` — required when the operator accepts
+  the QA prompt. Opaque string the QA agent passes to its outsider
+  subagent (e.g., a CLI invocation hint, a module name, a URL).
 
 ## Behavior
 
@@ -25,8 +47,8 @@ Run the FORGE ship phase against the active feature.
 2. Read `state.json`. Require `tier in ("standard", "full")` and `phases.verify.status == "done"`. Otherwise abort.
 3. Read SPEC.md frontmatter to obtain the `capability` slug.
 4. Call `tools.state.start_phase(path, "ship")`.
-5. Invoke the `forge-ship` skill. The skill calls `tools.archive.ship_feature` — a single transactional helper that runs an all-or-nothing preflight (`.forge/features/<id>/` exists, `.forge/features/archive/<id>/` absent, `.forge/specs/<capability>/SPEC.md` absent), then writes the canonical spec, then archives the feature folder, rolling back the canonical write if the archive move fails. On any preflight collision, the helper raises `ArchiveError` ("capability already shipped — delta proposals (M3+) required for changes"); the skill logs to `decisions.md` § Open and halts.
-6. On completion, print canonical spec path, archive path, capability slug, next step (none — feature done).
+5. Invoke the `forge-ship` skill. The skill calls `tools.archive.ship_feature` — a single transactional helper that runs an all-or-nothing preflight (`.forge/features/<id>/` exists, `.forge/specs/<capability>/SPEC.md` absent, and for legacy v1 features `.forge/features/archive/<id>/` absent), then writes the canonical spec. For v3 features (default for new features) the feature folder remains at `.forge/features/<id>/` after ship; archival is deferred to `/forge:qa --against merged`. For v1 features the helper additionally moves the feature folder to `.forge/features/archive/<id>/` at ship, rolling back the canonical write if the archive move fails. On any preflight collision, the helper raises `ArchiveError`; the skill logs to `decisions.md` § Open and halts.
+6. On completion, print canonical spec path, archive (or live) feature path, capability slug, next step (`/forge:qa --against merged` for v3; none for v1).
 
 ## Constitution gate (M3 §5.3.9)
 
@@ -39,6 +61,16 @@ When `.forge/CONSTITUTION.md` is present, `/forge:ship` parses `REVIEW.code.md` 
 On `ACKNOWLEDGE`, the feature ships with `state.json.deviations[]` appended (`phase: "ship"`, `resolution: "user_acknowledged"`) and a `decisions.md` entry. The ACK mutation runs INSIDE `tools.archive.ship_feature(pre_archive_hook=...)` so a preflight failure cannot leave a ghost deviation. Audit trail survives the archive.
 
 Findings whose `Status` is `resolved` or `accepted-risk` are convergence-loop history and are NOT surfaced — the gate acts on unresolved findings only.
+
+## Pre-PR QA gate
+
+Before the atomic ship / archive step, `/forge:ship` offers an optional pre-PR QA pass. The prompt — `"Run QA before creating PR? [Y/n]"` — defaults to `Y` for `standard` and `full` tiers and to `N` for `focused`. `--no-qa-prompt` skips the prompt and applies the tier-aware default; `--qa-override-with-rationale "<text>"` suppresses both the prompt and the gate, recording a `## QA Override` ADR in `decisions.md`. On accept, ship dispatches `forge-qa` against the working tree (`forge-qa --against working-tree --feature <id> --artifact-kind <k> --artifact-identifier <i>`); the skill writes `.forge/features/<id>/QA.md` and returns a verdict and confidence. Three outcomes:
+
+- `delivers` — ship continues unchanged.
+- `partial` — operator is prompted (`"QA verdict is partial. Continue ship? [y/N]"`); declining aborts ship without state mutation, accepting appends a `## QA Override` ADR to `decisions.md` and continues.
+- `does-not-deliver` — ship aborts with the path to `QA.md` and instructions to fix findings or re-run with `--qa-override-with-rationale`. The `QA.md` is preserved on disk for review.
+
+The pre-PR gate does NOT mutate `state.json`. The post-ship `qa` phase remains `pending`; flipping it to `done` is reserved for `/forge:qa --against merged`.
 
 ## Failure modes
 

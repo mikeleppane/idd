@@ -11,6 +11,7 @@ so provenance is preserved across the boundary (P2a follow-up #2, option A).
 
 from ._finding import (
     EXIT_NONZERO_SEVERITIES,
+    MAX_FIX_HINT_LEN,
     Finding,
     Severity,
     ValidationError,
@@ -18,8 +19,10 @@ from ._finding import (
 from .cli import main
 from .constitution import validate_constitution
 from .delta import validate_delta
+from .domain_glossary import validate_domain_glossary
 from .health import validate_health
 from .plan import validate_plan_tasks, validate_verified_deps
+from .qa_shape import validate_qa_shape
 from .spec_semantic import validate_anchors, validate_scenarios
 from .spec_structural import (
     validate_capability_spec_sections,
@@ -28,9 +31,11 @@ from .spec_structural import (
     validate_negative_requirements,
 )
 from .state_semantic import validate_deviations
+from .tdd_evidence import validate_tdd_evidence
 
 __all__ = [
     "EXIT_NONZERO_SEVERITIES",
+    "MAX_FIX_HINT_LEN",
     "Finding",
     "Severity",
     "ValidationError",
@@ -41,10 +46,13 @@ __all__ = [
     "validate_constitution",
     "validate_delta",
     "validate_deviations",
+    "validate_domain_glossary",
     "validate_frontmatter",
     "validate_health",
     "validate_negative_requirements",
     "validate_plan_tasks",
+    "validate_qa_shape",
     "validate_scenarios",
+    "validate_tdd_evidence",
     "validate_verified_deps",
 ]

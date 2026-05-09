@@ -1,0 +1,38 @@
+{
+  "feature_id": "2026-05-08-tdd-paired-feature",
+  "tier": "focused",
+  "current_phase": "execute",
+  "phases": {
+    "execute": {
+      "status": "in_progress"
+    }
+  },
+  "skipped": [],
+  "deviations": [],
+  "commits": [
+    {
+      "sha": "a1a2b3c",
+      "phase": "execute",
+      "subject": "test(scope): add failing test for AC-1",
+      "logged_at": "2026-05-08T10:00:00Z"
+    },
+    {
+      "sha": "b1a2b3c",
+      "phase": "execute",
+      "subject": "feat(scope): implement AC-1",
+      "logged_at": "2026-05-08T10:10:00Z"
+    },
+    {
+      "sha": "a2a2b3c",
+      "phase": "execute",
+      "subject": "test(scope): add failing test for AC-2",
+      "logged_at": "2026-05-08T10:20:00Z"
+    },
+    {
+      "sha": "b2a2b3c",
+      "phase": "execute",
+      "subject": "feat(scope): implement AC-2",
+      "logged_at": "2026-05-08T10:30:00Z"
+    }
+  ]
+}

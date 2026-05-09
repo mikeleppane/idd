@@ -18,3 +18,11 @@
 **Change:** <patch|minor|major> bump — <Article N added|modified|removed|level loosened|level tightened>.
 **Alternatives considered:** <free text or "—">
 -->
+
+<!-- TDD Exception template (cross-checked by tools.validate.tdd_evidence):
+## TDD Exception: AC-<n>
+**Rationale:** <why a paired test commit is not feasible for this AC — e.g., 2-line fix where the test would dwarf the change, exploratory probe later replaced by a tested impl, irreducible integration that fails locally but is covered by a downstream harness>
+**Reviewer:** <name or handle who agreed to the exception>
+**Date:** YYYY-MM-DD
+**Scope:** AC-<n> (one heading per AC; do not bundle multiple ACs under one heading)
+-->

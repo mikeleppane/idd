@@ -6,11 +6,15 @@ owns the path math so the LLM cannot misplace shipped artifacts.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import re
 import shutil
 import sys
+import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
@@ -41,6 +45,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - non-POSIX (Windows)
     fcntl = None
 
+_FLOW_VERSION_V3 = 3
 _CAPABILITY_RE = re.compile(r"^[a-z0-9-]+$")
 # Schema-aligned slug: must start with alnum, at least 3 chars total.
 # Matches schemas/capability-spec-frontmatter.schema.json and
@@ -574,6 +579,117 @@ def archive_feature(repo_root: Path, feature_id: str) -> Path:
     return target
 
 
+def _read_flow_version(state_path: Path) -> int:
+    """Return the integer ``flow_version`` recorded in state.json, defaulting to 1.
+
+    Absence of the field is treated as ``1`` per the schema's documented
+    application convention. Any read or parse failure returns ``1`` as well —
+    the caller treats unreadable state as legacy v1 so the historical
+    archive-at-ship behavior is preserved when state.json is malformed.
+    """
+    if not state_path.is_file():
+        return 1
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return 1
+    raw = payload.get("flow_version") if isinstance(payload, dict) else None
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return raw
+    return 1
+
+
+def archive_feature_after_qa(repo_root: Path, feature_id: str) -> Path:
+    """Move a v3 feature folder to ``.forge/features/archive/<id>/`` once qa is done.
+
+    The v3 lifecycle keeps the feature folder live in
+    ``.forge/features/<id>/`` between ship and qa so post-merge
+    ``/forge:qa --against merged`` can find it. This helper performs the
+    deferred move once ``phases.qa.status == "done"``.
+
+    Idempotency:
+        When the source folder is already absent and the archive target
+        exists, the call returns the archive path without raising. This
+        matches retry-safety expectations of the qa skill, which calls this
+        helper after ``complete_phase("qa")`` succeeds.
+
+    Collision:
+        When BOTH the source and the archive target exist, the call raises
+        ``ArchiveError`` rather than clobbering either folder. The caller
+        must reconcile manually.
+
+    Args:
+        repo_root: Repository root containing the ``.forge/`` tree.
+        feature_id: Feature folder name in YYYY-MM-DD-slug form.
+
+    Returns:
+        Path to the archived feature folder.
+
+    Raises:
+        ArchiveError: ``feature_id`` slug malformed, the feature is not v3,
+            ``phases.qa.status`` is not ``"done"``, both source and archive
+            exist (collision), or the source is missing AND no archive
+            entry exists.
+    """
+    _validate_feature_id(feature_id)
+    source = repo_root / ".forge" / "features" / feature_id
+    archive_root = repo_root / ".forge" / "features" / "archive"
+    target = archive_root / feature_id
+
+    # Idempotent fast-path: source already moved, target present.
+    if not source.exists() and target.is_dir():
+        return target
+
+    if not source.is_dir():
+        raise ArchiveError(f"feature folder not found: {source}")
+
+    if target.exists():
+        raise ArchiveError(
+            f"archive collision for {feature_id!r}: both source {source} "
+            f"and archive {target} exist; manual reconciliation required"
+        )
+
+    state_path = source / "state.json"
+    if not state_path.is_file():
+        raise ArchiveError(
+            f"archive_feature_after_qa requires v3 feature with qa.status=done; "
+            f"got missing state.json at {state_path}"
+        )
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ArchiveError(
+            f"archive_feature_after_qa: cannot parse state.json at {state_path}: {exc}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ArchiveError(
+            f"archive_feature_after_qa: state.json at {state_path} is not a JSON object"
+        )
+
+    flow_version = payload.get("flow_version")
+    if flow_version != _FLOW_VERSION_V3:
+        raise ArchiveError(
+            f"archive_feature_after_qa requires v3 feature with qa.status=done; "
+            f"got flow_version={flow_version!r}"
+        )
+
+    phases = payload.get("phases")
+    qa_status: object = None
+    if isinstance(phases, dict):
+        qa_block = phases.get("qa")
+        if isinstance(qa_block, dict):
+            qa_status = qa_block.get("status")
+    if qa_status != "done":
+        raise ArchiveError(
+            f"archive_feature_after_qa requires v3 feature with qa.status=done; "
+            f"got qa.status={qa_status!r}"
+        )
+
+    archive_root.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(target))
+    return target
+
+
 def canonical_spec_path(repo_root: Path, capability: str) -> Path:
     """Return .forge/specs/<capability>/SPEC.md (does not validate existence).
 
@@ -672,12 +788,26 @@ def ship_feature(
     The transactional contract for /forge:ship: all preflight checks pass before any
     write, and the canonical spec write is rolled back if archival fails.
 
+    Lifecycle by ``state.json.flow_version``:
+        - **Absent or ``< 3`` (legacy v1/v2):** archives the feature folder at
+          ship time. The returned tuple's second element is the archive path
+          ``.forge/features/archive/<id>/``.
+        - **``3`` (live-until-qa):** the feature folder is left in place under
+          ``.forge/features/<id>/`` so post-merge ``/forge:qa --against merged``
+          can resolve it. The deferred folder move is performed by
+          :func:`archive_feature_after_qa` once qa completes. The returned
+          tuple's second element is the still-live source path.
+
+        Canonical spec publishing runs for both versions — only the
+        feature-folder move differs.
+
     Preflight (all-or-nothing):
         1. Validate `feature_id` slug.
         2. Validate `capability` slug.
         3. Source `.forge/features/<feature_id>/` must be a directory.
         4. Canonical `.forge/specs/<capability>/SPEC.md` must NOT exist.
-        5. Archive target `.forge/features/archive/<feature_id>/` must NOT exist.
+        5. Archive target `.forge/features/archive/<feature_id>/` must NOT
+           exist (legacy v1/v2 only — v3 does not consult this path at ship).
 
     Mutation:
         1. Write canonical spec via `write_canonical_spec`.
@@ -685,11 +815,11 @@ def ship_feature(
            if provided. Use this to mutate ``state.json`` (e.g., mark
            ``current_phase: done``) so the live state and the archived copy
            agree. Hook failure rolls back the canonical write before re-raising.
-        3. Move feature folder via `archive_feature`.
-        4. On move failure, delete the canonical spec file (and its parent dir
-           if it was newly created and is now empty), then re-raise. The
-           pre-archive hook's effects on the live state.json are NOT undone —
-           callers that mutate state must idempotently re-apply on retry.
+        3. **v1/v2 only:** move feature folder via `archive_feature`. v3
+           skips this step; the folder is archived later by
+           ``archive_feature_after_qa``.
+        4. On move failure (v1/v2), delete the canonical spec file (and its
+           parent dir if it was newly created and is now empty), then re-raise.
 
     Args:
         repo_root: Repository root containing the .forge/ tree.
@@ -701,7 +831,9 @@ def ship_feature(
             exception is treated as ship failure and triggers canonical rollback.
 
     Returns:
-        Tuple of (canonical_spec_path, archive_path) on success.
+        Tuple of (canonical_spec_path, archive_path) on success. For v3
+        features ``archive_path`` is the still-live source folder (the
+        deferred move runs at qa).
 
     Raises:
         ArchiveError: any preflight failure (invalid slug, missing source,
@@ -730,8 +862,11 @@ def ship_feature(
             "feature already shipped — delta proposals (M3+) required for changes",
         )
 
+    flow_version = _read_flow_version(source / "state.json")
+    defer_archive = flow_version >= _FLOW_VERSION_V3
+
     archive_target = repo_root / ".forge" / "features" / "archive" / feature_id
-    if archive_target.exists():
+    if not defer_archive and archive_target.exists():
         raise ArchiveError(f"feature already archived at {archive_target}")
 
     capability_dir_existed = canonical_target.parent.exists()
@@ -753,6 +888,12 @@ def ship_feature(
             raise ArchiveError(
                 f"ship_feature: pre_archive_hook failed; canonical spec rolled back: {exc}",
             ) from exc
+
+    if defer_archive:
+        # v3 lifecycle: feature folder stays under .forge/features/<id>/
+        # until /forge:qa --against merged completes. The deferred move is
+        # performed by archive_feature_after_qa.
+        return canonical, source
 
     try:
         archived = archive_feature(repo_root, feature_id)
@@ -1133,3 +1274,328 @@ def merge_delta_proposal(
     finally:
         if _lock_fh is not None:
             _lock_fh.close()
+
+
+# ---------------------------------------------------------------------------
+# Repo-wide glossary promotion
+# ---------------------------------------------------------------------------
+
+
+_REPO_GLOSSARY_HEADER = (
+    "# Repo-Wide Domain Glossary\n\n"
+    "> Auto-generated by /forge:ship --promote-domain (post-ship advisory). Do not edit by hand.\n\n"
+)
+_REPO_GLOSSARY_TABLE_HEADER = "| Term | Definition | Source feature(s) |\n|---|---|---|\n"
+# A glossary table row needs at least Term, Definition, Source feature(s)
+# (3 cells once leading/trailing pipes are stripped).
+_REPO_GLOSSARY_REQUIRED_COLUMNS = 3
+# Feature DOMAIN.md glossary rows have 4 columns: Term, Definition, Context, Invariants.
+_FEATURE_GLOSSARY_REQUIRED_COLUMNS = 4
+_GLOSSARY_BLOCK_RE = re.compile(r"(?ms)^# Glossary\b[^\n]*\n(?P<body>.*?)(?=^# |\Z)")
+_TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*[:\-]+\s*(?:\|\s*[:\-]+\s*)+\|?\s*$")
+_CONTEXT_ANNOTATION_RE = re.compile(r"^\[(?P<term>[^\]]+)\]\(context:\s*(?P<ctx>[^)]+)\)$")
+
+
+@dataclass(frozen=True)
+class ConflictRow:
+    """A glossary term whose feature definition diverges from the repo-wide one."""
+
+    term: str
+    feature_definition: str
+    repo_definition: str
+
+
+@dataclass(frozen=True)
+class PromotionResult:
+    """Outcome of ``promote_domain_to_repo``.
+
+    Attributes:
+        status: ``"ok"`` when promotion completed (with or without
+            individual skipped terms), ``"skipped"`` when at least one
+            conflict was detected and the on-disk glossary was left
+            untouched. Conflicts are advisory per the locked plan
+            (``docs/plans/2026-05-08-m7-confidence-and-ux-polish.md`` P1.7)
+            — never raises ``ArchiveError`` on diverging definitions.
+        promoted_terms: Terms newly written into the repo-wide glossary.
+            Empty when ``status == "skipped"``.
+        skipped_terms: Terms already present with an identical (normalized,
+            case-insensitive) definition; the source-features cell may have
+            been extended. Empty when ``status == "skipped"``.
+        conflicts: Populated when one or more feature terms diverge from the
+            repo-wide glossary. Caller surfaces these as a non-blocking
+            advisory in the ship summary.
+    """
+
+    status: str
+    promoted_terms: list[str]
+    skipped_terms: list[str]
+    conflicts: list[ConflictRow]
+
+
+def _split_table_row(line: str) -> list[str] | None:
+    stripped = line.strip()
+    if not stripped.startswith("|"):
+        return None
+    inner = stripped.strip("|")
+    return [cell.strip() for cell in inner.split("|")]
+
+
+def _normalize_definition(text: str) -> str:
+    """Return a case- and whitespace-insensitive form for definition compare.
+
+    Two definitions are treated as identical when their normalized forms
+    match. Uses ``str.casefold`` so the rule is symmetric across the whole
+    string — the previous "lower first char only" form silently treated
+    mid-string case differences as conflicts while ignoring leading-letter
+    case (asymmetric and surprising).
+
+    The parser intentionally duplicates a thin slice of the
+    ``tools.validate.domain_glossary`` parsing approach so the public
+    validator surface stays untouched here; the two parsers will be
+    consolidated when a shared helper is extracted.
+    """
+    return " ".join(text.split()).casefold()
+
+
+def _normalize_term(term: str) -> str:
+    """Return a case-insensitive key for term lookups.
+
+    Both the validator (``tools.validate.domain_glossary._duplicate_findings``)
+    and the promotion path key terms by lowercase to match the documented
+    duplicate-detection contract. Keeping these aligned means a feature row
+    ``order`` and a repo row ``Order`` collide as expected (skip or conflict
+    depending on definitions) instead of silently writing two rows.
+    """
+    return term.strip().casefold()
+
+
+def _parse_term_cell(cell: str) -> str:
+    match = _CONTEXT_ANNOTATION_RE.match(cell.strip())
+    if match is None:
+        return cell.strip()
+    return match.group("term").strip()
+
+
+def _parse_feature_glossary(domain_text: str) -> list[tuple[str, str]]:
+    """Return ``(term, definition)`` rows from a feature DOMAIN.md."""
+    block = _GLOSSARY_BLOCK_RE.search(domain_text)
+    if block is None:
+        return []
+    rows: list[tuple[str, str]] = []
+    for line in block.group("body").splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        if _TABLE_SEPARATOR_RE.match(line):
+            continue
+        cells = _split_table_row(line)
+        if cells is None:
+            continue
+        if len(cells) < _FEATURE_GLOSSARY_REQUIRED_COLUMNS:
+            continue
+        if cells[0].lower() == "term":
+            continue
+        term = _parse_term_cell(cells[0])
+        if not term:
+            continue
+        definition = cells[1].strip()
+        rows.append((term, definition))
+    return rows
+
+
+def _parse_repo_glossary(text: str) -> dict[str, tuple[str, str, str]]:
+    """Parse repo glossary file body.
+
+    Returns a mapping keyed by ``_normalize_term(term)`` — the key is
+    case-insensitive so a hand-edited ``Order`` row collides with a
+    feature-promoted ``order`` row instead of silently producing two
+    canonical entries.
+
+    Each value is ``(display_term, definition, sources_cell)`` so the
+    on-disk display spelling survives a re-render.
+    """
+    out: dict[str, tuple[str, str, str]] = {}
+    for line in text.splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        if _TABLE_SEPARATOR_RE.match(line):
+            continue
+        cells = _split_table_row(line)
+        if cells is None:
+            continue
+        if len(cells) < _REPO_GLOSSARY_REQUIRED_COLUMNS:
+            continue
+        if cells[0].lower() == "term":
+            continue
+        # Peel any [term](context: ctx) annotation in case a hand edit
+        # crept one in; the writer never emits this shape but a defensive
+        # peel keeps the case-insensitive key stable across re-runs.
+        display_term = _parse_term_cell(cells[0])
+        if not display_term:
+            continue
+        definition = cells[1].strip()
+        sources = cells[2].strip()
+        out[_normalize_term(display_term)] = (display_term, definition, sources)
+    return out
+
+
+def _merge_sources(existing: str, feature_id: str) -> str:
+    sources = [s.strip() for s in existing.split(",") if s.strip()]
+    if feature_id not in sources:
+        sources.append(feature_id)
+    return ", ".join(sources)
+
+
+def _render_repo_glossary(rows: dict[str, tuple[str, str, str]]) -> str:
+    """Render the repo-wide glossary file body.
+
+    Args:
+        rows: ``{normalized_key: (display_term, definition, sources_cell)}``
+            map. Output rows are sorted by the case-insensitive normalized
+            key so re-runs against a stable input are byte-identical.
+    """
+    lines: list[str] = []
+    for key in sorted(rows):
+        display_term, definition, sources = rows[key]
+        lines.append(f"| {display_term} | {definition} | {sources} |")
+    table = _REPO_GLOSSARY_TABLE_HEADER + "\n".join(lines)
+    if lines:
+        table += "\n"
+    return _REPO_GLOSSARY_HEADER + table
+
+
+def _atomic_write_glossary(target: Path, body: str) -> None:
+    """Write ``body`` to ``target`` via a uniquely-named sibling tempfile.
+
+    Mirrors the contract of ``tools.constitution_amend.atomic_replace`` but
+    routes through ``os.replace`` so the test suite can simulate a
+    mid-flight rename failure without monkey-patching ``Path.replace``.
+
+    The temp filename is generated with :func:`tempfile.mkstemp` (per-call
+    unique suffix) so two concurrent writers cannot stomp the same staging
+    path. Without uniqueness, writer B's partial content could be replaced
+    over the live target by writer A's ``os.replace``.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_str = tempfile.mkstemp(
+        dir=str(target.parent),
+        prefix=target.name + ".",
+        suffix=".tmp",
+    )
+    os.close(fd)
+    tmp = Path(tmp_str)
+    try:
+        tmp.write_text(body, encoding="utf-8")
+        # Routed through ``os.replace`` (not ``Path.replace``) so the test
+        # suite can simulate a mid-flight rename failure via patch.object.
+        os.replace(str(tmp), str(target))  # noqa: PTH105
+    except OSError:
+        with contextlib.suppress(FileNotFoundError):
+            tmp.unlink()
+        raise
+
+
+def promote_domain_to_repo(
+    repo_root: Path,
+    feature_id: str,
+    *,
+    feature_dir: Path | None = None,
+) -> PromotionResult:
+    """Merge a feature's ``DOMAIN.md`` glossary into the repo-wide glossary.
+
+    Conflicts (duplicate term with diverging normalized definition) are
+    advisory: this function returns a ``PromotionResult`` with
+    ``status="skipped"`` and ``conflicts`` populated, leaving the on-disk
+    glossary untouched. Per the locked plan
+    (``docs/plans/2026-05-08-m7-confidence-and-ux-polish.md`` P1.7), a
+    conflict MUST NOT block ship.
+
+    Term comparison is case-insensitive (``Order`` and ``order`` collapse to
+    the same key) so the repo-wide glossary cannot grow two rows for the
+    same canonical term across feature ships. Display spelling is
+    preserved from the first row that wrote the term.
+
+    Args:
+        repo_root: Repository root containing the ``.forge/`` tree.
+        feature_id: Feature folder name in YYYY-MM-DD-slug form. Validated
+            against ``_FEATURE_ID_RE`` BEFORE any path math — guards against
+            traversal via ``feature_id="../foo"``.
+        feature_dir: Optional explicit path to the feature folder. When
+            ``None`` (default), reads from the live folder at
+            ``.forge/features/<feature_id>/DOMAIN.md``. Callers running
+            promotion AFTER ``ship_feature`` succeeds pass the archived
+            path: ``.forge/features/archive/<feature_id>/DOMAIN.md``.
+
+    Returns:
+        ``PromotionResult`` with ``status="ok"`` on a clean merge, or
+        ``status="skipped"`` when one or more conflicts were detected. In
+        the skipped case ``promoted_terms`` and ``skipped_terms`` are
+        empty and ``conflicts`` lists every diverging term.
+
+    Raises:
+        ArchiveError: ``feature_id`` slug malformed, or feature ``DOMAIN.md``
+            missing. Conflicts do NOT raise.
+        OSError: Re-raised when the atomic rename step fails. The
+            pre-existing glossary file (if any) is preserved.
+    """
+    _validate_feature_id(feature_id)
+    if feature_dir is None:
+        feature_dir = repo_root / ".forge" / "features" / feature_id
+    domain_path = feature_dir / "DOMAIN.md"
+    if not domain_path.is_file():
+        raise ArchiveError(f"DOMAIN.md missing for feature {feature_id!r}")
+
+    feature_rows = _parse_feature_glossary(domain_path.read_text(encoding="utf-8"))
+
+    glossary_path = repo_root / ".forge" / "domain" / "glossary.md"
+    repo_rows: dict[str, tuple[str, str, str]] = {}
+    if glossary_path.is_file():
+        repo_rows = _parse_repo_glossary(glossary_path.read_text(encoding="utf-8"))
+
+    promoted: list[str] = []
+    skipped: list[str] = []
+    conflicts: list[ConflictRow] = []
+    next_rows: dict[str, tuple[str, str, str]] = dict(repo_rows)
+
+    for term, definition in feature_rows:
+        key = _normalize_term(term)
+        if key not in repo_rows:
+            next_rows[key] = (term, definition, feature_id)
+            promoted.append(term)
+            continue
+        existing_display, existing_definition, existing_sources = repo_rows[key]
+        if _normalize_definition(definition) == _normalize_definition(existing_definition):
+            next_rows[key] = (
+                existing_display,
+                existing_definition,
+                _merge_sources(existing_sources, feature_id),
+            )
+            skipped.append(term)
+            continue
+        conflicts.append(
+            ConflictRow(
+                term=existing_display,
+                feature_definition=definition,
+                repo_definition=existing_definition,
+            ),
+        )
+
+    if conflicts:
+        # Advisory — never block ship. The on-disk glossary is left
+        # untouched so a partial merge cannot persist alongside the
+        # conflict report.
+        return PromotionResult(
+            status="skipped",
+            promoted_terms=[],
+            skipped_terms=[],
+            conflicts=conflicts,
+        )
+
+    body = _render_repo_glossary(next_rows)
+    _atomic_write_glossary(glossary_path, body)
+
+    return PromotionResult(
+        status="ok",
+        promoted_terms=promoted,
+        skipped_terms=skipped,
+        conflicts=[],
+    )

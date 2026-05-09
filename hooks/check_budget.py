@@ -38,6 +38,14 @@ _UNBOUNDED_KEYWORDS = frozenset({"all", "any", "everything", "*"})
 # Bare extension glob with no directory prefix: "*.py", "*.ts".
 _BARE_EXTENSION_GLOB = re.compile(r"^\*\.[a-zA-Z0-9]+$")
 
+# Phase enum frozen literal. Canonical source: schemas/state.schema.json
+# (current_phase + phases.propertyNames + commits[].phase + skipped[].phase
+# + deviations[].phase). The hook stays stdlib-only — no jsonschema import,
+# no tools.* import — so drift between this set and the canonical schema is
+# caught by the schema enum tests in tests/tools/. Only "execute" triggers
+# tests_in_scope enforcement.
+_EXECUTE_PHASE = "execute"
+
 _MARKER = "context_budget:"
 
 
@@ -151,6 +159,58 @@ def _validate_forbidden(forbidden: Any) -> str | None:
     return None
 
 
+def _validate_tests_in_scope_shape(tests: Any) -> str | None:
+    """Return a shape-error reason for tests_in_scope, or None when shape is OK or absent."""
+    if tests is None:
+        return None
+    if not isinstance(tests, list):
+        return f"context_budget.tests_in_scope must be a JSON array (got {type(tests).__name__})"
+    for item in tests:
+        if not isinstance(item, str):
+            return (
+                f"context_budget.tests_in_scope items must be strings (got {type(item).__name__})"
+            )
+    return None
+
+
+def _validate_tests_in_scope(budget: dict[str, Any]) -> str | None:
+    """Return a deny reason when execute-phase budget lacks tests_in_scope, else None.
+
+    Rules:
+    - When ``phase == "execute"``: ``tests_in_scope`` MUST be a non-empty
+      list of strings, UNLESS the budget block also declares
+      ``tdd_exception_ref: "<ADR-id>"``.
+    - When ``phase`` is absent or any non-execute value: ``tests_in_scope``
+      is optional; if present, it must still be a list of strings (cheap
+      shape check that protects downstream consumers without rejecting
+      legacy dispatches that omit the field entirely).
+    """
+    tests = budget.get("tests_in_scope")
+    shape_error = _validate_tests_in_scope_shape(tests)
+    if shape_error is not None:
+        return shape_error
+
+    if budget.get("phase") != _EXECUTE_PHASE:
+        return None
+
+    exception_ref = budget.get("tdd_exception_ref")
+    has_exception = isinstance(exception_ref, str) and exception_ref.strip() != ""
+    if has_exception:
+        return None
+
+    if tests is None:
+        return (
+            "context_budget.tests_in_scope is required for execute-phase dispatches "
+            "(set tdd_exception_ref to an ADR id to allow empty)"
+        )
+    if len(tests) == 0:
+        return (
+            "context_budget.tests_in_scope must be non-empty for execute-phase dispatches "
+            "(set tdd_exception_ref to an ADR id to allow empty)"
+        )
+    return None
+
+
 def _validate_budget(budget: Any) -> tuple[bool, str]:
     """Validate the parsed budget object. Return (allow, reason)."""
     if not isinstance(budget, dict):
@@ -159,6 +219,7 @@ def _validate_budget(budget: Any) -> tuple[bool, str]:
     for reason in (
         _validate_files_in_scope(budget.get("files_in_scope")),
         _validate_forbidden(budget.get("forbidden")),
+        _validate_tests_in_scope(budget),
     ):
         if reason is not None:
             return False, reason

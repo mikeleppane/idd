@@ -1,6 +1,6 @@
 ---
 name: forge-domain
-description: Glossary table + optional Mermaid sketch for full-tier feature SPEC.md. Use when /forge:do (full tier) advances to the domain phase, or when the user invokes /forge:domain directly.
+description: Author a per-feature DOMAIN.md (glossary, bounded contexts, aggregates, invariants, open questions) for full-tier features and replace SPEC.md `# Domain` with a one-line pointer. Use when /forge:do (full tier) advances to the domain phase, or when the user invokes /forge:domain directly.
 model: sonnet
 disable-model-invocation: true
 ---
@@ -23,6 +23,9 @@ tiers fill `# Domain` at spec time and never enter this phase.
 - `SPEC.md` (read-only) — pulls `# Intent` and `# Scenarios` sections as the
   term-extraction corpus. The `# Domain` section is left as the in-place
   rewrite target only; not used as input.
+- `templates/feature/DOMAIN.md` — the artifact contract. Frontmatter +
+  five sections (Glossary, Bounded Contexts, Aggregates, Invariants, Open
+  Questions) define the shape of the file this skill writes.
 - Project signals — `pyproject.toml` and/or `package.json` at repo root, read
   once for ecosystem hints (Python vs JS/TS, framework names) so the glossary
   picks the right vocabulary register.
@@ -41,8 +44,8 @@ tiers fill `# Domain` at spec time and never enter this phase.
    `"domain phase is full-tier only; current tier is '<X>'"`. Do NOT invent
    a custom abort string; the helper is the single source of truth and is
    shared with `/forge:refine` so users see consistent error wording across
-   the two full-tier-only phases. Do NOT mutate SPEC.md when the tier guard
-   trips.
+   the two full-tier-only phases. Do NOT mutate SPEC.md or write DOMAIN.md
+   when the tier guard trips.
 3. **Read SPEC.** Open `SPEC.md`. Extract the `# Intent` and `# Scenarios`
    sections verbatim (read-only). Do not mutate the spec yet.
    **Fence-aware section scan (per P5 T11 H1 lesson):** when locating
@@ -65,19 +68,46 @@ tiers fill `# Domain` at spec time and never enter this phase.
    when it appears **2+ times AND** carries domain semantics. Drop generic
    words (`user`, `system`, `request`, `feature` unless ecosystem signal
    promotes one).
-6. **Draft glossary table.** Render a Markdown table with columns
-   `Term | Definition | Example`. Aim for **4–8 entries**; prune below 8 by
-   merging near-synonyms; expand toward 4 by demoting under-used terms.
-7. **Optional Mermaid sketch.** Offer the user an optional `mermaid` block
-   sketching key concept relationships (one diagram, ≤8 nodes). User opts
-   in; if declined, omit the block entirely. Mermaid is optional — never
-   force.
-8. **Edit SPEC.md `# Domain` in-place.** Replace the placeholder body of the
-   `# Domain` section with the glossary table (and optional Mermaid block).
-   Preserve surrounding sections byte-for-byte.
+6. **Author DOMAIN.md from the template.** Open `templates/feature/DOMAIN.md`
+   and use it as the structural contract for the new file at
+   `.forge/features/<id>/DOMAIN.md`.
+   - **Frontmatter.** Set `id` from `state.json.id`, `status: draft`,
+     `version: 0.1.0`, `depends_on: []`.
+   - **Glossary.** Populate the table with **4–8 rows** drawn from the
+     extracted candidate terms. Each row needs a non-empty Definition. When
+     a term spans bounded contexts, annotate it inline as
+     `[term](context: <ctx-id>)` so downstream tooling can wire edges.
+   - **Bounded Contexts.** Do not hand-author the bounded-context map.
+     After the Glossary section is populated, call
+     `tools.domain.render_mermaid.render_from_domain_md(domain_md_text)`
+     and splice the returned block into the `# Bounded Contexts` section
+     of the in-memory DOMAIN.md text, replacing the placeholder Mermaid
+     block byte-for-byte. The renderer is deterministic and idempotent —
+     re-running the domain phase against an unchanged glossary returns a
+     byte-identical block, so manual edits inside the fenced block are
+     overwritten on the next pass.
+   - **Aggregates.** One H2 subsection per aggregate; list value-objects as
+     bullets and aggregate-local invariants beneath them.
+   - **Invariants.** Cross-aggregate rules only. Aggregate-local rules
+     belong under their aggregate above.
+   - **Open Questions.** Any unresolvable terms or relationships the domain
+     phase could not close.
+7. **Write the file.** Write `.forge/features/<id>/DOMAIN.md`. UTF-8, LF
+   line endings, no trailing whitespace.
+8. **Update SPEC.md `# Domain` body in place.** Locate the `# Domain`
+   section using the same fence-aware approach as Step 3. Replace whatever
+   lives between `# Domain` and the next H1 with a single blockquote pointer:
+
+   ```markdown
+   > See [DOMAIN.md](./DOMAIN.md) for the glossary, bounded contexts, aggregates, and invariants.
+   ```
+
+   **Keep the `# Domain` heading** — only the body shrinks. Preserve all
+   surrounding sections byte-for-byte.
 9. **Self-review.** Confirm:
-   - Every term used in Intent + Scenarios resolves in the glossary OR is
-     generic (per the ecosystem signal).
+   - Every domain-flavoured term used in Intent + Scenarios resolves in
+     DOMAIN.md `# Glossary` OR is generic per the ecosystem signal.
+   - Every glossary row has a non-empty Definition.
    - No compound term (e.g., `delta proposal validator`) is left undefined
      when its constituents alone are insufficient.
    - On unresolvable terms in **auto mode**: append a `decisions.md` entry
@@ -101,6 +131,10 @@ tiers fill `# Domain` at spec time and never enter this phase.
   must use the fence-aware scan from Step 3 — a `# Domain` line inside a
   fenced code block (e.g., a Mermaid diagram caption or a quoted spec
   template excerpt) does NOT count as the real section.
+- **`DOMAIN.md` already exists.** Abort with
+  `"DOMAIN.md exists; re-running domain phase requires removing the file"`.
+  A `--force` flag is a follow-up task; today the user removes the file
+  manually before re-running.
 - **Unresolvable terms in interactive mode.** Halt; ask the user which term
   is canonical and what the definition should be.
 - **`current_phase != "domain"`.** Surface
@@ -108,24 +142,30 @@ tiers fill `# Domain` at spec time and never enter this phase.
 
 ## State writes
 
-- `SPEC.md` `# Domain` section — in-place rewrite (glossary table, optional
-  Mermaid block).
+- `.forge/features/<id>/DOMAIN.md` — newly created from
+  `templates/feature/DOMAIN.md`. Source of truth for the feature's
+  glossary, bounded contexts, aggregates, invariants, and open questions.
+- `SPEC.md` `# Domain` section — body replaced in place with a one-line
+  pointer to `DOMAIN.md`. Heading retained.
 - `current_phase` — transitions `domain -> scenarios` via
   `tools.state.complete_phase` + `tools.state.start_phase`.
 - `deviations[]` — appended only when auto-mode self-review finds
   unresolvable terms.
 
-## Out of scope (M3)
+## Out of scope
 
-No bounded-context map. No multi-glossary escalation. Single glossary even
-when the feature crosses modules. Bounded-context escalation depends on
-`intel/modules.md` (deferred to M4 per spec §5.3.4).
+No multi-glossary escalation. A single DOMAIN.md per feature even when the
+feature crosses modules. When the glossary genuinely needs to split, that is
+a follow-up task — not a per-run decision this skill makes.
 
 ## See also
 
+- `templates/feature/DOMAIN.md` — the artifact contract this skill produces.
+- `tools.domain.render_mermaid` — the deterministic bounded-context Mermaid
+  renderer this skill calls in Step 6 to populate `# Bounded Contexts`.
 - `tools.state.complete_phase` — closes the `domain` phase.
 - `tools.state.start_phase` — opens `scenarios`.
 - `commands/domain.md` — slash spec.
-- `/forge:scenarios` — next phase; consumes the populated `# Domain`.
+- `/forge:scenarios` — next phase; consumes the populated DOMAIN.md.
 - `/forge:spec` — prior phase; ships the `# Domain` placeholder this skill
-  rewrites.
+  rewrites into a pointer.

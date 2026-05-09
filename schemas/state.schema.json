@@ -17,12 +17,17 @@
     },
     "current_phase": {
       "type": "string",
-      "enum": ["refine", "research", "spec", "domain", "scenarios", "plan", "crucible", "review", "execute", "verify", "ship", "done"]
+      "enum": ["refine", "research", "spec", "domain", "scenarios", "plan", "crucible", "review", "execute", "verify", "ship", "qa", "done"]
+    },
+    "flow_version": {
+      "type": "integer",
+      "enum": [1, 2, 3],
+      "description": "State machine generation. 1 = pre-collapse 9-step standard tier; 2 = collapsed 5-step standard; 3 = adds qa as a terminal post-ship phase. Absence of this field means v1 by convention; application code treats missing field as v1."
     },
     "phases": {
       "type": "object",
       "propertyNames": {
-        "enum": ["refine", "research", "spec", "domain", "scenarios", "plan", "crucible", "review", "execute", "verify", "ship"]
+        "enum": ["refine", "research", "spec", "domain", "scenarios", "plan", "crucible", "review", "execute", "verify", "ship", "qa"]
       },
       "properties": {
         "review": {
@@ -71,7 +76,7 @@
         "properties": {
           "phase": {
             "type": "string",
-            "enum": ["refine", "research", "spec", "domain", "scenarios", "plan", "crucible", "review", "execute", "verify", "ship"]
+            "enum": ["refine", "research", "spec", "domain", "scenarios", "plan", "crucible", "review", "execute", "verify", "ship", "qa"]
           },
           "reason": { "type": "string" }
         },
@@ -86,7 +91,7 @@
         "properties": {
           "phase": {
             "type": "string",
-            "enum": ["refine", "research", "spec", "domain", "scenarios", "plan", "crucible", "review", "execute", "verify", "ship"]
+            "enum": ["refine", "research", "spec", "domain", "scenarios", "plan", "crucible", "review", "execute", "verify", "ship", "qa"]
           },
           "cause":      { "type": "string" },
           "resolution": { "type": "string" },
@@ -104,7 +109,7 @@
           "sha":     { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
           "phase": {
             "type": "string",
-            "enum": ["refine", "research", "spec", "domain", "scenarios", "plan", "crucible", "review", "execute", "verify", "ship"]
+            "enum": ["refine", "research", "spec", "domain", "scenarios", "plan", "crucible", "review", "execute", "verify", "ship", "qa"]
           },
           "subject": { "type": "string", "minLength": 1 },
           "logged_at": { "type": "string", "format": "date-time" }
@@ -129,6 +134,11 @@
     "refined_idea": {
       "type": "string",
       "maxLength": 4000
+    },
+    "shipped_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 UTC timestamp recorded when /forge:ship completes the ship phase. Required for post-merge /forge:qa to find the feature; absence means ship has not completed."
     }
   }
 }
