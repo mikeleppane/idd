@@ -49,6 +49,10 @@ _PER_FOLDER_TARGETS: frozenset[str] = frozenset(
 )
 _REPO_WIDE_TARGETS: frozenset[str] = frozenset({"health", "ship", "all"})
 
+# Reserved sub-folder names under ``.forge/features/`` and ``.forge/changes/``
+# that the ``--target all`` dispatcher must skip — they are not live artifacts.
+_RESERVED_SUBFOLDERS: frozenset[str] = frozenset({"archive"})
+
 _TARGET_CHOICES: tuple[str, ...] = (
     "spec",
     "plan",
@@ -171,6 +175,8 @@ def _dispatch_all(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
     changes_root = repo_root / ".forge" / "changes"
     if changes_root.is_dir():
         for change in sorted(changes_root.iterdir()):
+            if change.name in _RESERVED_SUBFOLDERS:
+                continue
             proposal = change / "proposal.md"
             if proposal.is_file():
                 findings.extend(validate_delta(proposal))
@@ -179,6 +185,8 @@ def _dispatch_all(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
     if features_root.is_dir():
         for feature in sorted(features_root.iterdir()):
             if not feature.is_dir():
+                continue
+            if feature.name in _RESERVED_SUBFOLDERS:
                 continue
             findings.extend(validate_deviations(feature))
             findings.extend(validate_tdd_evidence(repo_root, feature.name))

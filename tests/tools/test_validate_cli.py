@@ -208,6 +208,48 @@ def test_cli_target_all_fans_out_over_features(
     assert "anchors" in sentinel_calls
 
 
+def test_cli_target_all_skips_archive_subdirectory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--target all` must not iterate the `archive/` reserved sub-folder.
+
+    Archived features live at ``.forge/features/archive/<id>/`` and must not be
+    treated as live features by the dispatcher — otherwise the dispatcher
+    invokes per-feature validators with ``feature_id="archive"``, surfacing
+    spurious findings (or downstream crashes) for a folder that contains no
+    state.json of its own.
+    """
+    seen_feature_ids: list[str] = []
+
+    def capture_feature(*args: object, **kwargs: object) -> list[object]:
+        # validate_deviations is invoked with the feature folder; capture name.
+        if args and isinstance(args[0], Path):
+            seen_feature_ids.append(args[0].name)
+        return []
+
+    monkeypatch.setattr(validate_cli, "validate_deviations", capture_feature)
+    monkeypatch.setattr(validate_cli, "validate_tdd_evidence", lambda *a, **kw: [])
+    monkeypatch.setattr(validate_cli, "validate_domain_glossary", lambda *a, **kw: [])
+    monkeypatch.setattr(validate_cli, "validate_qa_shape", lambda *a, **kw: [])
+
+    archived = tmp_path / ".forge" / "features" / "archive" / "2026-05-01-old"
+    archived.mkdir(parents=True)
+    (archived / "state.json").write_text('{"deviations": []}', encoding="utf-8")
+
+    live = tmp_path / ".forge" / "features" / "2026-05-09-live"
+    live.mkdir(parents=True)
+    (live / "state.json").write_text('{"deviations": []}', encoding="utf-8")
+
+    rc = validate.main(["--target", "all", "--repo-root", str(tmp_path)])
+    capsys.readouterr()
+    assert rc in (0, 1)
+
+    assert "archive" not in seen_feature_ids, (
+        f"dispatcher walked into archive/ sub-folder: {seen_feature_ids}"
+    )
+    assert "2026-05-09-live" in seen_feature_ids, seen_feature_ids
+
+
 def test_cli_check_registries_flag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
