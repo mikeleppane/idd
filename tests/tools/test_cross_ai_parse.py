@@ -198,3 +198,19 @@ def test_finding_is_frozen() -> None:
 
     with pytest.raises(FrozenInstanceError):
         finding.severity = "LOW"  # type: ignore[misc]
+
+
+def test_blank_line_between_separator_and_first_row_tolerated() -> None:
+    """An authoring style that spaces the separator one line away from
+    the first data row must still parse — the skip-separator helper
+    walks past intervening blanks so the table is not truncated.
+    """
+    body = (
+        "| ID | Severity | Status | Location | Problem | Fix | Source |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "\n"
+        "| F1 | LOW | open | x.py:1 | issue | fix | reviewer |\n"
+    )
+    result = parse_response(body, reviewer_id="codex", target="plan")
+    assert len(result) == 1
+    assert result[0].severity == "LOW"

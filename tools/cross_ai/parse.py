@@ -222,19 +222,22 @@ def _next_line_is_separator(lines: list[str], start: int) -> bool:
 def _skip_separator_row(lines: list[str], start: int) -> int:
     """Return the index of the first data row after the separator.
 
-    Skips intervening blank lines so authoring whitespace between the
-    separator and the first data row does not truncate the parse.
+    Skips both leading blanks (header → blank → separator) and trailing
+    blanks (separator → blank → first data row) so authoring whitespace
+    around the separator does not truncate the parse.
     """
     index = start
-    while index < len(lines):
-        line = lines[index]
-        if not line.strip():
-            index += 1
-            continue
-        cells = _split_row(line)
+    # Walk past blank lines to locate the separator itself.
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    # Step over the separator row when present.
+    if index < len(lines):
+        cells = _split_row(lines[index])
         if cells is not None and all(_SEPARATOR_CELL.match(cell) for cell in cells if cell):
-            return index + 1
-        return index
+            index += 1
+    # Walk past any blank lines between the separator and the first data row.
+    while index < len(lines) and not lines[index].strip():
+        index += 1
     return index
 
 
