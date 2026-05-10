@@ -149,7 +149,14 @@ def load_config(repo_root: Path) -> CrossAiConfig:
     # Re-load the schema fresh per call so test fixtures may evolve it without
     # cross-test pollution from a module-cached validator.
     schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
-    validator = jsonschema.Draft202012Validator(schema)
+    # Enable the default format checker so ``format: date-time`` declared on
+    # ``dispatch_approved_at`` (RFC 3339) is enforced at load time. Mirrors
+    # ``tools/state.py``'s validator construction so the two loaders agree on
+    # the contract surface.
+    validator = jsonschema.Draft202012Validator(
+        schema,
+        format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER,
+    )
     try:
         validator.validate(block)
     except jsonschema.ValidationError as exc:

@@ -161,3 +161,17 @@ def test_overlong_fatal_regex_also_rejected(tmp_path: Path) -> None:
     )
     with pytest.raises(CrossAiConfigError, match="256-char"):
         load_config(tmp_path)
+
+
+def test_invalid_dispatch_approved_at_timestamp_rejected(tmp_path: Path) -> None:
+    """``dispatch_approved_at`` declares ``format: date-time``. The loader
+    must wire up the default format checker (mirroring ``tools/state.py``)
+    so a non-RFC-3339 timestamp fails at load time rather than flowing
+    into the future approval-cache contract.
+    """
+    _write_config(
+        tmp_path,
+        {"cross_ai": {"mode": "manual", "dispatch_approved_at": "not-a-date"}},
+    )
+    with pytest.raises(CrossAiConfigError):
+        load_config(tmp_path)
