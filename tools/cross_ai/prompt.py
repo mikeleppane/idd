@@ -72,8 +72,9 @@ ID | Severity | Status | Location | Problem | Fix | Source.
 - Use severities BLOCK / HIGH / MEDIUM / LOW / INFO.
 - Status defaults to `open`.
 - Tag Constitution-related findings with `[constitution:A<n>]` in the
-  Source column so the dispatcher can route them back to the originating
-  Article.
+  Problem column so the dispatcher can route them back to the originating
+  Article. The Source column is reserved for dispatcher-injected routing
+  metadata and will be overwritten — do not place tags there.
 """
 
 

@@ -134,6 +134,27 @@ def test_plan_target_includes_acceptance_premortem_plan_body_and_mandate(
     assert "[constitution:A<n>]" in prompt.body
 
 
+def test_reviewer_mandate_routes_constitution_tags_to_problem_column(
+    tmp_path: Path,
+) -> None:
+    """Coupling test: the prompt mandate MUST direct reviewers to the
+    Problem column for constitution tags. The parser overwrites the
+    Source column to ``external-<reviewer>`` and only preserves tags in
+    Problem (see ``tools/cross_ai/parse.py:19``). A drift here silently
+    drops the constitution-routing signal end-to-end.
+    """
+    feature_id = "2026-05-10-sample"
+    _seed_feature(tmp_path, feature_id)
+
+    prompt = build_prompt(PromptTarget.plan, feature_id, tmp_path)
+
+    assert "Problem column" in prompt.body
+    assert "Source column" in prompt.body  # mentioned to warn it's overwritten
+    # Negative guard: the mandate must NOT tell reviewers to put tags in
+    # the Source column — that path silently drops the routing tag.
+    assert "[constitution:A<n>]` in the\n  Source column" not in prompt.body
+
+
 # --- (b) target=plan without UNDERSTANDING.md ------------------------------
 
 
