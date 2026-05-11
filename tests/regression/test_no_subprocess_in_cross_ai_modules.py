@@ -10,13 +10,13 @@ attr=...))`` so an alias rename (``import subprocess as sp``) would slip
 this guard, but the audited modules ship with neither alias nor direct
 use; the cheap check catches the regression we care about.
 
-Hand-off note: the auto-mode dispatcher is the single module allowed to
-spawn external CLIs. When it lands as ``tools/cross_ai/dispatch.py``
-this guard should be relaxed to exclude that file from the walk (or
-inverted to assert dispatch is the *only* module inside
-``tools/cross_ai/`` that subprocess-calls). The dispatch module is
-intentionally absent today; its presence here would itself be a
-regression.
+Hand-off note: a future auto-mode dispatcher is the single module
+allowed to spawn external CLIs. When it lands as
+``tools/cross_ai/dispatch.py`` this guard should be relaxed to exclude
+that file from the walk (or inverted to assert dispatch is the *only*
+module inside ``tools/cross_ai/`` that subprocess-calls). The dispatch
+module is intentionally absent today; its presence here would itself be
+a regression.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ _REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 _CROSS_AI_DIR: Path = _REPO_ROOT / "tools" / "cross_ai"
 
 # Modules in ``tools/cross_ai/`` that are allowed to invoke subprocess.
-# Empty today; the planned auto-mode dispatcher will be added here when
+# Empty today; a future auto-mode dispatcher will be added here when
 # it ships. The prompt builder (which does shell out to ``git`` for the
 # code-target diff) lives in this directory and IS exempt via
 # :data:`_PROMPT_BUILDER_BYPASS` — see the function below for the
@@ -116,7 +116,7 @@ def test_no_subprocess_calls_in_manual_mode_modules() -> None:
 
 
 def test_dispatch_module_is_absent() -> None:
-    """``tools/cross_ai/dispatch.py`` belongs to a later increment.
+    """``tools/cross_ai/dispatch.py`` is reserved for a future increment.
 
     Its presence today would mean auto-mode landed without the guard
     being relaxed in the same change — flag it as a regression.
