@@ -982,10 +982,10 @@ cycles: 1
     findings = sg.parse_review_findings(src)
     assert len(findings) == 2
     # Article tag first, lesson tag second (pinned order from _findings_from_row).
-    assert findings[0].kind == "article"
+    assert findings[0].is_article
     assert findings[0].article_id == "A1"
     assert findings[0].lesson_id is None
-    assert findings[1].kind == "lesson"
+    assert findings[1].is_lesson
     assert findings[1].lesson_id == "L007"
     assert findings[1].article_id is None
 
@@ -1010,49 +1010,34 @@ cycles: 1
     )
     findings = sg.parse_review_findings(src)
     assert [f.lesson_id for f in findings] == ["L007", "L010"]
-    assert all(f.kind == "lesson" for f in findings)
+    assert all(f.is_lesson for f in findings)
 
 
-def test_ship_finding_default_kind_is_article() -> None:
-    """Legacy constructors must default to kind='article' so existing call
-    sites continue to work without touching the new field.
-    """
+def test_ship_finding_article_only_builds_cleanly() -> None:
+    """article_id set, lesson_id default None constructs without error."""
     finding = sg.ShipFinding(
         article_id="A1",
         severity="HIGH",
         location="src/x.py:1",
         message="[constitution:A1] x",
     )
-    assert finding.kind == "article"
+    assert finding.is_article
+    assert not finding.is_lesson
     assert finding.lesson_id is None
 
 
-def test_ship_finding_lesson_kind_builds_cleanly() -> None:
-    """kind='lesson' + lesson_id constructs without error."""
+def test_ship_finding_lesson_only_builds_cleanly() -> None:
+    """lesson_id set, article_id default None constructs without error."""
     finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L007",
         severity="HIGH",
         location="src/x.py:1",
         message="[lesson:L007] x",
     )
-    assert finding.kind == "lesson"
+    assert finding.is_lesson
+    assert not finding.is_article
     assert finding.lesson_id == "L007"
     assert finding.article_id is None
-
-
-def test_ship_finding_allows_both_ids_none_at_dataclass_level() -> None:
-    """Both ids None is permitted at runtime — mypy is the gate for proper
-    construction; the dataclass enforces no mutual exclusion to keep the
-    constructor flexible for future shapes.
-    """
-    finding = sg.ShipFinding(
-        severity="HIGH",
-        location="src/x.py:1",
-        message="placeholder",
-    )
-    assert finding.article_id is None
-    assert finding.lesson_id is None
 
 
 def test_partition_by_lesson_severity_empty_input() -> None:
@@ -1064,7 +1049,6 @@ def test_partition_by_lesson_severity_empty_input() -> None:
 
 def test_partition_by_lesson_severity_critical_routes_to_gate() -> None:
     finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L020",
         severity="BLOCK",
         location="src/x.py:1",
@@ -1078,7 +1062,6 @@ def test_partition_by_lesson_severity_critical_routes_to_gate() -> None:
 
 def test_partition_by_lesson_severity_high_routes_to_gate() -> None:
     finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L007",
         severity="HIGH",
         location="src/x.py:1",
@@ -1091,7 +1074,6 @@ def test_partition_by_lesson_severity_high_routes_to_gate() -> None:
 
 def test_partition_by_lesson_severity_medium_routes_to_warn() -> None:
     finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L010",
         severity="MEDIUM",
         location="src/x.py:1",
@@ -1104,7 +1086,6 @@ def test_partition_by_lesson_severity_medium_routes_to_warn() -> None:
 
 def test_partition_by_lesson_severity_low_routes_to_info() -> None:
     finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L030",
         severity="LOW",
         location="src/x.py:1",
@@ -1115,8 +1096,8 @@ def test_partition_by_lesson_severity_low_routes_to_info() -> None:
     assert gate == [] and warn == []
 
 
-def test_partition_by_lesson_severity_filters_out_article_kind() -> None:
-    """Article-kind findings pass through unaffected — they belong to the
+def test_partition_by_lesson_severity_filters_out_article_findings() -> None:
+    """Article-only findings pass through unaffected — they belong to the
     article partitioner.
     """
     article_finding = sg.ShipFinding(
@@ -1126,7 +1107,6 @@ def test_partition_by_lesson_severity_filters_out_article_kind() -> None:
         message="[constitution:A1] m",
     )
     lesson_finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L007",
         severity="HIGH",
         location="src/x.py:1",
@@ -1141,9 +1121,9 @@ def test_partition_by_lesson_severity_filters_out_article_kind() -> None:
     assert article_finding not in info
 
 
-def test_partition_by_lesson_severity_missing_lesson_id_raises() -> None:
+def test_partition_by_lesson_severity_unknown_lesson_id_raises() -> None:
+    """A lesson_id absent from the supplied lessons list surfaces loudly."""
     finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L999",
         severity="HIGH",
         location="src/x.py:1",
@@ -1156,7 +1136,6 @@ def test_partition_by_lesson_severity_missing_lesson_id_raises() -> None:
 def test_partition_by_lesson_severity_mismatched_severity_raises() -> None:
     """Row Severity cell BLOCK but lesson L030 has Severity LOW → loud error."""
     finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L030",
         severity="BLOCK",
         location="src/x.py:1",
@@ -1175,14 +1154,12 @@ def test_partition_by_lesson_severity_batches_all_mismatches(tmp_path: Path) -> 
     The user then fixed-and-reshipped N times for N misaligned rows.
     """
     bad_a = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L030",
         severity="BLOCK",
         location="src/a.py:1",
         message="[lesson:L030] a",
     )
     bad_b = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L007",
         severity="MEDIUM",
         location="src/b.py:1",
@@ -1201,14 +1178,12 @@ def test_partition_by_lesson_severity_batches_unknown_and_mismatch_together(
 ) -> None:
     """Unknown-lesson and severity-mismatch errors batch into the same raise."""
     unknown = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L999",
         severity="HIGH",
         location="src/u.py:1",
         message="[lesson:L999] u",
     )
     mismatch = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L030",
         severity="BLOCK",
         location="src/m.py:1",
@@ -1224,28 +1199,24 @@ def test_partition_by_lesson_severity_batches_unknown_and_mismatch_together(
 def test_partition_by_lesson_severity_multiple_lessons_split_correctly() -> None:
     findings = [
         sg.ShipFinding(
-            kind="lesson",
             lesson_id="L020",
             severity="BLOCK",
             location="src/a.py:1",
             message="[lesson:L020] crit",
         ),
         sg.ShipFinding(
-            kind="lesson",
             lesson_id="L007",
             severity="HIGH",
             location="src/b.py:1",
             message="[lesson:L007] high",
         ),
         sg.ShipFinding(
-            kind="lesson",
             lesson_id="L010",
             severity="MEDIUM",
             location="src/c.py:1",
             message="[lesson:L010] med",
         ),
         sg.ShipFinding(
-            kind="lesson",
             lesson_id="L030",
             severity="LOW",
             location="src/d.py:1",
@@ -1258,16 +1229,26 @@ def test_partition_by_lesson_severity_multiple_lessons_split_correctly() -> None
     assert {f.lesson_id for f in info} == {"L030"}
 
 
-def test_partition_by_lesson_severity_raises_on_kind_lesson_without_lesson_id() -> None:
-    """Defensive guard: kind='lesson' must carry a lesson_id."""
-    finding = sg.ShipFinding(
-        kind="lesson",
-        severity="HIGH",
-        location="src/x.py:1",
-        message="missing lesson id",
-    )
-    with pytest.raises(sg.ShipGateError, match="missing lesson_id"):
-        sg.partition_by_lesson_severity([finding], _lessons_default())
+def test_ship_finding_constructor_rejects_both_ids_none() -> None:
+    """ShipFinding refuses construction when neither article_id nor lesson_id is set."""
+    with pytest.raises(sg.ShipGateError, match="exactly one"):
+        sg.ShipFinding(
+            severity="HIGH",
+            location="src/x.py:1",
+            message="ambiguous",
+        )
+
+
+def test_ship_finding_constructor_rejects_both_ids_set() -> None:
+    """ShipFinding refuses construction when both article_id and lesson_id are set."""
+    with pytest.raises(sg.ShipGateError, match="exactly one"):
+        sg.ShipFinding(
+            article_id="A1",
+            lesson_id="L007",
+            severity="HIGH",
+            location="src/x.py:1",
+            message="ambiguous",
+        )
 
 
 def test_render_gate_prompt_article_only_unchanged_when_lessons_none() -> None:
@@ -1283,7 +1264,6 @@ def test_render_gate_prompt_article_only_unchanged_when_lessons_none() -> None:
 
 def test_render_gate_prompt_lesson_finding_renders_trap_and_avoidance() -> None:
     finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L007",
         severity="HIGH",
         location="src/x.py:99",
@@ -1300,7 +1280,6 @@ def test_render_gate_prompt_mixed_kinds_renders_both() -> None:
     article_findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
     article_gate, _w, _i = sg.partition_by_article_level(article_findings, _articles())
     lesson_finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L007",
         severity="HIGH",
         location="src/x.py:42",
@@ -1316,7 +1295,6 @@ def test_render_gate_prompt_mixed_kinds_renders_both() -> None:
 
 def test_render_gate_prompt_lesson_kind_without_lessons_arg_raises() -> None:
     finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L007",
         severity="HIGH",
         location="src/x.py:1",
@@ -1328,7 +1306,6 @@ def test_render_gate_prompt_lesson_kind_without_lessons_arg_raises() -> None:
 
 def test_render_gate_prompt_unknown_lesson_id_raises() -> None:
     finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L999",
         severity="HIGH",
         location="src/x.py:1",
@@ -1349,7 +1326,6 @@ def test_render_warn_summary_article_only_unchanged_when_lessons_none() -> None:
 
 def test_render_warn_summary_lesson_finding_renders_trap_fragment() -> None:
     finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L010",
         severity="MEDIUM",
         location="src/x.py:55",
@@ -1365,7 +1341,6 @@ def test_render_warn_summary_mixed_kinds_renders_both() -> None:
     article_findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
     _g, article_warn, _i = sg.partition_by_article_level(article_findings, _articles())
     lesson_finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L010",
         severity="MEDIUM",
         location="src/y.py:1",
@@ -1380,7 +1355,6 @@ def test_render_warn_summary_mixed_kinds_renders_both() -> None:
 
 def test_render_warn_summary_lesson_kind_without_lessons_arg_raises() -> None:
     finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L010",
         severity="MEDIUM",
         location="src/x.py:1",
@@ -1392,7 +1366,6 @@ def test_render_warn_summary_lesson_kind_without_lessons_arg_raises() -> None:
 
 def test_render_warn_summary_unknown_lesson_id_raises() -> None:
     finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L999",
         severity="MEDIUM",
         location="src/x.py:1",
@@ -1429,7 +1402,6 @@ def test_ack_hook_records_lesson_kind_acknowledgement(tmp_path: Path) -> None:
     decisions_path = tmp_path / "decisions.md"
     decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
     lesson_finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L007",
         severity="HIGH",
         location="src/x.py:42",
@@ -1474,7 +1446,6 @@ def test_ack_hook_raises_when_lesson_kind_without_lessons_arg(tmp_path: Path) ->
     decisions_path = tmp_path / "decisions.md"
     decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
     lesson_finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L007",
         severity="HIGH",
         location="src/x.py:1",
@@ -1531,7 +1502,6 @@ def test_render_gate_prompt_uses_sanitised_lesson_title(tmp_path: Path) -> None:
     """The gate prompt header line must carry the sanitised title verbatim."""
     lesson = _make_lesson("L007", "HIGH", trap="## adversarial. body")
     finding = sg.ShipFinding(
-        kind="lesson",
         lesson_id="L007",
         severity="HIGH",
         location="src/x.py:1",

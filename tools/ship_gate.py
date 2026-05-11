@@ -45,7 +45,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from tools.constitution import Article
 from tools.constitution_amend import atomic_replace, ensure_decisions_file
@@ -106,18 +106,17 @@ _MAX_REVIEW_FILE_BYTES = 1 << 20
 class ShipFinding:
     """One unresolved REVIEW.code.md finding tagged for the ship gate.
 
-    Two kinds share this shape:
+    Exactly one of ``article_id`` / ``lesson_id`` is populated per finding:
 
-    - ``kind="article"`` (default, existing behavior): ``article_id`` carries
-      an ``A<n>`` Constitution article id. ``lesson_id`` is ``None``.
-    - ``kind="lesson"``: ``lesson_id`` carries an ``L<NNN>`` lesson id and
+    * Article finding — ``article_id`` carries an ``A<n>`` Constitution
+      article id; ``lesson_id`` is ``None``.
+    * Lesson finding — ``lesson_id`` carries an ``L<NNN>`` lesson id;
       ``article_id`` is ``None``.
 
-    Contract (NOT enforced at construction time — mypy + tag-emission logic
-    in :func:`_findings_from_row` are sufficient gates): exactly one of
-    ``article_id`` / ``lesson_id`` is populated per finding. The runtime
-    accepts both-None and both-set for forward compatibility, but those
-    shapes never appear in normal parser output.
+    The invariant is enforced at construction time via :meth:`__post_init__`
+    so callers cannot smuggle a both-None / both-set finding into the
+    routing path. Use :attr:`is_article` / :attr:`is_lesson` for branch
+    checks at call sites instead of reading the optional id fields.
     """
 
     article_id: str | None = None
@@ -126,7 +125,26 @@ class ShipFinding:
     location: str
     message: str
     lesson_id: str | None = None
-    kind: Literal["article", "lesson"] = "article"
+
+    def __post_init__(self) -> None:
+        """Enforce exactly-one-id at construction time."""
+        has_article = self.article_id is not None
+        has_lesson = self.lesson_id is not None
+        if has_article == has_lesson:
+            raise ShipGateError(
+                "ShipFinding requires exactly one of article_id / lesson_id; "
+                f"got article_id={self.article_id!r}, lesson_id={self.lesson_id!r}"
+            )
+
+    @property
+    def is_article(self) -> bool:
+        """True iff this is a Constitution-article finding."""
+        return self.article_id is not None
+
+    @property
+    def is_lesson(self) -> bool:
+        """True iff this is a trap-memory lesson finding."""
+        return self.lesson_id is not None
 
 
 def _parse_table_columns(line: str) -> list[str]:
@@ -330,7 +348,6 @@ def _findings_from_row(
     out.extend(
         ShipFinding(
             lesson_id=lesson_id,
-            kind="lesson",
             severity=severity,
             resolved_by=resolved_by,
             location=location,
@@ -431,18 +448,15 @@ def partition_by_lesson_severity(
     info: list[ShipFinding] = []
     # Accumulate ALL routing errors so a REVIEW.md with N misaligned rows
     # surfaces them in a single raise instead of forcing N fix-then-reship
-    # cycles. Constructor mis-use (kind='lesson' without lesson_id) is still
-    # raised eagerly because that's a programmer error in the caller, not a
-    # batch-fixable data input.
+    # cycles. The ShipFinding constructor enforces exactly-one-id; the
+    # ``is_lesson`` filter is the only thing left to gate on here.
     routing_errors: list[str] = []
     for f in findings:
-        if f.kind != "lesson":
+        if not f.is_lesson:
             continue
-        if f.lesson_id is None:
-            # Defensive: a kind='lesson' finding without a lesson_id is a
-            # constructor mis-use. Surface loudly instead of silently
-            # routing to info.
-            raise ShipGateError("kind='lesson' ShipFinding missing lesson_id")
+        # ShipFinding.__post_init__ guarantees lesson_id is not None when
+        # is_lesson is True, so the lookup is safe without a re-check.
+        assert f.lesson_id is not None  # noqa: S101 — typing aid for mypy
         lesson = by_id.get(f.lesson_id)
         if lesson is None:
             routing_errors.append(
@@ -559,17 +573,13 @@ def render_gate_prompt(
     by_id = {a.id: a for a in articles}
     lesson_by_id = {le.id: le for le in lessons} if lessons is not None else None
     unknown_articles = sorted(
-        {
-            f.article_id
-            for f in gate
-            if f.kind == "article" and f.article_id and f.article_id not in by_id
-        }
+        {f.article_id for f in gate if f.is_article and f.article_id and f.article_id not in by_id}
     )
     if unknown_articles:
         raise ShipGateError(
             f"render_gate_prompt: unknown article id(s) in gate bucket: {unknown_articles}"
         )
-    if any(f.kind == "lesson" for f in gate) and lesson_by_id is None:
+    if any(f.is_lesson for f in gate) and lesson_by_id is None:
         raise ShipGateError(
             "render_gate_prompt: gate contains lesson-kind findings but no `lessons` argument"
         )
@@ -577,7 +587,7 @@ def render_gate_prompt(
         {
             f.lesson_id
             for f in gate
-            if f.kind == "lesson" and f.lesson_id and f.lesson_id not in (lesson_by_id or {})
+            if f.is_lesson and f.lesson_id and f.lesson_id not in (lesson_by_id or {})
         }
     )
     if unknown_lessons:
@@ -594,7 +604,7 @@ def render_gate_prompt(
         "",
     ]
     for f in gate:
-        if f.kind == "lesson":
+        if f.is_lesson:
             # lesson_by_id is guaranteed non-None here (validation above);
             # the local rebinding pins the type for mypy.
             assert_lesson_by_id = lesson_by_id or {}
@@ -664,7 +674,7 @@ def render_warn_summary(
         return ""
     by_id = {a.id: a for a in articles}
     lesson_by_id = {le.id: le for le in lessons} if lessons is not None else None
-    if any(f.kind == "lesson" for f in warn) and lesson_by_id is None:
+    if any(f.is_lesson for f in warn) and lesson_by_id is None:
         raise ShipGateError(
             "render_warn_summary: warn contains lesson-kind findings but no `lessons` argument"
         )
@@ -672,7 +682,7 @@ def render_warn_summary(
         {
             f.lesson_id
             for f in warn
-            if f.kind == "lesson" and f.lesson_id and f.lesson_id not in (lesson_by_id or {})
+            if f.is_lesson and f.lesson_id and f.lesson_id not in (lesson_by_id or {})
         }
     )
     if unknown_lessons:
@@ -681,7 +691,7 @@ def render_warn_summary(
         )
     lines = ["Ship-gate advisory findings:"]
     for f in warn:
-        if f.kind == "lesson":
+        if f.is_lesson:
             # lesson_by_id is non-None here (validation above); rebind for
             # mypy without using `assert` (ruff S101).
             assert_lesson_by_id = lesson_by_id or {}
@@ -775,14 +785,14 @@ def make_acknowledgement_hook(
     iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     by_id = {a.id: a for a in articles}
     lesson_by_id = {le.id: le for le in lessons} if lessons is not None else {}
-    if any(f.kind == "lesson" for f in gate_findings) and not lesson_by_id:
+    if any(f.is_lesson for f in gate_findings) and not lesson_by_id:
         raise ShipGateError(
             "make_acknowledgement_hook: gate_findings contains lesson-kind entries "
             "but no `lessons` argument was supplied"
         )
 
     cause_tags = [
-        f"[lesson:{f.lesson_id}]" if f.kind == "lesson" else f"[constitution:{f.article_id}]"
+        f"[lesson:{f.lesson_id}]" if f.is_lesson else f"[constitution:{f.article_id}]"
         for f in gate_findings
     ]
     cause = _ACK_PREFIX + ": " + ", ".join(cause_tags)
@@ -836,7 +846,7 @@ def make_acknowledgement_hook(
                 f"Cause: {cause}",
             ]
             for f in gate_findings:
-                if f.kind == "lesson":
+                if f.is_lesson:
                     lesson = lesson_by_id.get(f.lesson_id or "")
                     title = _lesson_title_fragment(lesson) if lesson else "(unknown)"
                     # Strip every [lesson:L<NNN>] from the reviewer message so

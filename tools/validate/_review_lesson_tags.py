@@ -75,7 +75,7 @@ def validate_review_md_lesson_tags(feature_root: Path, repo_root: Path) -> list[
 
     out: list[Finding] = []
     for f in findings:
-        if f.kind != "lesson" or f.lesson_id is None:
+        if not f.is_lesson or f.lesson_id is None:
             continue
         lesson = by_id.get(f.lesson_id)
         if lesson is None:
