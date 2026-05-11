@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
+from typing import Any, cast
 
 import pytest
 
 from tools.constitution_amend import (
+    _PER_FILE_CAP_BYTES,
     AmendError,
     BootstrapSignals,
     SignalFile,
+    _read_and_truncate,
     collect_bootstrap_signals,
 )
 
@@ -236,3 +239,56 @@ def test_collect_bootstrap_signals_dropped_secret_does_not_count_to_total(tmp_pa
     assert PurePosixPath("README.md") in result.dropped_for_secrets
     expected_total = sum(len(f.body.encode("utf-8")) for f in result.files)
     assert result.total_bytes == expected_total
+
+
+def test_read_and_truncate_reads_at_most_cap_plus_one_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the helper must bound its binary read to
+    ``_PER_FILE_CAP_BYTES + 1`` bytes — never the whole file.
+
+    Guards against a regression to ``path.read_bytes()`` which would load
+    a multi-GB README into memory before applying the 16 KiB truncation.
+    Spies ``Path.open`` for the candidate and records every ``read(n)``
+    call; asserts the only request size is the bounded sentinel.
+    """
+    huge = tmp_path / "README.md"
+    # 4x cap — enough to make an "unbounded read" pull noticeable bytes.
+    huge.write_bytes(b"x" * (_PER_FILE_CAP_BYTES * 4))
+
+    real_open = Path.open
+    sizes: list[int] = []
+
+    class _Spy:
+        def __init__(self, fh: Any) -> None:
+            self._fh = fh
+
+        def __enter__(self) -> _Spy:
+            self._fh.__enter__()
+            return self
+
+        def __exit__(self, *exc: Any) -> None:
+            self._fh.__exit__(*exc)
+
+        def read(self, n: int = -1) -> bytes:
+            sizes.append(n)
+            return cast(bytes, self._fh.read(n))
+
+    def patched(self: Path, *a: Any, **kw: Any) -> Any:
+        fh = real_open(self, *a, **kw)
+        if self == huge:
+            return _Spy(fh)
+        return fh
+
+    monkeypatch.setattr(Path, "open", patched)
+
+    body, truncated = _read_and_truncate(huge)
+
+    assert truncated is True
+    assert sizes == [_PER_FILE_CAP_BYTES + 1], (
+        f"expected exactly one read of {_PER_FILE_CAP_BYTES + 1} bytes; got {sizes}"
+    )
+    # Body is capped + marker; never reaches the 4x cap size of the source.
+    body_bytes = body.encode("utf-8")
+    assert len(body_bytes) < _PER_FILE_CAP_BYTES * 2

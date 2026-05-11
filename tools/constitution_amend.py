@@ -11,12 +11,15 @@ bump (major > minor > patch).
 
 from __future__ import annotations
 
+import contextlib
+import os
 import re
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path, PurePosixPath
+from typing import Literal
 
 from tools import redaction
 from tools.constitution import (
@@ -41,7 +44,14 @@ _LEVEL_RANK = {"CRITICAL": 3, "SHOULD": 2, "MAY": 1}
 _PER_FILE_CAP_BYTES = 16384
 _TOTAL_CAP_BYTES = 81920
 _MAX_SIGNAL_FILES = 8
-_TRUNCATION_MARKER = "\n--- truncated at 16384 bytes ---\n"
+_TRUNCATION_MARKER = f"\n--- truncated at {_PER_FILE_CAP_BYTES} bytes ---\n"
+# Defense-in-depth. The hardcoded _MANIFEST_NAMES / _DOC_NAMES candidate list
+# never contains a name that matches these globs today, so the deny-glob
+# branch in collect_bootstrap_signals is unreachable under default config.
+# Keep both the globs and the branch so a future maintainer adding a
+# sensitive-named candidate (e.g. ".env.example", "deploy.pem") gets the
+# filter for free — the regression test forces the branch via monkeypatch so
+# nobody prunes it for "dead code".
 _DENY_GLOBS: tuple[str, ...] = (".env*", "*.pem", "*.key", "id_rsa*")
 _MANIFEST_NAMES: tuple[str, ...] = (
     "pyproject.toml",
@@ -114,16 +124,23 @@ def _candidate_paths(repo_root: Path) -> list[Path]:
 
 
 def _read_and_truncate(path: Path) -> tuple[str, bool]:
-    """Read ``path`` raw bytes, truncate to per-file cap, decode UTF-8.
+    """Read ``path`` up to the per-file byte cap, decode UTF-8.
 
-    Returns ``(body, truncated)``. ``body`` ends with the truncation marker
-    when the source exceeded the cap.
+    Bounded I/O: opens the file in binary mode and reads at most
+    ``_PER_FILE_CAP_BYTES + 1`` bytes — never the whole file. The +1
+    sentinel byte lets us distinguish "exactly at cap" (no truncation
+    marker) from "over cap" (marker appended). A multi-GB README cannot
+    inflate memory or stall the bootstrap.
+
+    Returns ``(body, truncated)``. ``body`` ends with the truncation
+    marker when the source exceeded the cap.
     """
-    raw = path.read_bytes()
-    if len(raw) > _PER_FILE_CAP_BYTES:
-        head = raw[:_PER_FILE_CAP_BYTES]
-        return head.decode("utf-8", errors="replace") + _TRUNCATION_MARKER, True
-    return raw.decode("utf-8", errors="replace"), False
+    with path.open("rb") as fh:
+        head = fh.read(_PER_FILE_CAP_BYTES + 1)
+    if len(head) > _PER_FILE_CAP_BYTES:
+        capped = head[:_PER_FILE_CAP_BYTES]
+        return capped.decode("utf-8", errors="replace") + _TRUNCATION_MARKER, True
+    return head.decode("utf-8", errors="replace"), False
 
 
 def _looks_like_secret(body: str) -> bool:
@@ -280,6 +297,12 @@ class AmendResult:
 # "version: 1.2.3" or similar.
 _FRONTMATTER_VERSION_RE = re.compile(r"^version:\s*['\"]?(\d+\.\d+\.\d+)['\"]?\s*$", re.MULTILINE)
 _FRONTMATTER_UPDATED_RE = re.compile(r"^updated:.*$", re.MULTILINE)
+# Accepts both quoted (``created: "2026-05-11"``) and unquoted
+# (``created: 2026-05-11``) forms — parity with ``_FRONTMATTER_VERSION_RE``.
+# Hand-editing the draft in ``$EDITOR`` (skill step 7) commonly drops the
+# quotes; the YAML loader tolerates both, so the regex must too. Date
+# semantics (real month/day) are not the responsibility of this structural
+# gate.
 _FRONTMATTER_CREATED_RE = re.compile(
     r'^created:\s*["\']?(\d{4}-\d{2}-\d{2})["\']?\s*$', re.MULTILINE
 )
@@ -346,13 +369,35 @@ def _replace_or_append_frontmatter(text: str, *, new_version: str, today: date) 
     return f"---\n{fm}---\n{rest}"
 
 
-def _format_decisions_entry(*, today: date, new_version: str, scope: str, body: str) -> str:
-    """Render the decisions.md ADR block for one Constitution amendment."""
+_DecisionsKind = Literal["amendment", "bootstrap"]
+
+
+def _format_decisions_entry(
+    *,
+    today: date,
+    new_version: str,
+    context: str,
+    change_line: str,
+    kind: _DecisionsKind = "amendment",
+    title_suffix: str = "",
+    alternatives: str = "—",
+) -> str:
+    """Render the decisions.md ADR block for a Constitution write.
+
+    One helper covers both lifecycles so the amend and bootstrap entries
+    cannot drift in shape. ``kind`` selects the title label,
+    ``title_suffix`` appends a parenthetical qualifier (e.g.
+    ``(skill-drafted)`` for bootstrap), and ``alternatives`` lets the
+    bootstrap path record a meaningful "what the user said no to" line
+    instead of a dash.
+    """
+    label = "Constitution amendment" if kind == "amendment" else "Constitution bootstrap"
+    suffix = f" {title_suffix}" if title_suffix else ""
     return (
-        f"\n## {today.isoformat()} — Constitution amendment: v{new_version}\n"
-        f"**Context:** {body}\n"
-        f"**Change:** {scope} bump.\n"
-        f"**Alternatives considered:** —\n"
+        f"\n## {today.isoformat()} — {label}: v{new_version}{suffix}\n"
+        f"**Context:** {context}\n"
+        f"**Change:** {change_line}\n"
+        f"**Alternatives considered:** {alternatives}\n"
     )
 
 
@@ -381,8 +426,11 @@ def atomic_replace(target: Path, body: str) -> None:
     """Write ``body`` to ``target`` via ``Path.replace`` from a sibling tempfile.
 
     POSIX semantics: rename within the same directory is atomic, so any
-    crash leaves either the old or the new file intact, never a partial.
-    Concurrent retries are safe — the tmpfile name is deterministic from
+    process crash leaves either the old or the new file intact, never a
+    partial. The tmpfile data and the parent-dir entry are both
+    ``fsync``-ed so a power loss between the write and the rename cannot
+    leave the new dentry pointing at unwritten blocks. Concurrent retries
+    are safe — the tmpfile name is deterministic from
     ``target.name + '.tmp'``, so one retry path overwrites the previous
     tmpfile and the rename remains the single mutation that flips the
     canonical name.
@@ -390,16 +438,47 @@ def atomic_replace(target: Path, body: str) -> None:
     Cleanup contract: if ``tmp.replace(target)`` itself fails (rare — e.g.
     cross-device EXDEV, missing destination dir after concurrent rmtree),
     the orphan ``.tmp`` file is removed before re-raising so retry logic
-    never has to step over a stale sibling.
+    never has to step over a stale sibling. ``fsync`` failures on the
+    parent directory are best-effort — some filesystems / platforms
+    return EINVAL for directory fsync; we swallow the OSError because the
+    rename already succeeded.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(target.suffix + ".tmp")
+    # Stay on ``Path.write_text`` so all existing call-site mocks (which
+    # patch ``Path.write_text`` to simulate write failure) keep tripping
+    # after the fsync hardening below.
     tmp.write_text(body, encoding="utf-8")
+    # Force tmp data to disk BEFORE the rename so a power-loss between
+    # write and rename cannot leave the new dentry pointing at unwritten
+    # blocks. Best-effort on filesystems that reject fsync (e.g. some
+    # tmpfs configurations).
+    try:
+        fd = os.open(tmp, os.O_RDONLY)
+    except OSError:
+        fd = -1
+    if fd >= 0:
+        try:
+            with contextlib.suppress(OSError):
+                os.fsync(fd)
+        finally:
+            os.close(fd)
     try:
         tmp.replace(target)
     except OSError:
         tmp.unlink(missing_ok=True)
         raise
+    # Force the rename to disk so a crash after the user sees success
+    # cannot un-do the dentry flip.
+    try:
+        dir_fd = os.open(target.parent, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        with contextlib.suppress(OSError):
+            os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 # Backwards-compatible private aliases for in-module call sites.
@@ -490,7 +569,11 @@ def amend_constitution(
     # behind would violate the "both files end at pre-amend state" contract.
     _atomic_replace(constitution, after)
     entry = _format_decisions_entry(
-        today=today, new_version=new_version, scope=scope, body=decisions_body
+        today=today,
+        new_version=new_version,
+        context=decisions_body,
+        change_line=f"{scope} bump.",
+        kind="amendment",
     )
     try:
         with decisions_path.open("a", encoding="utf-8") as fh:
@@ -649,11 +732,10 @@ def persist_drafted_constitution(
     """
     today = today or date.today()
     constitution = repo_root / ".forge" / "CONSTITUTION.md"
-    if constitution.exists():
-        raise AmendError(
-            f"Constitution already exists at {constitution}; use plain /forge:amend-constitution"
-        )
 
+    # Validate BEFORE touching the disk. A bad body never produces a
+    # placeholder file. The exists-check uses ``os.O_EXCL`` below as the
+    # actual claim, so we don't pre-check here — race-free.
     articles = validate_drafted_markdown(body)
     version = _read_current_version(body)
 
@@ -673,13 +755,39 @@ def persist_drafted_constitution(
     finally:
         candidate.unlink(missing_ok=True)
 
+    # Claim the Constitution path atomically. ``O_CREAT | O_EXCL`` raises
+    # FileExistsError if any process (including a concurrent bootstrap)
+    # already owns the path — replacing the prior best-effort
+    # ``exists()`` check that was TOCTOU-vulnerable.
+    constitution.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(constitution, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError as exc:
+        raise AmendError(
+            f"Constitution already exists at {constitution}; use plain /forge:amend-constitution"
+        ) from exc
+    os.close(fd)
+
     decisions_created = ensure_decisions_file(decisions_path)
-    atomic_replace(constitution, body)
-    entry = (
-        f"\n## {today.isoformat()} — Constitution bootstrap: v{version} (skill-drafted)\n"
-        f"**Context:** Skill-drafted starter Constitution with {len(articles)} article(s).\n"
-        f"**Change:** New Constitution seeded.\n"
-        f"**Alternatives considered:** Skip (default).\n"
+    try:
+        atomic_replace(constitution, body)
+    except OSError as exc:
+        # Atomic rename failed after the O_EXCL claim — clean up the
+        # placeholder and any freshly-created decisions.md before
+        # re-raising so the caller sees a pristine repo.
+        constitution.unlink(missing_ok=True)
+        if decisions_created:
+            decisions_path.unlink(missing_ok=True)
+        raise AmendError(f"atomic write of Constitution failed: {exc}") from exc
+
+    entry = _format_decisions_entry(
+        today=today,
+        new_version=version,
+        context=f"Skill-drafted starter Constitution with {len(articles)} article(s).",
+        change_line="New Constitution seeded.",
+        kind="bootstrap",
+        title_suffix="(skill-drafted)",
+        alternatives="Decline bootstrap and continue without a Constitution.",
     )
     try:
         with decisions_path.open("a", encoding="utf-8") as fh:
