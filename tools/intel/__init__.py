@@ -8,24 +8,28 @@ import Lesson, append, parse, ...``.
 from __future__ import annotations
 
 from tools.intel.lessons import (
+    MAX_LESSON_WORDS,
     Lesson,
     LessonError,
     LessonSeverity,
     LessonStatus,
     amend_status,
     append,
+    load_and_filter,
     next_id,
     parse,
     parse_text,
 )
 
 __all__ = [
+    "MAX_LESSON_WORDS",
     "Lesson",
     "LessonError",
     "LessonSeverity",
     "LessonStatus",
     "amend_status",
     "append",
+    "load_and_filter",
     "next_id",
     "parse",
     "parse_text",

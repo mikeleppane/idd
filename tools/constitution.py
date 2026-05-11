@@ -351,16 +351,15 @@ def score_article(article: Article, scope_keywords: set[str]) -> int:
     return len(tokenize(body) & scope_keywords)
 
 
-def _percentile(values: list[int], pct: float) -> float:
-    """Inclusive linear-interpolation percentile. Returns 0.0 for empty input."""
-    if not values:
-        return 0.0
-    sorted_vals = sorted(values)
-    rank = pct / 100.0 * (len(sorted_vals) - 1)
-    lo = int(rank)
-    hi = min(lo + 1, len(sorted_vals) - 1)
-    frac = rank - lo
-    return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * frac
+# M3 D-9 article -> bucket map. CRITICAL is always kept (exempt from both the
+# percentile gate and the hard cap); SHOULD gates at the 25th percentile; MAY
+# gates at the median. Captured here so the shared scorer + the article scorer
+# share one source of truth for the bucket labels.
+_ARTICLE_LEVEL_BUCKET: dict[str, Literal["always_kept", "p25_gate", "median_gate"]] = {
+    "CRITICAL": "always_kept",
+    "SHOULD": "p25_gate",
+    "MAY": "median_gate",
+}
 
 
 def filter_articles(
@@ -377,6 +376,10 @@ def filter_articles(
         4. Hard cap: cumulative kept body word count <= ``MAX_INJECTED_WORDS``;
            drop further by ascending score until under cap.
 
+    Delegates the percentile + cap arithmetic to
+    :func:`tools.intel._relevance.score_and_trim`; this module owns only the
+    article-specific scoring + the M3 D-9 error message wording.
+
     Args:
         articles: Parsed Constitution articles in declaration order.
         scope_keywords: Pre-tokenized scope keyword set.
@@ -385,65 +388,45 @@ def filter_articles(
         Tuple of (kept_articles, dropped_article_ids). ``kept`` is ordered
         by article numbering (A1 first, A2 next, ...); ``dropped`` is sorted
         the same way.
+
+    Raises:
+        ConstitutionError: When CRITICAL articles alone exceed
+            ``MAX_INJECTED_WORDS``. The author must trim Rule bodies, demote
+            some to SHOULD, or split the articles.
     """
-    if not articles:
-        return [], []
-    scored = [(a, score_article(a, scope_keywords)) for a in articles]
-    # Cache per-article score so the cap pass below does not re-tokenize the
-    # rule body for every kept article. Same {id -> score} numbers the
-    # percentile pass already computed.
-    score_by_id: dict[str, int] = {a.id: s for a, s in scored}
-    scores = [s for _, s in scored]
-    median = _percentile(scores, 50)
-    p25 = _percentile(scores, 25)
+    # Deferred import: ``tools.intel.__init__`` eagerly loads the lessons
+    # submodule, which transitively reaches back into ``tools.constitution``
+    # via the amend helper. Importing the relevance helper at module top
+    # would deadlock the import graph (constitution -> intel.__init__ ->
+    # intel.lessons -> constitution_amend -> constitution).
+    from tools.intel._relevance import (  # noqa: PLC0415
+        RelevanceError,
+        RelevanceRule,
+        score_and_trim,
+    )
 
-    kept: list[Article] = []
-    dropped: list[str] = []
-    for article, score in scored:
-        if article.level == "CRITICAL":
-            kept.append(article)
-        elif (article.level == "MAY" and score < median) or (
-            article.level == "SHOULD" and score < p25
-        ):
-            dropped.append(article.id)
-        else:
-            kept.append(article)
-
-    # Hard cap pass: drop in ascending score order, but never drop CRITICAL.
-    cumulative = sum(a.body_words for a in kept)
-    if cumulative > MAX_INJECTED_WORDS:
-        kept_with_score = sorted(
-            ((a, score_by_id[a.id]) for a in kept),
-            key=lambda pair: (pair[0].level == "CRITICAL", pair[1]),
-        )
-        kept_after_cap: list[Article] = []
-        running = 0
-        # Iterate descending so highest-priority articles are added first.
-        for article, _score in reversed(kept_with_score):
-            if running + article.body_words <= MAX_INJECTED_WORDS:
-                kept_after_cap.append(article)
-                running += article.body_words
-            elif article.level == "CRITICAL":
-                kept_after_cap.append(article)  # CRITICAL exempt from cap
-                running += article.body_words
-            else:
-                dropped.append(article.id)
-        kept = sorted(kept_after_cap, key=lambda a: int(a.id[1:]))
-
-    # CRITICAL articles are exempt from the cap step above so a malformed
-    # Constitution can drive the kept set past MAX_INJECTED_WORDS on the back
-    # of CRITICAL bodies alone. Refuse rather than silently inject an
-    # over-budget articles[] (D-9 promises ≤1500-token injection); the author
-    # must trim Rule bodies, demote articles to SHOULD, or split.
-    final_total = sum(a.body_words for a in kept)
-    if final_total > MAX_INJECTED_WORDS:
-        critical_ids = [a.id for a in kept if a.level == "CRITICAL"]
+    rule: RelevanceRule[Article] = RelevanceRule(
+        score=lambda a: score_article(a, scope_keywords),
+        level_of=lambda a: a.level,
+        body_words_of=lambda a: a.body_words,
+        id_of=lambda a: a.id,
+        level_bucket=dict(_ARTICLE_LEVEL_BUCKET),
+        max_words=MAX_INJECTED_WORDS,
+    )
+    try:
+        return score_and_trim(articles, rule=rule)
+    except RelevanceError as exc:
+        # Preserve the exact error wording the prior implementation surfaced
+        # so error-text-asserting tests keep passing byte-equal.
+        # Recompute the critical_ids + total from the parsed articles (the
+        # generic helper does not know about Constitution semantics).
+        critical_ids = [a.id for a in articles if a.level == "CRITICAL"]
+        total = sum(a.body_words for a in articles if a.level == "CRITICAL")
         raise ConstitutionError(
             f"CRITICAL articles {critical_ids} exceed the {MAX_INJECTED_WORDS}-word "
-            f"injection budget on their own ({final_total} words). Trim Rule bodies, "
+            f"injection budget on their own ({total} words). Trim Rule bodies, "
             f"demote some to SHOULD, or split the articles."
-        )
-    return kept, sorted(set(dropped), key=lambda x: int(x[1:]))
+        ) from exc
 
 
 def load_and_filter(

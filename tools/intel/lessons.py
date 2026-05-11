@@ -9,6 +9,7 @@ modules can evolve separately.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -542,3 +543,130 @@ def _rewrite_status(text: str, *, lesson_id: str, new_status: str) -> str:
     if not rewrote:
         raise LessonError(f"could not locate Status line for {lesson_id} during rewrite")
     return "".join(out)
+
+
+# ---------------------------------------------------------------------------
+# Dispatch-budget loader
+# ---------------------------------------------------------------------------
+
+
+MAX_LESSON_WORDS: Final[int] = 600
+"""Dispatch-budget cap for ``lessons[]``.
+
+Separate from :data:`tools.constitution.MAX_INJECTED_WORDS` so a heavy lesson
+load cannot squeeze CRITICAL Constitution articles out of the budget. The
+caller injects both lists side-by-side; each list pays its own cap.
+"""
+
+
+# Severity -> bucket map for the relevance gate. CRITICAL lessons are always
+# kept; HIGH gates at the 25th percentile; MEDIUM and LOW gate at the median.
+# Mirrors the CRITICAL/SHOULD/MAY shape of the Constitution filter but uses
+# the Lesson vocabulary.
+_LESSON_SEVERITY_BUCKET: dict[str, Literal["always_kept", "p25_gate", "median_gate"]] = {
+    "CRITICAL": "always_kept",
+    "HIGH": "p25_gate",
+    "MEDIUM": "median_gate",
+    "LOW": "median_gate",
+}
+
+
+def _score_lesson(lesson: Lesson, scope_keywords: set[str]) -> int:
+    """Count tag tokens that overlap ``scope_keywords``.
+
+    Tags are already lowercase by parser contract; ``scope_keywords`` is
+    lowercase per ``tools.constitution.tokenize``'s contract. The set
+    intersection therefore needs no extra normalisation.
+
+    Args:
+        lesson: Lesson to score.
+        scope_keywords: Pre-tokenized scope keyword set.
+
+    Returns:
+        Overlap count (>= 0).
+    """
+    return len(set(lesson.tags) & scope_keywords)
+
+
+def load_and_filter(
+    repo_root: Path,
+    *,
+    idea_text: str = "",
+    files_in_scope: Iterable[Path] = (),
+) -> tuple[list[Lesson], list[str]]:
+    """Parse ``.forge/intel/lessons.md``, filter to active + relevant lessons.
+
+    Returns ``([], [])`` when the lessons file is absent (fresh repo).
+
+    Filtering steps:
+
+    1. :func:`parse` yields all lessons.
+    2. Drop ``retired`` and ``superseded-by:*`` rows (status filter). Those
+       ids do NOT appear in the returned ``dropped_ids`` list — that list is
+       reserved for relevance-dropped lessons. Status-dropped lessons are
+       silent because the dispatch budget never wanted to inject them.
+    3. :func:`tools.intel._relevance.score_and_trim` applies the percentile
+       gate and the :data:`MAX_LESSON_WORDS` cap. Severity -> bucket comes
+       from ``_LESSON_SEVERITY_BUCKET``.
+    4. ``scope_keywords`` are derived via the same tokenizer the Constitution
+       filter uses (``tools.constitution.tokenize``): a union of tokens from
+       ``idea_text`` and from each ``files_in_scope`` path's string form.
+
+    Args:
+        repo_root: Repository root containing ``.forge/intel/lessons.md``.
+        idea_text: Free-form idea / spec intent text.
+        files_in_scope: Paths to include as scope signals.
+
+    Returns:
+        Tuple of (kept_lessons, dropped_lesson_ids). ``kept`` is ordered by
+        lesson numbering (L001 first, L002 next, ...); ``dropped`` carries
+        only the relevance-dropped ids in the same order.
+
+    Raises:
+        LessonError: When CRITICAL active lessons alone exceed
+            :data:`MAX_LESSON_WORDS`. The author must trim Trap/Avoidance
+            bodies, demote some to HIGH, or retire stale entries.
+    """
+    # Deferred imports for symmetry with ``tools.constitution.filter_articles``:
+    # ``tokenize`` would create a constitution-package cycle if pulled in at
+    # module top, and ``_relevance`` is exercised only when callers reach for
+    # the dispatch-budget loader.
+    from tools.constitution import tokenize  # noqa: PLC0415
+    from tools.intel._relevance import (  # noqa: PLC0415
+        RelevanceError,
+        RelevanceRule,
+        score_and_trim,
+    )
+
+    path = _lessons_path(repo_root)
+    if not path.exists():
+        return [], []
+
+    lessons = parse(path)
+    active = [le for le in lessons if le.status == "active"]
+    if not active:
+        return [], []
+
+    scope_keywords: set[str] = set()
+    scope_keywords |= tokenize(idea_text)
+    for fp in files_in_scope:
+        scope_keywords |= tokenize(str(fp))
+
+    rule: RelevanceRule[Lesson] = RelevanceRule(
+        score=lambda le: _score_lesson(le, scope_keywords),
+        level_of=lambda le: le.severity,
+        body_words_of=lambda le: le.body_words,
+        id_of=lambda le: le.id,
+        level_bucket=dict(_LESSON_SEVERITY_BUCKET),
+        max_words=MAX_LESSON_WORDS,
+    )
+    try:
+        return score_and_trim(active, rule=rule)
+    except RelevanceError as exc:
+        critical_ids = [le.id for le in active if le.severity == "CRITICAL"]
+        total = sum(le.body_words for le in active if le.severity == "CRITICAL")
+        raise LessonError(
+            f"CRITICAL lessons {critical_ids} exceed the {MAX_LESSON_WORDS}-word "
+            f"dispatch budget on their own ({total} words). Trim Trap/Avoidance "
+            f"bodies, demote some to HIGH, or retire stale entries."
+        ) from exc
