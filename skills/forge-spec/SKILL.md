@@ -13,6 +13,22 @@ disable-model-invocation: true
 > `MultiEdit` on `.forge/features/<id>/state.json` and surfaces a
 > permission-deny with guidance toward the correct helper.
 
+> **Headless-mode refusal (locked).** Step 6 of this skill fills the
+> spec template "one section at a time, asking only when ambiguous"
+> — interactive Q&A is part of the contract. When you detect that the
+> current session cannot satisfy that contract (no TTY, `claude -p`
+> non-interactive, or any runtime signal that user input is
+> unavailable) AND you still hold one or more unresolved ambiguities
+> after consuming the idea text and any inline pre-answers, you MUST
+> exit without mutating `state.json`. Print, verbatim:
+>
+> `Spec refinement requires interactive Q&A and the current session is headless (claude -p / no TTY). Re-run /forge:spec --feature <id> in an interactive session, or pre-answer gaps inline in the prompt then re-invoke. The skill will exit without mutating state.json.`
+>
+> Do NOT call `complete_phase("spec")`, `start_phase(<next>)`, or
+> guess at the ambiguities. The interactive session (or a richer
+> pre-answer prompt) is the only forward path. Leave
+> `phases.spec.status` as it was on entry so re-entry is clean.
+
 ## Goal
 
 Produce a `.forge/features/<id>/SPEC.md` that obeys the §7.1 template and exits with no Open Questions.
