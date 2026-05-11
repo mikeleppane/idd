@@ -79,9 +79,10 @@ Subagent dispatches that touch Python code MUST cite all four in the dispatch br
 
 ## Hooks
 
-The `hooks/` directory contains a `PreToolUse` hook that enforces the FORGE subagent context-budget contract. In Claude Code it is wired automatically via `.claude-plugin/plugin.json`. In other tools, run `python3 hooks/check_budget.py` manually before each subagent dispatch.
+The `hooks/` directory ships two `PreToolUse` hooks. **Claude Code 2.1+ auto-loads `hooks/hooks.json` by path convention** — `.claude-plugin/plugin.json` must NOT redeclare it, or the install fails with "Duplicate hooks file detected" and the plugin silently disables. In other tools, invoke each hook manually before the matching tool call.
 
-The PreToolUse budget hook is permissive on the optional `articles[]` field carrying filtered Constitution articles for subagent context (M3 P3). Tests in `tests/hooks/test_check_budget_articles.py` pin this permissiveness.
+- `hooks/check_budget.py` — enforces the FORGE subagent context-budget contract on `Agent` dispatches. The hook is permissive on the optional `articles[]` field carrying filtered Constitution articles for subagent context. Tests in `tests/hooks/test_check_budget_articles.py` pin this permissiveness.
+- `hooks/check_state_writer.py` — refuses direct `Write` / `Edit` / `MultiEdit` against `.forge/features/<id>/state.json`. State.json mutations must go through the `tools.state.*` helpers (`complete_phase`, `start_phase`, `record_routing_decision`, `record_refined_idea`, `record_commit`, `append_deviation`, `set_execute_current_slice`); direct file edits bypass schema validation and produce broken seeds.
 
 ## Tool Mapping
 
