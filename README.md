@@ -151,7 +151,7 @@ Install the plugin (see below), then drive a feature through the lifecycle with 
 
 `/forge:do` runs preflights, scans for capability conflicts, picks a tier, and seeds the per-feature folder under `.forge/features/<id>/`. It then dispatches the next slash command in the chosen tier.
 
-Prefer to drive each phase manually? Each phase has its own slash command (`/forge:refine`, `/forge:spec`, `/forge:domain`, `/forge:scenarios`, `/forge:plan`, `/forge:crucible`, `/forge:review`, `/forge:execute`, `/forge:verify`, `/forge:ship`, `/forge:qa`) — research is currently skipped (recorded in `state.json.skipped`); manual research before spec is acceptable. Each command refuses to run unless the previous phase is complete — the on-disk state machine is the source of truth.
+Prefer to drive each phase manually? Each phase has its own slash command (`/forge:refine`, `/forge:research`, `/forge:spec`, `/forge:domain`, `/forge:scenarios`, `/forge:plan`, `/forge:crucible`, `/forge:review`, `/forge:execute`, `/forge:verify`, `/forge:ship`, `/forge:qa`). Research auto-runs on full tier; opt into it on standard with `/forge:do --standard --research "<idea>"`; focused tier refuses. Each command refuses to run unless the previous phase is complete — the on-disk state machine is the source of truth.
 
 ---
 
@@ -371,7 +371,7 @@ The REVIEW.md template gained a `Resolved by` column to make the harvest trigger
 Every FORGE feature lives in `.forge/features/<id>/` with a small set of contracts:
 
 - `SPEC.md` — the behavior contract
-- `RESEARCH.md` — optional, for research tier and above
+- `RESEARCH.md` — codebase + external library discovery; full tier (auto) and standard with `--research` (opt-in). Carries grounding mode (`full` / `degraded` / `websearch` / `byod` / `byod-partial`) in frontmatter.
 - `DOMAIN.md` — full-tier source of truth for glossary, bounded contexts, aggregates, invariants. SPEC.md `# Domain` becomes a pointer to it.
 - `UNDERSTANDING.md` — output of the crucible
 - `PLAN.md` — file-bound vertical slices and waves
@@ -461,7 +461,13 @@ clear, actionable error message that names the offending row.
 
 ## Configuration
 
-Per-feature state lives in `.forge/features/<id>/state.json` (created by `/forge:do` or `/forge:spec`). Project-wide configuration (default tier, cross-AI provider, context-budget overrides, auto-escalation rules) is on the roadmap.
+Per-feature state lives in `.forge/features/<id>/state.json` (created by `/forge:do` or `/forge:spec`). Project-wide configuration lives in `.forge/config.json`:
+
+- `cross_ai.*` — cross-AI review provider, mode (`manual` / `auto` / `disabled`), `allowed_clis`, `timeout_seconds`, `max_prompt_tokens`, `cost_warn_threshold_usd`, redaction lists. Schema: `schemas/cross-ai-config.schema.json`.
+- `research.*` — research grounding fallbacks: `websearch_fallback`, `websearch_max_queries_per_run`, `byod_stale_days`, `ecosystems` pin, `ecosystem_overrides`. Schema: `schemas/research-config.schema.json`.
+- `git_conventions.*` — commit subject + scope + trailer rules consumed by `python -m tools.validate --target git-conventions`.
+
+Default-tier and context-budget overrides remain on the roadmap.
 
 The tooling itself (state machine, frontmatter linter, schema validator, archive helpers) is a small Python package shipped in `tools/`.
 
@@ -506,7 +512,8 @@ FORGE persists artifacts on disk and via git. Treat them like source code:
 - **`state.json.routing.idea` stores your prompt verbatim.** Do not paste secrets, API keys, customer PII, or internal hostnames into `/forge:do`. The text is committed alongside other `.forge/` artifacts.
 - **`SPEC.md`, `PLAN.md`, `decisions.md`, `QA.md` are committed.** Anything you tell the agent about the system ends up in git history. Use `.gitignore` patterns under `.forge/features/` for sensitive features.
 - **`.forge/logs/<feature_id>.jsonl`** is gitignored and never sent over the network — local-only event log.
-- **Cross-AI review (when wired)** sends review artifacts to a third-party model provider. Review the `cross-ai-config` schema before enabling; redaction filter (`tools.redaction`) strips known secret patterns but is best-effort.
+- **Cross-AI review** sends review artifacts to a third-party model provider (codex, claude, or gemini). Manual mode (default) writes the prompt to disk for user-driven dispatch; auto mode (opt-in via `cross_ai.mode: auto` or `--auto`) spawns the external CLI directly. `tools.redaction` strips known secret patterns (`.env`, credentials, secrets, `.aws/`, `.ssh/`) before any prompt materialization; `cross_ai.redaction.fatal_regex` matches refuse dispatch unconditionally. Redaction is best-effort — review the prompt file in manual mode before sending; tighten `deny_globs` / `deny_regex` for repo-specific secrets.
+- **Research grounding fallbacks** can leak refined-idea text externally: `research.websearch_fallback: true` sends queries (and refined-idea tokens, filtered through `tools.redaction`) to a web search provider. Disabled by default. BYOD (`.forge/external-docs/<lib>.md`) is air-gapped — no network calls.
 - **Constitution and conventions are enforced at review and ship time**, not at code-write time. The reviewer subagent tags violations; `tools.ship_gate` blocks ship on unresolved tagged findings; `hooks/check_budget.py` denies dispatches that fail `dispatch_brief` convention checks. Treat the gates as defense in depth — they catch what slipped past, not every possible unsafe change.
 
 Report security issues privately via GitHub Security Advisories on the repo.
