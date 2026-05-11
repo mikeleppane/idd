@@ -261,6 +261,12 @@ def _dispatch_all(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
     if constitution.is_file():
         findings.extend(validate_constitution(constitution))
 
+    # ``.forge/intel/lessons.md`` is optional; the validator short-circuits to
+    # an empty list when the file is absent, so calling unconditionally is
+    # cheap and keeps the all-target dispatcher symmetric with the per-target
+    # ``--target lessons`` path.
+    findings.extend(validate_lessons(repo_root))
+
     changes_root = repo_root / ".forge" / "changes"
     if changes_root.is_dir():
         for change in sorted(changes_root.iterdir()):
