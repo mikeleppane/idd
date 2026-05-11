@@ -48,17 +48,9 @@ def test_tokenize_drops_stopwords_and_short_tokens() -> None:
     assert "via" not in tokens
 
 
-def test_extract_scope_keywords_unions_three_sources(tmp_path: Path) -> None:
+def test_extract_scope_keywords_unions_idea_and_files(tmp_path: Path) -> None:
     repo = tmp_path / "scope_repo"
     repo.mkdir()
-    (repo / "pyproject.toml").write_text(
-        '[project]\nname = "demo"\ndependencies = ["requests>=2.0"]\n',
-        encoding="utf-8",
-    )
-    (repo / "package.json").write_text(
-        '{"name": "demo", "dependencies": {"react": "^18"}}',
-        encoding="utf-8",
-    )
     keywords = cn.extract_scope_keywords(
         repo_root=repo,
         idea_text="Add a webhook listener for stripe events",
@@ -66,8 +58,8 @@ def test_extract_scope_keywords_unions_three_sources(tmp_path: Path) -> None:
     )
     assert "webhook" in keywords
     assert "stripe" in keywords
-    assert "requests" in keywords
-    assert "react" in keywords
+    assert "listener" in keywords
+    assert "events" in keywords
 
 
 def test_filter_articles_keeps_all_critical() -> None:
@@ -176,22 +168,6 @@ def test_parse_constitution_concatenates_multi_line_rule_body(tmp_path: Path) ->
     assert "Third line keeps going" in article.rule
     assert article.reference == "ref-x"
     assert article.rationale == "rationale-y"
-
-
-def test_read_pyproject_top_level_deps_handles_malformed_project(tmp_path: Path) -> None:
-    """`project = "bad"` parses as TOML but is not a table; preflight must not
-    crash, otherwise every phase invocation in such a repo blocks."""
-    bad = tmp_path / "pyproject.toml"
-    bad.write_text('project = "bad"\n', encoding="utf-8")
-    assert cn._read_pyproject_top_level_deps(bad) == []
-
-
-def test_read_package_json_top_level_deps_handles_malformed_dep_section(tmp_path: Path) -> None:
-    """A hand-written `package.json` may declare `"dependencies": [...]` (a
-    list, not an object). The reader must degrade to [] rather than crash."""
-    bad = tmp_path / "package.json"
-    bad.write_text('{"dependencies": ["req-list"]}', encoding="utf-8")
-    assert cn._read_package_json_top_level_deps(bad) == []
 
 
 def test_parse_constitution_ignores_article_headers_inside_fenced_code(tmp_path: Path) -> None:

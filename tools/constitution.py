@@ -9,9 +9,7 @@ if budget pressure materializes.
 
 from __future__ import annotations
 
-import json
 import re
-import tomllib
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -313,65 +311,18 @@ def tokenize(text: str) -> set[str]:
     return {t for t in raw if len(t) >= _MIN_TOKEN_LENGTH and t not in STOPWORDS}
 
 
-def _read_pyproject_top_level_deps(path: Path) -> list[str]:
-    # PEP 621 [project.dependencies] entries as raw strings; missing/malformed -> [].
-    # Defensive against malformed TOML shapes too: a top-level `project = "bad"`
-    # parses fine but is not a table, and the preflight loader runs on every
-    # phase invocation — a crash here would block the whole pipeline.
-    if not path.exists():
-        return []
-    try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (tomllib.TOMLDecodeError, OSError):
-        return []
-    # tomllib.loads guarantees a dict at the top level, so we only guard
-    # nested shapes — `project = "bad"` parses but is not a table.
-    project = data.get("project")
-    if not isinstance(project, dict):
-        return []
-    deps = project.get("dependencies", [])
-    return list(deps) if isinstance(deps, list) else []
-
-
-def _read_package_json_top_level_deps(path: Path) -> list[str]:
-    # package.json dependency keys (deps + devDeps); missing/malformed -> [].
-    # Each section may legally be absent OR present-but-not-a-dict (a hand-written
-    # package.json with `"dependencies": ["req"]` parses but `.keys()` would
-    # blow up). Guard the shape per section so a malformed file degrades to [].
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
-    if not isinstance(data, dict):
-        return []
-    out: list[str] = []
-    for section in ("dependencies", "devDependencies"):
-        section_dict = data.get(section)
-        if isinstance(section_dict, dict):
-            out.extend(section_dict.keys())
-    return out
-
-
-def _bare_dep_name(entry: str) -> str:
-    """``'requests>=2.0'`` -> ``'requests'``. Strips version specifier + extras."""
-    return re.split(r"[<>=!\[ ]", entry, maxsplit=1)[0]
-
-
 def extract_scope_keywords(
     *,
     repo_root: Path,
     idea_text: str = "",
     files_in_scope: Iterable[Path] = (),
 ) -> set[str]:
-    """Union scope tokens from idea text + project deps + files in scope.
+    """Union scope tokens from idea text and files in scope.
 
     Read-only. Returns lowercase tokens with stopwords filtered.
 
     Args:
-        repo_root: Repository root used to locate ``pyproject.toml`` /
-            ``package.json``.
+        repo_root: Retained for caller compatibility; unused.
         idea_text: Free-form idea / spec intent text.
         files_in_scope: Paths the caller considers in scope; their string
             forms feed the tokenizer.
@@ -379,14 +330,9 @@ def extract_scope_keywords(
     Returns:
         Union set of all derived scope keywords.
     """
+    del repo_root  # retained in signature for caller compat
     keywords: set[str] = set()
     keywords |= tokenize(idea_text)
-
-    for dep in _read_pyproject_top_level_deps(repo_root / "pyproject.toml"):
-        keywords |= tokenize(_bare_dep_name(dep))
-    for dep in _read_package_json_top_level_deps(repo_root / "package.json"):
-        keywords |= tokenize(dep)
-
     for path in files_in_scope:
         keywords |= tokenize(str(path))
     return keywords
