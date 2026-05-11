@@ -18,6 +18,32 @@ class StateError(RuntimeError):
     """Raised when state.json cannot be read, parsed, or transitioned."""
 
 
+class _NoValidate:
+    """Sentinel type: callers pass ``NO_VALIDATE`` to skip schema validation."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "NO_VALIDATE"
+
+
+NO_VALIDATE: Final[_NoValidate] = _NoValidate()
+"""Sentinel: pass to ``read_state``/``write_state`` to skip schema validation
+entirely, even when a schema would be discoverable by autodiscovery."""
+
+
+# Public type alias for the ``schema_path`` argument of ``read_state`` and
+# ``write_state``. Only these two functions accept ``NO_VALIDATE``; all
+# downstream helpers thread ``Path | None`` and let autodiscovery handle the
+# ``None`` case transparently.
+type _SchemaPathArg = Path | None | _NoValidate
+
+# Hard cap on the directory walk in ``_autodiscover_state_schema``. Defensive:
+# legitimate repo trees never need more than ~6 levels, and a runaway walk
+# would touch the filesystem far more than the read/write helpers should.
+_AUTODISCOVER_DEPTH_CAP: Final[int] = 12
+
+
 # Strict feature-id: ``YYYY-MM-DD`` + alnum-leading slug with no trailing
 # hyphen and no consecutive hyphens. Mirrors the regex in
 # tools.archive._FEATURE_ID_RE.
@@ -166,16 +192,78 @@ def _validator_for(schema: dict[str, Any]) -> jsonschema.Draft202012Validator:
     )
 
 
-def read_state(path: Path, schema_path: Path | None = None) -> dict[str, Any]:
+def _autodiscover_state_schema(path: Path) -> Path | None:
+    """Walk up from ``path.parent`` looking for ``schemas/state.schema.json``.
+
+    Rules (kept deliberately explicit — this is the only filesystem-snooping
+    helper in the module):
+
+    * Resolve ``path`` and start the walk from its parent directory.
+    * At each level, if ``<level>/schemas/state.schema.json`` exists, return it.
+    * If the level contains a ``.forge/`` or ``.git/`` directory without a
+      schema match at that level, stop and return ``None`` — the walk has
+      reached a workspace boundary.
+    * Stop at the filesystem root (``parent == self``) and return ``None``.
+    * Hard cap the walk at :data:`_AUTODISCOVER_DEPTH_CAP` levels to bound
+      filesystem activity; in practice no legitimate tree needs more than
+      six.
+
+    Args:
+        path: Target state.json path (existence not required).
+
+    Returns:
+        Absolute path to the discovered ``state.schema.json``, or ``None``
+        when nothing matched within the cap.
+    """
+    try:
+        current = path.resolve().parent
+    except OSError:
+        return None
+    for _ in range(_AUTODISCOVER_DEPTH_CAP):
+        candidate = current / "schemas" / "state.schema.json"
+        if candidate.is_file():
+            return candidate
+        if (current / ".forge").is_dir() or (current / ".git").is_dir():
+            return None
+        parent = current.parent
+        if parent == current:
+            return None
+        current = parent
+    return None
+
+
+def _resolve_schema_path(path: Path, schema_path: _SchemaPathArg) -> Path | None:
+    """Return the effective schema path for ``path``, honoring the sentinel.
+
+    * ``NO_VALIDATE`` → ``None`` (caller skips validation).
+    * Explicit ``Path`` → that path (caller validates against it).
+    * ``None`` → autodiscovery; may still return ``None`` when nothing matched.
+    """
+    if isinstance(schema_path, _NoValidate):
+        return None
+    if schema_path is None:
+        return _autodiscover_state_schema(path)
+    return schema_path
+
+
+def read_state(path: Path, schema_path: _SchemaPathArg = None) -> dict[str, Any]:
     """Read, parse, and (optionally) schema-validate a state.json file.
 
-    Format-aware: when `schema_path` is given, the validator enforces
-    `format: date-time` against RFC 3339 timestamps via the
-    `rfc3339-validator` extra.
+    Format-aware: when a schema is in effect, the validator enforces
+    ``format: date-time`` against RFC 3339 timestamps via the
+    ``rfc3339-validator`` extra.
 
     Args:
         path: Path to the state.json file.
-        schema_path: Optional path to a JSON Schema for validation.
+        schema_path: Three-mode schema selector.
+
+            * ``None`` (default) — autodiscover ``schemas/state.schema.json``
+              by walking up from ``path`` (see
+              :func:`_autodiscover_state_schema`). When nothing is found,
+              validation is skipped silently.
+            * An explicit ``Path`` — validate against that schema.
+            * :data:`NO_VALIDATE` — skip validation entirely, even when a
+              schema would be discoverable.
 
     Returns:
         Parsed state.json payload.
@@ -190,8 +278,9 @@ def read_state(path: Path, schema_path: Path | None = None) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise StateError(f"state.json at {path} is invalid JSON: {exc}") from exc
 
-    if schema_path is not None:
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    effective_schema = _resolve_schema_path(path, schema_path)
+    if effective_schema is not None:
+        schema = json.loads(effective_schema.read_text(encoding="utf-8"))
         validator = _validator_for(schema)
         errors = sorted(validator.iter_errors(payload), key=lambda e: list(e.path))
         if errors:
@@ -227,22 +316,31 @@ VALID_REVIEW_TARGETS = ("plan", "code")
 def write_state(
     path: Path,
     payload: dict[str, Any],
-    schema_path: Path | None = None,
+    schema_path: _SchemaPathArg = None,
 ) -> None:
-    """Validate (when schema given) and write payload to disk pretty-printed.
+    """Validate (when a schema is in effect) and write payload pretty-printed.
 
     On schema failure, no file is written.
 
     Args:
         path: Destination file.
         payload: State payload.
-        schema_path: Optional schema for validation before write.
+        schema_path: Three-mode schema selector.
+
+            * ``None`` (default) — autodiscover ``schemas/state.schema.json``
+              by walking up from ``path`` (see
+              :func:`_autodiscover_state_schema`). When nothing is found,
+              validation is skipped silently and the file is written.
+            * An explicit ``Path`` — validate against that schema.
+            * :data:`NO_VALIDATE` — skip validation entirely, even when a
+              schema would be discoverable.
 
     Raises:
         StateError: Validation failed; file not written.
     """
-    if schema_path is not None:
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    effective_schema = _resolve_schema_path(path, schema_path)
+    if effective_schema is not None:
+        schema = json.loads(effective_schema.read_text(encoding="utf-8"))
         validator = _validator_for(schema)
         errors = sorted(validator.iter_errors(payload), key=lambda e: list(e.path))
         if errors:
