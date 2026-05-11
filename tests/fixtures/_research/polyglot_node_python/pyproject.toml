@@ -1,0 +1,4 @@
+[project]
+name = "polyglot-backend"
+version = "0.1.0"
+dependencies = ["fastapi"]
