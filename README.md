@@ -40,6 +40,9 @@ FORGE optimizes for **disciplined, resumable** software work over speed-first co
 - [QA: black-box outsider pass](#qa-black-box-outsider-pass)
 - [Research phase](#research-phase)
 - [Cross-AI peer review](#cross-ai-peer-review)
+- [Constitution bootstrap](#constitution-bootstrap)
+- [Convention routing](#convention-routing)
+- [Trap memory](#trap-memory)
 - [Per-feature artifacts](#per-feature-artifacts)
 - [Use outside Claude Code](#use-outside-claude-code)
 - [Compatibility](#compatibility)
@@ -294,6 +297,72 @@ Findings parsed from the external response are merged into `REVIEW.<target>.md` 
 
 ---
 
+## Constitution bootstrap
+
+`/forge:amend-constitution --bootstrap` seeds `.forge/CONSTITUTION.md` for a fresh repo via the `forge-bootstrap-constitution` skill. Python owns the bounded I/O surface; the skill owns the drafting turn.
+
+- `tools.constitution_amend.collect_bootstrap_signals(repo_root)` reads up to 8 priority-ordered manifest + doc files (`pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `Gemfile`, `pom.xml`, `build.gradle`, `mix.exs`, `composer.json`, `*.csproj`, `AGENTS.md`, `CLAUDE.md`, `README.md`). Each file caps at 16 KiB; total payload caps at 80 KiB. Path-level deny globs (`.env*`, `*.pem`, `*.key`, `id_rsa*`) and a content-level secret scan keep credentials out of the signal payload. No LLM call.
+- The skill drafts Constitution articles in-session from those signals — evidence-based, project-specific, no universal seed (typical 3–12 articles).
+- `tools.constitution_amend.validate_drafted_markdown` gates the draft (frontmatter shape, required fields, per-article body cap of 1153 words, zero-article refusal). `tools.constitution_amend.persist_drafted_constitution` atomically writes the Constitution + decisions.md ADR; append failures roll both files back to the pre-call state.
+
+The user steers via a sequential `AskUserQuestion` selector: `[a]ccept | [r]efine | [e]dit-in-editor | [s]kip | [c]ancel`. Refine loops up to 5 rounds (one clarifying question per turn), then degrades to accept-or-edit-or-cancel. Each question is its own turn — no batched lists.
+
+---
+
+## Convention routing
+
+`AGENTS.md` and `CLAUDE.md` prose conventions are honor-system until they get a mechanical enforcement surface. `/forge:amend-constitution --resync-agents` routes each MUST / SHOULD / SHALL / forbidden pattern to the mechanism that can actually catch it:
+
+| Mechanism | What it sees | Example fit |
+| --- | --- | --- |
+| **hook-enforced** | dispatch payload / tool input pre-call | dispatch-brief citation rule, files_in_scope shape |
+| **validator-enforced** | repo artifacts (commits, plans, state, review files) post-action | git commit shape, frontmatter, spec semantic |
+| **reviewer-tagged** | diff + Constitution articles, free-text findings | API-shape rules, naming conventions |
+| **advisory** | dispatch context only | tone, style preferences |
+
+Three concrete surfaces:
+
+1. **`.forge/conventions.json`** carries pattern-based rules: `{id, source_file, source_line, pattern_kind, pattern, scope, severity}` where `pattern_kind ∈ {forbidden_text, required_text, filename_glob_forbidden}`, `scope ∈ {commit_body, diff, dispatch_brief}`, severity from `{BLOCK, HIGH, MEDIUM, LOW, WARN}`. `python -m tools.validate --target conventions` checks `commit_body` and `diff` scopes; `hooks/check_budget.py` enforces `dispatch_brief` scope at `Agent` PreToolUse time — `BLOCK` or `HIGH` denies the dispatch with the rule id in the deny reason.
+
+2. **`python -m tools.validate --target git-conventions <feature-folder>`** validates every commit in `state.commits[]` against `.forge/config.json:git_conventions` — subject length, Conventional Commits grammar, scope allowlist, trailer ban patterns. Subject violations are `HIGH`; trailer ban hits are `BLOCK`; missing SHAs (shallow clone, force-push, garbage-collected) downgrade to `WARN`. `tools.ship_gate.partition_git_conventions` buckets the findings (BLOCK/HIGH → gate, MEDIUM → warn, LOW/WARN → info) so `/forge:ship` blocks on commit-shape regressions.
+
+3. **`forge-resync-agents` skill** drafts a convention inventory from `AGENTS.md` + `CLAUDE.md` + `README.md`, classifies each pattern by mechanism (hook / validator / reviewer-tag / advisory), then writes accepted rules to `.forge/conventions.json` via `tools.constitution_amend.append_conventions_entries` (atomic JSON merge + decisions.md ADR + rollback on append failure). Reviewer-tag entries route the user to `/forge:amend-constitution` to add a Constitution article; advisory entries log to decisions.md so honor-system status is explicit.
+
+Constitution articles also flow through the same enforcement chain: `forge-review` tags violations as `[constitution:A<n>]` in REVIEW findings; `tools.ship_gate` blocks ship on unresolved tagged rows above the article's level.
+
+---
+
+## Trap memory
+
+Cross-feature trap memory keeps subagent regressions from recurring across features. `.forge/intel/lessons.md` is a parser-validated artifact carrying entries:
+
+```markdown
+## L007 — async fixture teardown leaks DB sessions
+**Captured:** 2026-05-11 from feature m8-p0-substrate
+**Resolved by:** abc1234...def890
+**Trap:** Async DB fixture used module scope; sessions leaked across tests.
+**Avoidance:** Use function scope; explicit teardown.
+**Tags:** fixtures, async
+**Severity:** HIGH
+**Status:** active
+```
+
+Tags come from a controlled vocabulary (`imports`, `fixtures`, `state-mutation`, `async`, `secrets`, `validation`, `dispatch`, `review-tagging`, `ship-gate`, `cross-ai`, `bdd`, `frontmatter`) — free-form tags are rejected by the parser. Status transitions (`active`, `retired`, `superseded-by:L<NNN>`) go through `tools.intel.lessons.amend_status` with chain detection.
+
+Three integration points:
+
+1. **Auto-harvest.** `forge-review` Step 7 surfaces a capture prompt when a finding flips to `Status: resolved` AND the new `Resolved by` cell carries a 40-hex SHA AND severity is `HIGH` or `BLOCK`. The reviewer drafts a Lesson with tags matched from the controlled vocabulary; the user accepts, edits, or skips. `accepted-risk`, `spec-edit`, and `plan-edit` resolutions never harvest — no fix-with-SHA means no trap-with-fix pair to learn from.
+
+2. **Manual capture.** `/forge:lesson` opens the `forge-lesson` skill for repo-wide trap authoring — useful when a lesson surfaced outside a feature or when the resolution wasn't a SHA. The skill walks sequential `AskUserQuestion` turns (trap, avoidance, severity, captured-from, tags, accept) and writes via `tools.intel.lessons.append`. `Resolved by: manual`.
+
+3. **Dispatch injection.** `forge-spec`, `forge-plan`, and `forge-execute` call `tools.intel.lessons.load_and_filter(repo_root, idea_text, files_in_scope)` and pass filtered `traps[]` into every subagent's `context_budget`. The filter scores tag-intersection plus idea-text overlap, drops `retired` and `superseded-by:*` lessons, and caps total payload at `MAX_LESSON_WORDS = 600` so a heavy trap load cannot squeeze CRITICAL Constitution articles out of the budget. Articles and lessons share a percentile + cap helper (`tools.intel._relevance.score_and_trim`) but carry separate word budgets.
+
+Reviewers tag lesson violations as `[lesson:L<NNN>]` in REVIEW findings; `tools.ship_gate.partition_by_lesson_severity` routes lesson severities to the same gate / warn / info buckets as articles (CRITICAL→BLOCK, HIGH→HIGH, MEDIUM→MEDIUM, LOW→LOW). Validator: `python -m tools.validate --target lessons`.
+
+The REVIEW.md template gained a `Resolved by` column to make the harvest trigger deterministic — empty / 40-hex SHA / `spec-edit` / `plan-edit` / `accepted-risk:<reason>`. Missing column on legacy reviews is tolerated; harvest only fires when the column carries a SHA.
+
+---
+
 ## Per-feature artifacts
 
 > *"The heart of software is its ability to solve domain-related problems for its user. All other features, vital though they may be, support this central purpose."*
@@ -315,7 +384,7 @@ Every FORGE feature lives in `.forge/features/<id>/` with a small set of contrac
 
 Canonical capability specs live in `.forge/specs/<capability>/SPEC.md`. Feature specs are working artifacts and are merged or archived against canonical specs at ship time. Changes to shipped capabilities flow through OpenSpec-style delta proposals under `.forge/changes/<id>/proposal.md` via `/forge:change`.
 
-A project-wide `.forge/CONSTITUTION.md` carries CRITICAL / SHOULD / MAY articles. Today these are **advisory** — surfaced at every phase entry and required as a ship-time acknowledgement (the user explicitly accepts that the diff respects them). Detection-driven BLOCK gates that mechanically refuse non-compliant changes are roadmapped, not implemented.
+A project-wide `.forge/CONSTITUTION.md` carries CRITICAL / SHOULD / MAY articles. Each phase skill calls `tools.constitution.load_and_filter` to inject relevance-filtered articles into the dispatch context budget. The reviewer subagent tags violations as `[constitution:A<n>]` in REVIEW findings; `tools.ship_gate.parse_review_findings` partitions tagged rows by article level so unresolved CRITICAL or HIGH-mapped findings block `/forge:ship` until the user explicitly acknowledges them in `decisions.md`. Two cross-cutting surfaces extend this enforcement chain: `.forge/conventions.json` adds pattern-based hook / validator rules (see [Convention routing](#convention-routing)), and `.forge/intel/lessons.md` adds cross-feature trap memory (see [Trap memory](#trap-memory)). First-time drafting is skill-driven (see [Constitution bootstrap](#constitution-bootstrap)).
 
 ### What the artifacts look like
 
@@ -438,7 +507,7 @@ FORGE persists artifacts on disk and via git. Treat them like source code:
 - **`SPEC.md`, `PLAN.md`, `decisions.md`, `QA.md` are committed.** Anything you tell the agent about the system ends up in git history. Use `.gitignore` patterns under `.forge/features/` for sensitive features.
 - **`.forge/logs/<feature_id>.jsonl`** is gitignored and never sent over the network — local-only event log.
 - **Cross-AI review (when wired)** sends review artifacts to a third-party model provider. Review the `cross-ai-config` schema before enabling; redaction filter (`tools.redaction`) strips known secret patterns but is best-effort.
-- **Constitution acknowledgement is advisory** today — it does not mechanically prevent unsafe code. Treat it as a checklist, not a guard.
+- **Constitution and conventions are enforced at review and ship time**, not at code-write time. The reviewer subagent tags violations; `tools.ship_gate` blocks ship on unresolved tagged findings; `hooks/check_budget.py` denies dispatches that fail `dispatch_brief` convention checks. Treat the gates as defense in depth — they catch what slipped past, not every possible unsafe change.
 
 Report security issues privately via GitHub Security Advisories on the repo.
 
