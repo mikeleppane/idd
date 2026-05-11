@@ -30,8 +30,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 
-class ByodLoadError(Exception):
-    """Raised when the requested BYOD path does not exist."""
+class ByodLoadError(RuntimeError):
+    """Raised when the requested BYOD path does not exist.
+
+    Subclasses :class:`RuntimeError` per the project's "Domain errors are
+    named ``RuntimeError`` subclasses" rule from ``coding-guidance-python``.
+    Use this for any caller that needs to catch BYOD-specific failures
+    without swallowing unrelated ``Exception``-tree errors.
+    """
 
 
 @dataclass(frozen=True)
