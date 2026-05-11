@@ -108,3 +108,38 @@ def test_declared_deps_pom_without_namespace_extracts_artifacts(tmp_path: Path) 
     assert "commons_lang3" in deps
     # Project's own artifactId ("my-app") must be skipped.
     assert "my_app" not in deps
+
+
+def test_declared_deps_pom_excludes_parent_and_project_artifact(tmp_path: Path) -> None:
+    """``<parent>`` coord + the project's own ``<artifactId>`` are not deps.
+
+    Walking every ``<artifactId>`` (the previous shape) would have leaked
+    ``spring-boot-starter-parent`` and ``my-app`` into the declared-dep
+    list. Scoping to ``<dependency>`` elements drops both.
+    """
+    (tmp_path / "pom.xml").write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.2.0</version>
+  </parent>
+  <groupId>com.example</groupId>
+  <artifactId>my-app</artifactId>
+  <version>1.0.0</version>
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-core</artifactId>
+    </dependency>
+  </dependencies>
+</project>
+""",
+        encoding="utf-8",
+    )
+    deps = java_plugin.plugin.declared_deps(tmp_path)
+    assert "spring_core" in deps
+    assert "spring_boot_starter_parent" not in deps
+    assert "my_app" not in deps

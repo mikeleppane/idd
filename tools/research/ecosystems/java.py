@@ -83,9 +83,16 @@ class JavaEcosystem:
         for elem in root.iter():
             if "}" in elem.tag:
                 elem.tag = elem.tag.split("}", 1)[1]
-        for artifact in root.iter("artifactId"):
+        # Walk only ``<dependency>`` elements (covers ``<dependencies>`` and
+        # ``<dependencyManagement><dependencies>``). Iterating every
+        # ``<artifactId>`` would also pull the project's own + ``<parent>``
+        # coordinates, which are not declared deps.
+        for dep in root.iter("dependency"):
+            artifact = dep.find("artifactId")
+            if artifact is None:
+                continue
             text_value = (artifact.text or "").strip()
-            if text_value and artifact != root.find("artifactId"):
+            if text_value:
                 sink.setdefault(normalize_dep(text_value), None)
 
     def scan_imports(self, repo_root: Path) -> list[str]:
