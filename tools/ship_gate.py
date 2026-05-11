@@ -45,11 +45,15 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 from tools.constitution import Article
 from tools.constitution_amend import atomic_replace, ensure_decisions_file
 from tools.validate import Finding
 from tools.validate.git_conventions import validate_git_conventions
+
+if TYPE_CHECKING:
+    from tools.intel.lessons import Lesson
 
 
 class ShipGateError(RuntimeError):
@@ -57,6 +61,19 @@ class ShipGateError(RuntimeError):
 
 
 _TAG_RE = re.compile(r"\[constitution:(A\d+)\]")
+_LESSON_TAG_RE = re.compile(r"\[lesson:(L\d+)\]")
+# Lesson severity vocabulary {CRITICAL, HIGH, MEDIUM, LOW} mapped onto the
+# ship-gate severity vocabulary {BLOCK, HIGH, MEDIUM, LOW}. The reviewer copies
+# the lesson's Severity field into the row's Severity cell after running it
+# through this map, so the ship-gate parser can keep treating the Severity cell
+# as the closed _VALID_SEVERITY_VALUES vocabulary. The partitioner cross-checks
+# the cell against the lesson's source-of-truth Severity at routing time.
+_LESSON_SEVERITY_TO_SHIP: dict[str, str] = {
+    "CRITICAL": "BLOCK",
+    "HIGH": "HIGH",
+    "MEDIUM": "MEDIUM",
+    "LOW": "LOW",
+}
 # Header row of the Findings table tells us which column holds Status.
 _HEADER_RE = re.compile(r"^\|\s*ID\s*\|", re.IGNORECASE)
 # Anchor the table search to the `# Findings` heading (case-insensitive) so
@@ -78,13 +95,29 @@ _VALID_RESOLVED_BY_PATTERN = re.compile(r"^([0-9a-f]{40}|spec-edit|plan-edit|acc
 
 @dataclass(frozen=True, kw_only=True)
 class ShipFinding:
-    """One unresolved REVIEW.code.md finding tagged ``[constitution:A<n>]``."""
+    """One unresolved REVIEW.code.md finding tagged for the ship gate.
 
-    article_id: str | None
+    Two kinds share this shape:
+
+    - ``kind="article"`` (default, existing behavior): ``article_id`` carries
+      an ``A<n>`` Constitution article id. ``lesson_id`` is ``None``.
+    - ``kind="lesson"``: ``lesson_id`` carries an ``L<NNN>`` lesson id and
+      ``article_id`` is ``None``.
+
+    Contract (NOT enforced at construction time — mypy + tag-emission logic
+    in :func:`_findings_from_row` are sufficient gates): exactly one of
+    ``article_id`` / ``lesson_id`` is populated per finding. The runtime
+    accepts both-None and both-set for forward compatibility, but those
+    shapes never appear in normal parser output.
+    """
+
+    article_id: str | None = None
     severity: str  # BLOCK|HIGH|MEDIUM|LOW
     resolved_by: str | None = None
     location: str
     message: str
+    lesson_id: str | None = None
+    kind: Literal["article", "lesson"] = "article"
 
 
 def _parse_table_columns(line: str) -> list[str]:
@@ -228,16 +261,17 @@ def _findings_from_row(
     except ValueError:
         return []  # malformed table; skip
     # Tag check FIRST. The closed Status / Severity vocabularies only matter
-    # for constitution-tagged rows (those are the ones that influence the
-    # gate). An untagged row with an unusual Status (e.g. "in-progress" or a
-    # typo) is reviewer convergence-history that this parser can ignore;
-    # validating its Status would raise ShipGateError on rows the gate
-    # never cared about in the first place. The Resolved by vocabulary is
-    # also gated behind the tag check for the same reason — an authoring
-    # typo on an untagged row must not break a parse the gate never cared
-    # about in the first place.
+    # for tagged rows (those are the ones that influence the gate). An
+    # untagged row with an unusual Status (e.g. "in-progress" or a typo) is
+    # reviewer convergence-history that this parser can ignore; validating
+    # its Status would raise ShipGateError on rows the gate never cared about
+    # in the first place. The Resolved by vocabulary is also gated behind
+    # the tag check for the same reason — an authoring typo on an untagged
+    # row must not break a parse the gate never cared about in the first
+    # place. Both constitution and lesson tags qualify a row.
     tag_ids = _TAG_RE.findall(message)
-    if not tag_ids:
+    lesson_ids = _LESSON_TAG_RE.findall(message)
+    if not tag_ids and not lesson_ids:
         return []
     if status_col >= 0:
         row_status = cells[status_col].lower()
@@ -264,8 +298,10 @@ def _findings_from_row(
                 )
             resolved_by = resolved_by_raw
     # findall keeps every tag in declaration order; one ShipFinding per tag
-    # so each routes through partition_by_article_level on its own merits.
-    return [
+    # so each routes through its partitioner on its own merits. Article tags
+    # are emitted first, then lesson tags — pinned by the test suite so
+    # callers can rely on the ordering.
+    out: list[ShipFinding] = [
         ShipFinding(
             article_id=article_id,
             severity=severity,
@@ -275,6 +311,18 @@ def _findings_from_row(
         )
         for article_id in tag_ids
     ]
+    out.extend(
+        ShipFinding(
+            lesson_id=lesson_id,
+            kind="lesson",
+            severity=severity,
+            resolved_by=resolved_by,
+            location=location,
+            message=message,
+        )
+        for lesson_id in lesson_ids
+    )
+    return out
 
 
 def partition_by_article_level(
@@ -321,44 +369,177 @@ def partition_by_article_level(
     return gate, warn, info
 
 
+def partition_by_lesson_severity(
+    findings: Iterable[ShipFinding],
+    lessons: Iterable[Lesson],
+) -> tuple[list[ShipFinding], list[ShipFinding], list[ShipFinding]]:
+    """Three-way split of lesson-tagged ``ShipFinding`` rows.
+
+    Only findings with ``kind == "lesson"`` are considered; article-kind
+    findings are silently skipped so a caller can pass the full parser output
+    through both partitioners side-by-side without prefiltering.
+
+    Routing (per the lesson's own ``Severity:`` field — source of truth):
+
+    - ``CRITICAL`` -> gate (BLOCK-equivalent).
+    - ``HIGH``     -> gate.
+    - ``MEDIUM``   -> warn.
+    - ``LOW``      -> info.
+
+    Consistency check: the row's Severity cell SHOULD match
+    ``_LESSON_SEVERITY_TO_SHIP[lesson.severity]``. A mismatch raises
+    :class:`ShipGateError` naming both values; the reviewer subagent is
+    expected to keep the cell synchronised with the lesson, and making the
+    mismatch loud forces that discipline (silent drift would otherwise let
+    a CRITICAL lesson route to warn because the reviewer typed ``MEDIUM``
+    in the cell).
+
+    Args:
+        findings: Iterable of parsed ``ShipFinding`` rows; article-kind
+            entries are filtered out at this layer.
+        lessons: Loaded Lesson entries used to look up severity by
+            ``lesson_id``.
+
+    Returns:
+        Tuple ``(gate, warn, info)`` of lesson-kind findings.
+
+    Raises:
+        ShipGateError: When a lesson-kind finding references a ``lesson_id``
+            not present in ``lessons`` (stale tag, retired/removed lesson),
+            or when the row's Severity cell disagrees with the lesson's
+            Severity field after the ship-severity mapping.
+    """
+    by_id = {le.id: le for le in lessons}
+    gate: list[ShipFinding] = []
+    warn: list[ShipFinding] = []
+    info: list[ShipFinding] = []
+    for f in findings:
+        if f.kind != "lesson":
+            continue
+        if f.lesson_id is None:
+            # Defensive: a kind='lesson' finding without a lesson_id is a
+            # constructor mis-use. Surface loudly instead of silently
+            # routing to info.
+            raise ShipGateError("kind='lesson' ShipFinding missing lesson_id")
+        lesson = by_id.get(f.lesson_id)
+        if lesson is None:
+            raise ShipGateError(
+                f"partition_by_lesson_severity: unknown lesson id {f.lesson_id!r} "
+                f"(stale tag or retired lesson removed from .forge/intel/lessons.md)"
+            )
+        expected_severity = _LESSON_SEVERITY_TO_SHIP[lesson.severity]
+        if f.severity != expected_severity:
+            raise ShipGateError(
+                f"row Severity={f.severity!r} but lesson {lesson.id} has "
+                f"Severity={lesson.severity!r} (expected row Severity="
+                f"{expected_severity!r})"
+            )
+        if lesson.severity in ("CRITICAL", "HIGH"):
+            gate.append(f)
+        elif lesson.severity == "MEDIUM":
+            warn.append(f)
+        else:
+            info.append(f)
+    return gate, warn, info
+
+
+def _lesson_title_fragment(lesson: Lesson) -> str:
+    """Return the first sentence of ``Trap`` (or the whole field) for headings.
+
+    Splits on ``". "`` and takes ``[0]`` — short, deterministic, and stays
+    inside one line for the gate-prompt heading.
+    """
+    return lesson.trap.split(". ", 1)[0].rstrip(".")
+
+
 def render_gate_prompt(
     gate: list[ShipFinding],
     articles: list[Article],
+    *,
+    lessons: Iterable[Lesson] | None = None,
 ) -> str:
-    """Render the ship-time gate prompt for CRITICAL findings.
+    """Render the ship-time gate prompt for gate-bucket findings.
+
+    Handles both article-kind and lesson-kind findings. Pass ``lessons``
+    whenever the gate bucket may contain lesson-kind entries; the rendering
+    looks each lesson up by id to print its ``Trap:`` and ``Avoidance:``
+    fields. ``lessons=None`` is fine when the bucket is article-only; when
+    a lesson-kind finding is present without a ``lessons`` argument the
+    function raises :class:`ShipGateError` so the SKILL orchestrator cannot
+    silently print ``(unknown lesson)``.
 
     Args:
         gate: Findings bucketed into the gate partition.
         articles: Loaded Constitution articles.
+        lessons: Loaded Lesson entries. Required only when the gate bucket
+            contains at least one lesson-kind finding; ``None`` is accepted
+            for the article-only legacy path.
 
     Returns:
         Multiline string suitable for printing to the user. Empty string when
         ``gate`` is empty.
 
     Raises:
-        ShipGateError: When any gate-bucket finding references an article id
-            that is not present in ``articles``. Defense in depth: the
-            partitioner already routes unknown ids to info, so this branch
-            is unreachable in production. The assertion documents the
-            invariant so a future caller bypassing the partitioner cannot
-            smuggle a "(unknown)" rendering past the user prompt.
+        ShipGateError: When a gate-bucket article-kind finding references an
+            id absent from ``articles`` (defense in depth — the partitioner
+            already routes unknown ids to info), when a lesson-kind finding
+            is present but ``lessons=None``, or when a lesson-kind finding
+            references a lesson id absent from the supplied ``lessons``.
     """
     if not gate:
         return ""
     by_id = {a.id: a for a in articles}
-    unknown = sorted({f.article_id for f in gate if f.article_id and f.article_id not in by_id})
-    if unknown:
-        raise ShipGateError(f"render_gate_prompt: unknown article id(s) in gate bucket: {unknown}")
+    lesson_by_id = {le.id: le for le in lessons} if lessons is not None else None
+    unknown_articles = sorted(
+        {
+            f.article_id
+            for f in gate
+            if f.kind == "article" and f.article_id and f.article_id not in by_id
+        }
+    )
+    if unknown_articles:
+        raise ShipGateError(
+            f"render_gate_prompt: unknown article id(s) in gate bucket: {unknown_articles}"
+        )
+    if any(f.kind == "lesson" for f in gate) and lesson_by_id is None:
+        raise ShipGateError(
+            "render_gate_prompt: gate contains lesson-kind findings but no `lessons` argument"
+        )
+    unknown_lessons = sorted(
+        {
+            f.lesson_id
+            for f in gate
+            if f.kind == "lesson" and f.lesson_id and f.lesson_id not in (lesson_by_id or {})
+        }
+    )
+    if unknown_lessons:
+        raise ShipGateError(
+            f"render_gate_prompt: unknown lesson id(s) in gate bucket: {unknown_lessons}"
+        )
     lines = [
         "=" * 57,
-        "  CONSTITUTION FINDINGS - UNRESOLVED AT SHIP",
+        "  SHIP-GATE FINDINGS - UNRESOLVED AT SHIP",
         "=" * 57,
         "",
         f"The reviewer flagged {len(gate)} finding(s) against project Constitution",
-        "articles. M3 does not BLOCK on these - you are the gate.",
+        "articles or trap-memory lessons. M3 does not BLOCK on these - you are the gate.",
         "",
     ]
     for f in gate:
+        if f.kind == "lesson":
+            # lesson_by_id is guaranteed non-None here (validation above);
+            # the local rebinding pins the type for mypy.
+            assert_lesson_by_id = lesson_by_id or {}
+            lesson = assert_lesson_by_id[f.lesson_id or ""]
+            title = _lesson_title_fragment(lesson)
+            avoidance = lesson.avoidance.split(". ", 1)[0].rstrip(".")
+            lines.append(f'[lesson:{f.lesson_id}] {f.severity} (lesson: "{title}")')
+            lines.append(f"  File: {f.location}")
+            lines.append(f"  Reviewer note: {f.message}")
+            lines.append(f"  Trap: {lesson.trap}")
+            lines.append(f"  Avoidance: {avoidance}")
+            lines.append("")
+            continue
         article = by_id.get(f.article_id or "")
         title = article.title if article else "(unknown)"
         # Prefer the article's reference (e.g. OWASP entry) over its rationale
@@ -387,21 +568,61 @@ def render_gate_prompt(
 def render_warn_summary(
     warn: list[ShipFinding],
     articles: list[Article],
+    *,
+    lessons: Iterable[Lesson] | None = None,
 ) -> str:
-    """Render the SHOULD-level advisory summary for the ship report.
+    """Render the SHOULD-level / MEDIUM-lesson advisory summary.
+
+    Handles both article-kind and lesson-kind findings. Pass ``lessons``
+    whenever the warn bucket may contain lesson-kind entries; otherwise a
+    lesson-kind finding raises :class:`ShipGateError` rather than print a
+    placeholder.
 
     Args:
         warn: Findings bucketed into the warn partition.
         articles: Loaded Constitution articles.
+        lessons: Loaded Lesson entries. Required only when the warn bucket
+            contains at least one lesson-kind finding.
 
     Returns:
         Multiline summary string. Empty string when ``warn`` is empty.
+
+    Raises:
+        ShipGateError: When a lesson-kind finding is present but ``lessons``
+            is ``None``, or when a lesson-kind finding references a lesson
+            id absent from the supplied ``lessons``.
     """
     if not warn:
         return ""
     by_id = {a.id: a for a in articles}
-    lines = ["Constitution SHOULD findings (advisory):"]
+    lesson_by_id = {le.id: le for le in lessons} if lessons is not None else None
+    if any(f.kind == "lesson" for f in warn) and lesson_by_id is None:
+        raise ShipGateError(
+            "render_warn_summary: warn contains lesson-kind findings but no `lessons` argument"
+        )
+    unknown_lessons = sorted(
+        {
+            f.lesson_id
+            for f in warn
+            if f.kind == "lesson" and f.lesson_id and f.lesson_id not in (lesson_by_id or {})
+        }
+    )
+    if unknown_lessons:
+        raise ShipGateError(
+            f"render_warn_summary: unknown lesson id(s) in warn bucket: {unknown_lessons}"
+        )
+    lines = ["Ship-gate advisory findings:"]
     for f in warn:
+        if f.kind == "lesson":
+            # lesson_by_id is non-None here (validation above); rebind for
+            # mypy without using `assert` (ruff S101).
+            assert_lesson_by_id = lesson_by_id or {}
+            lesson = assert_lesson_by_id[f.lesson_id or ""]
+            title = _lesson_title_fragment(lesson)
+            lines.append(
+                f"  - [lesson:{f.lesson_id}] {f.severity} {f.location} — {title}: {f.message}"
+            )
+            continue
         article = by_id.get(f.article_id or "")
         title = article.title if article else "(unknown)"
         lines.append(
@@ -424,6 +645,7 @@ def make_acknowledgement_hook(
     decisions_path: Path,
     gate_findings: list[ShipFinding],
     articles: list[Article],
+    lessons: Iterable[Lesson] | None = None,
     now: datetime | None = None,
 ) -> Callable[[Path], None]:
     """Return a closure that records the ACK on the live feature folder.
@@ -459,8 +681,13 @@ def make_acknowledgement_hook(
     Args:
         state_path: Path to the live feature ``state.json``.
         decisions_path: Path to the live feature ``decisions.md``.
-        gate_findings: Findings the user explicitly ACKNOWLEDGED.
+        gate_findings: Findings the user explicitly ACKNOWLEDGED. May mix
+            article-kind and lesson-kind entries; both are recorded in the
+            same decisions.md heading with their respective tag prefixes.
         articles: Loaded Constitution articles (for title lookup).
+        lessons: Loaded Lesson entries (for title lookup on lesson-kind
+            acknowledgements). Required only when ``gate_findings`` contains
+            at least one lesson-kind entry.
         now: Optional fixed timestamp (defaults to ``datetime.now(UTC)``).
 
     Returns:
@@ -479,8 +706,18 @@ def make_acknowledgement_hook(
     now = now or datetime.now(UTC)
     iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     by_id = {a.id: a for a in articles}
+    lesson_by_id = {le.id: le for le in lessons} if lessons is not None else {}
+    if any(f.kind == "lesson" for f in gate_findings) and not lesson_by_id:
+        raise ShipGateError(
+            "make_acknowledgement_hook: gate_findings contains lesson-kind entries "
+            "but no `lessons` argument was supplied"
+        )
 
-    cause = _ACK_PREFIX + ": " + ", ".join(f"[constitution:{f.article_id}]" for f in gate_findings)
+    cause_tags = [
+        f"[lesson:{f.lesson_id}]" if f.kind == "lesson" else f"[constitution:{f.article_id}]"
+        for f in gate_findings
+    ]
+    cause = _ACK_PREFIX + ": " + ", ".join(cause_tags)
 
     def _record(_source: Path) -> None:
         # Two-sided idempotency: this hook may re-run after a partial-write
@@ -531,6 +768,17 @@ def make_acknowledgement_hook(
                 f"Cause: {cause}",
             ]
             for f in gate_findings:
+                if f.kind == "lesson":
+                    lesson = lesson_by_id.get(f.lesson_id or "")
+                    title = _lesson_title_fragment(lesson) if lesson else "(unknown)"
+                    # Strip a leading [lesson:L<NNN>] from the reviewer
+                    # message so the tag is not echoed twice on the same
+                    # line — the bullet already starts with the tag.
+                    clean_message = _LESSON_TAG_RE.sub("", f.message, count=1).lstrip(" -")
+                    body_lines.append(
+                        f"- [lesson:{f.lesson_id}] **{title}** — {f.location} — {clean_message}"
+                    )
+                    continue
                 article = by_id.get(f.article_id or "")
                 title = article.title if article else "(unknown)"
                 # Strip a leading [constitution:A<n>] from the reviewer

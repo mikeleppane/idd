@@ -897,3 +897,538 @@ def test_ship_finding_default_resolved_by_is_none() -> None:
         message="[constitution:A1] x",
     )
     assert finding.resolved_by is None
+
+
+# --- Lesson-kind ShipFinding + partitioner + renderer (WS3 slice 5) -------
+#
+# Reviewer subagents tag lesson-trap violations with [lesson:L<NNN>] in the
+# REVIEW.md Problem cell. Those flow through the same parser as constitution
+# tags but route via a separate partitioner that consults each lesson's own
+# Severity field (CRITICAL/HIGH -> gate, MEDIUM -> warn, LOW -> info). The
+# renderer and acknowledgement hook learn to print the lesson kind alongside
+# constitution-kind findings without disturbing the legacy article path.
+
+
+from datetime import date  # noqa: E402
+
+from tools.intel.lessons import Lesson  # noqa: E402
+
+
+def _make_lesson(
+    lesson_id: str,
+    severity: str,
+    *,
+    trap: str = "trap text",
+    avoidance: str = "avoidance text",
+    status: str = "active",
+) -> Lesson:
+    return Lesson(
+        id=lesson_id,
+        captured=date(2026, 5, 11),
+        captured_from="2026-05-11-demo",
+        resolved_by="1" * 40,
+        trap=trap,
+        avoidance=avoidance,
+        tags=("imports",),
+        severity=severity,  # type: ignore[arg-type]
+        status=status,
+        body_words=4,
+    )
+
+
+def _lessons_default() -> list[Lesson]:
+    return [
+        _make_lesson("L007", "HIGH", trap="async fixture teardown leaks DB sessions"),
+        _make_lesson("L010", "MEDIUM", trap="logger swallowed stacks"),
+        _make_lesson("L020", "CRITICAL", trap="missing PII redaction at sink"),
+        _make_lesson("L030", "LOW", trap="cosmetic import order"),
+    ]
+
+
+def test_lesson_tag_re_extracts_single_tag() -> None:
+    """`[lesson:L007]` in a Problem cell yields one lesson_id."""
+    src_text = "Foo bar [lesson:L007] baz"
+    assert sg._LESSON_TAG_RE.findall(src_text) == ["L007"]
+
+
+def test_lesson_tag_re_extracts_multiple_tags() -> None:
+    """Multiple lesson tags in one cell are all extracted in order."""
+    src_text = "[lesson:L010] then [lesson:L007] later"
+    assert sg._LESSON_TAG_RE.findall(src_text) == ["L010", "L007"]
+
+
+def test_parse_review_findings_extracts_mixed_article_and_lesson_tags(tmp_path: Path) -> None:
+    """A row containing both [constitution:A<n>] and [lesson:L<NNN>] tags emits one
+    ShipFinding per tag — article-kind first, then lesson-kind.
+    """
+    src = tmp_path / "review_mixed.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | src/x.py:1 | [constitution:A1] [lesson:L007] dual tag | fix | self |
+""",
+        encoding="utf-8",
+    )
+    findings = sg.parse_review_findings(src)
+    assert len(findings) == 2
+    # Article tag first, lesson tag second (pinned order from _findings_from_row).
+    assert findings[0].kind == "article"
+    assert findings[0].article_id == "A1"
+    assert findings[0].lesson_id is None
+    assert findings[1].kind == "lesson"
+    assert findings[1].lesson_id == "L007"
+    assert findings[1].article_id is None
+
+
+def test_parse_review_findings_multiple_lesson_tags_emit_one_finding_each(tmp_path: Path) -> None:
+    src = tmp_path / "review_multi_lesson.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | src/x.py:1 | [lesson:L007] [lesson:L010] both | fix | self |
+""",
+        encoding="utf-8",
+    )
+    findings = sg.parse_review_findings(src)
+    assert [f.lesson_id for f in findings] == ["L007", "L010"]
+    assert all(f.kind == "lesson" for f in findings)
+
+
+def test_ship_finding_default_kind_is_article() -> None:
+    """Legacy constructors must default to kind='article' so existing call
+    sites continue to work without touching the new field.
+    """
+    finding = sg.ShipFinding(
+        article_id="A1",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[constitution:A1] x",
+    )
+    assert finding.kind == "article"
+    assert finding.lesson_id is None
+
+
+def test_ship_finding_lesson_kind_builds_cleanly() -> None:
+    """kind='lesson' + lesson_id constructs without error."""
+    finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L007] x",
+    )
+    assert finding.kind == "lesson"
+    assert finding.lesson_id == "L007"
+    assert finding.article_id is None
+
+
+def test_ship_finding_allows_both_ids_none_at_dataclass_level() -> None:
+    """Both ids None is permitted at runtime — mypy is the gate for proper
+    construction; the dataclass enforces no mutual exclusion to keep the
+    constructor flexible for future shapes.
+    """
+    finding = sg.ShipFinding(
+        severity="HIGH",
+        location="src/x.py:1",
+        message="placeholder",
+    )
+    assert finding.article_id is None
+    assert finding.lesson_id is None
+
+
+def test_partition_by_lesson_severity_empty_input() -> None:
+    gate, warn, info = sg.partition_by_lesson_severity([], _lessons_default())
+    assert gate == []
+    assert warn == []
+    assert info == []
+
+
+def test_partition_by_lesson_severity_critical_routes_to_gate() -> None:
+    finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L020",
+        severity="BLOCK",
+        location="src/x.py:1",
+        message="[lesson:L020] m",
+    )
+    gate, warn, info = sg.partition_by_lesson_severity([finding], _lessons_default())
+    assert gate == [finding]
+    assert warn == []
+    assert info == []
+
+
+def test_partition_by_lesson_severity_high_routes_to_gate() -> None:
+    finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L007] m",
+    )
+    gate, warn, info = sg.partition_by_lesson_severity([finding], _lessons_default())
+    assert gate == [finding]
+    assert warn == [] and info == []
+
+
+def test_partition_by_lesson_severity_medium_routes_to_warn() -> None:
+    finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L010",
+        severity="MEDIUM",
+        location="src/x.py:1",
+        message="[lesson:L010] m",
+    )
+    gate, warn, info = sg.partition_by_lesson_severity([finding], _lessons_default())
+    assert warn == [finding]
+    assert gate == [] and info == []
+
+
+def test_partition_by_lesson_severity_low_routes_to_info() -> None:
+    finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L030",
+        severity="LOW",
+        location="src/x.py:1",
+        message="[lesson:L030] m",
+    )
+    gate, warn, info = sg.partition_by_lesson_severity([finding], _lessons_default())
+    assert info == [finding]
+    assert gate == [] and warn == []
+
+
+def test_partition_by_lesson_severity_filters_out_article_kind() -> None:
+    """Article-kind findings pass through unaffected — they belong to the
+    article partitioner.
+    """
+    article_finding = sg.ShipFinding(
+        article_id="A1",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[constitution:A1] m",
+    )
+    lesson_finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L007] m",
+    )
+    gate, warn, info = sg.partition_by_lesson_severity(
+        [article_finding, lesson_finding], _lessons_default()
+    )
+    assert gate == [lesson_finding]
+    assert article_finding not in gate
+    assert article_finding not in warn
+    assert article_finding not in info
+
+
+def test_partition_by_lesson_severity_missing_lesson_id_raises() -> None:
+    finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L999",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L999] stale",
+    )
+    with pytest.raises(sg.ShipGateError, match="unknown lesson id"):
+        sg.partition_by_lesson_severity([finding], _lessons_default())
+
+
+def test_partition_by_lesson_severity_mismatched_severity_raises() -> None:
+    """Row Severity cell BLOCK but lesson L030 has Severity LOW → loud error."""
+    finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L030",
+        severity="BLOCK",
+        location="src/x.py:1",
+        message="[lesson:L030] m",
+    )
+    with pytest.raises(sg.ShipGateError, match=r"row Severity=.*lesson L030 has Severity="):
+        sg.partition_by_lesson_severity([finding], _lessons_default())
+
+
+def test_partition_by_lesson_severity_multiple_lessons_split_correctly() -> None:
+    findings = [
+        sg.ShipFinding(
+            kind="lesson",
+            lesson_id="L020",
+            severity="BLOCK",
+            location="src/a.py:1",
+            message="[lesson:L020] crit",
+        ),
+        sg.ShipFinding(
+            kind="lesson",
+            lesson_id="L007",
+            severity="HIGH",
+            location="src/b.py:1",
+            message="[lesson:L007] high",
+        ),
+        sg.ShipFinding(
+            kind="lesson",
+            lesson_id="L010",
+            severity="MEDIUM",
+            location="src/c.py:1",
+            message="[lesson:L010] med",
+        ),
+        sg.ShipFinding(
+            kind="lesson",
+            lesson_id="L030",
+            severity="LOW",
+            location="src/d.py:1",
+            message="[lesson:L030] low",
+        ),
+    ]
+    gate, warn, info = sg.partition_by_lesson_severity(findings, _lessons_default())
+    assert {f.lesson_id for f in gate} == {"L020", "L007"}
+    assert {f.lesson_id for f in warn} == {"L010"}
+    assert {f.lesson_id for f in info} == {"L030"}
+
+
+def test_partition_by_lesson_severity_raises_on_kind_lesson_without_lesson_id() -> None:
+    """Defensive guard: kind='lesson' must carry a lesson_id."""
+    finding = sg.ShipFinding(
+        kind="lesson",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="missing lesson id",
+    )
+    with pytest.raises(sg.ShipGateError, match="missing lesson_id"):
+        sg.partition_by_lesson_severity([finding], _lessons_default())
+
+
+def test_render_gate_prompt_article_only_unchanged_when_lessons_none() -> None:
+    """Regression: article-only gate must render identically with lessons=None."""
+    findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
+    gate, _warn, _info = sg.partition_by_article_level(findings, _articles())
+    prompt_legacy = sg.render_gate_prompt(gate, _articles())
+    prompt_with_kw = sg.render_gate_prompt(gate, _articles(), lessons=None)
+    assert prompt_legacy == prompt_with_kw
+    assert "[constitution:A1]" in prompt_legacy
+    assert "ACKNOWLEDGE" in prompt_legacy
+
+
+def test_render_gate_prompt_lesson_finding_renders_trap_and_avoidance() -> None:
+    finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:99",
+        message="[lesson:L007] async fixture leaks here",
+    )
+    prompt = sg.render_gate_prompt([finding], _articles(), lessons=_lessons_default())
+    assert "[lesson:L007]" in prompt
+    assert "async fixture teardown leaks DB sessions" in prompt  # trap body
+    assert "src/x.py:99" in prompt
+    assert "ACKNOWLEDGE" in prompt
+
+
+def test_render_gate_prompt_mixed_kinds_renders_both() -> None:
+    article_findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
+    article_gate, _w, _i = sg.partition_by_article_level(article_findings, _articles())
+    lesson_finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:42",
+        message="[lesson:L007] foo",
+    )
+    combined = [*list(article_gate), lesson_finding]
+    prompt = sg.render_gate_prompt(combined, _articles(), lessons=_lessons_default())
+    assert "[constitution:A1]" in prompt
+    assert "[lesson:L007]" in prompt
+    assert "Repository pattern" in prompt
+    assert "async fixture teardown leaks DB sessions" in prompt
+
+
+def test_render_gate_prompt_lesson_kind_without_lessons_arg_raises() -> None:
+    finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L007] m",
+    )
+    with pytest.raises(sg.ShipGateError, match="no `lessons` argument"):
+        sg.render_gate_prompt([finding], _articles())
+
+
+def test_render_gate_prompt_unknown_lesson_id_raises() -> None:
+    finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L999",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L999] stale",
+    )
+    with pytest.raises(sg.ShipGateError, match="unknown lesson id"):
+        sg.render_gate_prompt([finding], _articles(), lessons=_lessons_default())
+
+
+def test_render_warn_summary_article_only_unchanged_when_lessons_none() -> None:
+    findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
+    _gate, warn, _info = sg.partition_by_article_level(findings, _articles())
+    legacy = sg.render_warn_summary(warn, _articles())
+    with_kw = sg.render_warn_summary(warn, _articles(), lessons=None)
+    assert legacy == with_kw
+    assert "[constitution:A4]" in legacy
+
+
+def test_render_warn_summary_lesson_finding_renders_trap_fragment() -> None:
+    finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L010",
+        severity="MEDIUM",
+        location="src/x.py:55",
+        message="[lesson:L010] note",
+    )
+    summary = sg.render_warn_summary([finding], _articles(), lessons=_lessons_default())
+    assert "[lesson:L010]" in summary
+    assert "logger swallowed stacks" in summary
+    assert "src/x.py:55" in summary
+
+
+def test_render_warn_summary_mixed_kinds_renders_both() -> None:
+    article_findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
+    _g, article_warn, _i = sg.partition_by_article_level(article_findings, _articles())
+    lesson_finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L010",
+        severity="MEDIUM",
+        location="src/y.py:1",
+        message="[lesson:L010] med",
+    )
+    summary = sg.render_warn_summary(
+        [*list(article_warn), lesson_finding], _articles(), lessons=_lessons_default()
+    )
+    assert "[constitution:A4]" in summary
+    assert "[lesson:L010]" in summary
+
+
+def test_render_warn_summary_lesson_kind_without_lessons_arg_raises() -> None:
+    finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L010",
+        severity="MEDIUM",
+        location="src/x.py:1",
+        message="[lesson:L010] m",
+    )
+    with pytest.raises(sg.ShipGateError, match="no `lessons` argument"):
+        sg.render_warn_summary([finding], _articles())
+
+
+def test_render_warn_summary_unknown_lesson_id_raises() -> None:
+    finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L999",
+        severity="MEDIUM",
+        location="src/x.py:1",
+        message="[lesson:L999] stale",
+    )
+    with pytest.raises(sg.ShipGateError, match="unknown lesson id"):
+        sg.render_warn_summary([finding], _articles(), lessons=_lessons_default())
+
+
+def test_ack_hook_records_lesson_kind_acknowledgement(tmp_path: Path) -> None:
+    """Lesson-kind ACK writes a recognizable ADR row + state.json deviation.
+
+    The decisions.md body bullet starts with `[lesson:L<NNN>]`, the lesson's
+    trap-fragment title, and the reviewer location — mirroring the
+    constitution-kind bullet shape. The state.json `cause` field carries the
+    `[lesson:L<NNN>]` tag verbatim so a future `validate_deviations` cross-ref
+    locates the heading inside the body block.
+    """
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "feature_id": "2026-05-11-demo",
+                "tier": "full",
+                "current_phase": "ship",
+                "phases": {"ship": {"status": "in_progress", "started_at": "2026-05-11T00:00:00Z"}},
+                "skipped": [],
+                "deviations": [],
+                "commits": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    decisions_path = tmp_path / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+    lesson_finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:42",
+        message="[lesson:L007] async fixture leaks here",
+    )
+    hook = sg.make_acknowledgement_hook(
+        state_path=state_path,
+        decisions_path=decisions_path,
+        gate_findings=[lesson_finding],
+        articles=_articles(),
+        lessons=_lessons_default(),
+        now=datetime(2026, 5, 11, 12, 0, 0, tzinfo=UTC),
+    )
+    hook(tmp_path)
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert payload["deviations"], "deviation entry must be appended"
+    cause = payload["deviations"][-1]["cause"]
+    assert "[lesson:L007]" in cause
+    assert cause.lower().startswith("constitution finding acknowledged at ship:")
+    decisions = decisions_path.read_text(encoding="utf-8")
+    assert "[lesson:L007]" in decisions
+    assert "async fixture teardown leaks DB sessions" in decisions
+    assert "src/x.py:42" in decisions
+
+
+def test_ack_hook_raises_when_lesson_kind_without_lessons_arg(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "feature_id": "2026-05-11-demo",
+                "tier": "full",
+                "current_phase": "ship",
+                "phases": {"ship": {"status": "in_progress", "started_at": "2026-05-11T00:00:00Z"}},
+                "skipped": [],
+                "deviations": [],
+                "commits": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    decisions_path = tmp_path / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+    lesson_finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L007] m",
+    )
+    with pytest.raises(sg.ShipGateError, match="no `lessons` argument"):
+        sg.make_acknowledgement_hook(
+            state_path=state_path,
+            decisions_path=decisions_path,
+            gate_findings=[lesson_finding],
+            articles=_articles(),
+            now=datetime(2026, 5, 11, 12, 0, 0, tzinfo=UTC),
+        )
