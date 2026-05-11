@@ -1,6 +1,6 @@
 ---
 name: forge-amend-constitution
-description: Atomic edit of `.forge/CONSTITUTION.md` with $EDITOR, semver bump, and a decisions.md ADR entry. Use when the user asks to amend or extend the project Constitution. Use --bootstrap to seed an initial Constitution from project signals.
+description: Atomic edit of `.forge/CONSTITUTION.md` with $EDITOR, semver bump, and a decisions.md ADR entry. Use when the user asks to amend or extend the project Constitution. Use --bootstrap to seed an initial Constitution (defers to forge-bootstrap-constitution).
 disable-model-invocation: true
 ---
 
@@ -33,12 +33,10 @@ User invoked `/forge:amend-constitution` (with or without `--bootstrap`).
 ## Steps (`--bootstrap` mode)
 
 1. Refuse if `.forge/CONSTITUTION.md` already exists.
-2. Read project signals (`pyproject.toml`, `package.json`, `Cargo.toml`, top-level dirs).
-3. Generate up to 5 starter article proposals based on detected project signals.
-4. Article-by-article: print, ask accept / edit / drop.
-5. Open final draft in $EDITOR for any last polish.
-6. Write `.forge/CONSTITUTION.md` with frontmatter `version: 0.1.0`, `created: today`.
-7. Append decisions.md entry naming the bootstrap.
+2. Dispatch the `forge-bootstrap-constitution` skill, which owns the
+   skill-driven drafting workflow, interactive review loop, and atomic
+   write via `tools.constitution_amend.persist_drafted_constitution`.
+   Return to this skill's caller on completion.
 
 ## Done
 

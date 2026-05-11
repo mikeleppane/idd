@@ -78,11 +78,16 @@ and dispatches to `/forge:spec`. Standard without `--research` seeds
    `.forge/CONSTITUTION.md` is absent, present the user with three
    choices: skip, bootstrap, cancel. The default = skip so a brand-new
    repo is not forced into Constitution authoring on every `/forge:do`
-   invocation. On `bootstrap`, call
-   `tools.constitution_amend.bootstrap_constitution(repo_root)` and
-   continue. On `cancel`, abort without seeding. Record
+   invocation. On `bootstrap`, dispatch the
+   `forge-bootstrap-constitution` skill, which walks the user through
+   skill-driven drafting, interactive review, and atomic write via
+   `tools.constitution_amend.persist_drafted_constitution`. On cancel
+   from that skill, abort `/forge:do` without seeding. On accept or
+   `skip` chosen inside that skill, continue. On `cancel` at the
+   preflight selector itself, abort without seeding. Record
    `constitution_present: bool` for the routing block (`True` iff the
-   file exists or was just bootstrapped).
+   file exists on disk after the skill returns — i.e., the user chose
+   `[a]ccept` inside the bootstrap skill; `False` on `[s]kip`).
 3. **Health preflight (per spec §5.3.2 + D-HEALTH).** Run the
    lightweight subset of `python -m tools.validate --target health`.
    Surface any `BLOCK` or `HIGH` findings (orphan folders, capability
@@ -220,7 +225,10 @@ and dispatches to `/forge:spec`. Standard without `--research` seeds
 ## Failure modes
 
 - **Constitution bootstrap declined / cancel chosen.** Skill aborts
-  without seeding. No state mutation.
+  without seeding. No state mutation. Cancellation may originate from
+  the preflight selector itself or from the dispatched
+  `forge-bootstrap-constitution` skill (e.g. user chose `[c]ancel` at
+  the draft selector); both routes propagate up without seeding.
 - **Health preflight surfaces findings.** Default is to halt and ask
   the user. If the user opts to abort, no folder is created. `--force`
   is not exposed today.

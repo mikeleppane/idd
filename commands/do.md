@@ -50,7 +50,13 @@ target rotation is encoded in `phases.review.targets_done`.
 1. Parses args and prints a one-line secrets warning before any disk
    mutation (`routing.idea` persists the idea text verbatim).
 2. Constitution preflight (`.forge/CONSTITUTION.md` skip / bootstrap /
-   cancel; default = skip).
+   cancel; default = skip). On `bootstrap`, dispatches the
+   `forge-bootstrap-constitution` skill, which runs bounded signal
+   collection via `tools.constitution_amend.collect_bootstrap_signals`,
+   drafts articles in-session, and walks the user through a sequential
+   `accept / refine / edit-in-editor / skip / cancel` selector. The
+   atomic-pair write is owned by
+   `tools.constitution_amend.persist_drafted_constitution`.
 3. Lightweight health preflight via `python -m tools.validate --target
    health`; surfaces BLOCK/HIGH findings and offers abort.
 4. Capability scan; on collision routes to `/forge:change` or accepts a
@@ -65,33 +71,48 @@ target rotation is encoded in `phases.review.targets_done`.
    removes the partial folder via
    `tools.archive.cleanup_seeded_feature`.
 9. Self-reviews the seed shape (routing block, `current_phase ∈
-   {"spec", "refine"}` matching the seeded tier,
+   {"spec", "refine", "research"}` matching the seeded tier,
    `phases.<current_phase>.status == "in_progress"`, research deferral
-   entry, exactly three files in the folder).
-10. Prints the tier-deterministic dispatch literal: focused/standard →
-    `Next: /forge:spec --feature <feature_id>`; full →
-    `Next: /forge:refine --feature <feature_id>`.
+   entry seeded only on tiers whose effective phase list does NOT include
+   `research`, exactly three files in the folder).
+10. Prints the tier-deterministic dispatch literal resolved by
+    `state.json.current_phase` after the seed:
+    - focused / standard without `--research` →
+      `Next: /forge:spec --feature <feature_id>`
+    - standard with `--research` →
+      `Next: /forge:research --feature <feature_id>`
+    - full → `Next: /forge:refine --feature <feature_id>`
 
 ## Dispatch literal
 
-The skill prints exactly one of two lines on success, resolved by
+The skill prints exactly one of three lines on success, resolved by
 `state.json.current_phase` after the seed:
 
-- focused / standard → `Next: /forge:spec --feature <feature_id>`
+- focused / standard without `--research` →
+  `Next: /forge:spec --feature <feature_id>`
+- standard with `--research` →
+  `Next: /forge:research --feature <feature_id>`
 - full → `Next: /forge:refine --feature <feature_id>`
 
-The `--feature <id>` form is REQUIRED on both branches — a bare
-`/forge:spec` (or `/forge:refine`) would re-run new-feature creation
-against the pre-seeded folder. The `forge-spec` pre-seed branch detects
-the seeded `routing` block and skips its own capability scan + folder
-creation steps; the `forge-refine` pre-seed branch (T4) does the same
-for full-tier seeds.
+The `--feature <id>` form is REQUIRED on every branch — a bare
+`/forge:spec` (or `/forge:refine` / `/forge:research`) would re-run
+new-feature creation against the pre-seeded folder. The `forge-spec`
+pre-seed branch detects the seeded `routing` block and skips its own
+capability scan + folder creation steps; the `forge-refine` pre-seed
+branch does the same for full-tier seeds; the `forge-research` entry
+consumes the seeded `routing` block when
+`current_phase="research"`.
 
 ## See also
 
 - `skills/forge-do/SKILL.md` — full lifecycle (11 steps).
+- `skills/forge-bootstrap-constitution/SKILL.md` — invoked from the
+  Constitution preflight on the `bootstrap` selection.
 - `tools.routing.seed_routed_feature` — Python entry-point for the
   post-confirm half.
-- `/forge:spec --feature <feature_id>` — next phase for focused/standard.
+- `/forge:spec --feature <feature_id>` — next phase for focused and
+  standard without `--research`.
+- `/forge:research --feature <feature_id>` — next phase for standard
+  with `--research`.
 - `/forge:refine --feature <feature_id>` — next phase for full.
 - `/forge:change` — capability-collision delta route.
