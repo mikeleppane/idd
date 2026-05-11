@@ -16,6 +16,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Final, Literal, cast
 
+from tools._relevance import RelevanceError, RelevanceRule, score_and_trim
+from tools.constitution import tokenize
 from tools.constitution_amend import atomic_replace
 
 # fcntl is POSIX-only. Skip the advisory lock when unavailable (Windows) — the
@@ -698,7 +700,7 @@ def load_and_filter(
        ids do NOT appear in the returned ``dropped_ids`` list — that list is
        reserved for relevance-dropped lessons. Status-dropped lessons are
        silent because the dispatch budget never wanted to inject them.
-    3. :func:`tools.intel._relevance.score_and_trim` applies the percentile
+    3. :func:`tools._relevance.score_and_trim` applies the percentile
        gate and the :data:`MAX_LESSON_WORDS` cap. Severity -> bucket comes
        from ``_LESSON_SEVERITY_BUCKET``.
     4. ``scope_keywords`` are derived via the same tokenizer the Constitution
@@ -720,17 +722,6 @@ def load_and_filter(
             :data:`MAX_LESSON_WORDS`. The author must trim Trap/Avoidance
             bodies, demote some to HIGH, or retire stale entries.
     """
-    # Deferred imports for symmetry with ``tools.constitution.filter_articles``:
-    # ``tokenize`` would create a constitution-package cycle if pulled in at
-    # module top, and ``_relevance`` is exercised only when callers reach for
-    # the dispatch-budget loader.
-    from tools.constitution import tokenize  # noqa: PLC0415
-    from tools.intel._relevance import (  # noqa: PLC0415
-        RelevanceError,
-        RelevanceRule,
-        score_and_trim,
-    )
-
     path = _lessons_path(repo_root)
     if not path.exists():
         return [], []

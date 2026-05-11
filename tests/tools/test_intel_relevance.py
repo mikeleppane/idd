@@ -1,4 +1,4 @@
-"""Tests for the shared percentile + cap helper in tools.intel._relevance.
+"""Tests for the shared percentile + cap helper in tools._relevance.
 
 The helper is the load-bearing piece behind both ``tools.constitution.filter_articles``
 and ``tools.intel.lessons.load_and_filter``. These tests pin the contract
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from tools.intel._relevance import RelevanceError, RelevanceRule, score_and_trim
+from tools._relevance import RelevanceError, RelevanceRule, score_and_trim
 
 
 @dataclass(frozen=True, kw_only=True)

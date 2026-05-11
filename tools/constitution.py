@@ -17,6 +17,8 @@ from typing import Any, Literal
 
 import yaml
 
+from tools._relevance import RelevanceError, RelevanceRule, score_and_trim
+
 WORD_TO_TOKEN_RATIO: float = 1.3
 MAX_INJECTED_TOKENS: int = 1500
 MAX_INJECTED_WORDS: int = int(MAX_INJECTED_TOKENS / WORD_TO_TOKEN_RATIO)  # 1153
@@ -377,8 +379,8 @@ def filter_articles(
            drop further by ascending score until under cap.
 
     Delegates the percentile + cap arithmetic to
-    :func:`tools.intel._relevance.score_and_trim`; this module owns only the
-    article-specific scoring + the M3 D-9 error message wording.
+    :func:`tools._relevance.score_and_trim`; this module owns only the
+    article-specific scoring + the error-message wording.
 
     Args:
         articles: Parsed Constitution articles in declaration order.
@@ -394,17 +396,6 @@ def filter_articles(
             ``MAX_INJECTED_WORDS``. The author must trim Rule bodies, demote
             some to SHOULD, or split the articles.
     """
-    # Deferred import: ``tools.intel.__init__`` eagerly loads the lessons
-    # submodule, which transitively reaches back into ``tools.constitution``
-    # via the amend helper. Importing the relevance helper at module top
-    # would deadlock the import graph (constitution -> intel.__init__ ->
-    # intel.lessons -> constitution_amend -> constitution).
-    from tools.intel._relevance import (  # noqa: PLC0415
-        RelevanceError,
-        RelevanceRule,
-        score_and_trim,
-    )
-
     rule: RelevanceRule[Article] = RelevanceRule(
         score=lambda a: score_article(a, scope_keywords),
         level_of=lambda a: a.level,
