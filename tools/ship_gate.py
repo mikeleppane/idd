@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -47,6 +48,8 @@ from pathlib import Path
 
 from tools.constitution import Article
 from tools.constitution_amend import atomic_replace, ensure_decisions_file
+from tools.validate import Finding
+from tools.validate.git_conventions import validate_git_conventions
 
 
 class ShipGateError(RuntimeError):
@@ -513,3 +516,151 @@ def make_acknowledgement_hook(
         atomic_replace(state_path, json.dumps(payload, indent=2) + "\n")
 
     return _record
+
+
+# --- git-conventions wiring (WS2) -----------------------------------------
+#
+# The forge-ship orchestrator routes git-convention findings through these
+# helpers so it never has to know the validator's import path or the bucket
+# vocabulary. Three layers: severity-only partition, runner-injected
+# evaluator, and two pure renderers for the gate prompt + non-blocking
+# warn summary.
+
+_GIT_CONV_GATE_HEADER = "BLOCK / HIGH git-convention violations detected:"
+_GIT_CONV_GATE_FOOTER = (
+    "Resolve by amending the commits, force-pushing a clean history (if\n"
+    "ship policy allows), or recording an explicit decisions.md ADR\n"
+    "before re-running /forge:ship."
+)
+_GIT_CONV_WARN_HEADER = "Git-convention findings (advisory):"
+
+
+@dataclass(frozen=True, kw_only=True)
+class GitConventionGatePartition:
+    """Three-way split of git_conventions Findings for the ship gate.
+
+    Attributes:
+        gate: Severity in ``{BLOCK, HIGH}``; blocks ship until resolved or
+            acknowledged via decisions.md.
+        warn: Severity ``MEDIUM``; surface but allow ship.
+        info: Severity in ``{LOW, WARN}`` plus any out-of-vocabulary value
+            (defensive — should not occur for typed callers, but protects
+            against deserialized JSON inputs).
+    """
+
+    gate: tuple[Finding, ...]
+    warn: tuple[Finding, ...]
+    info: tuple[Finding, ...]
+
+
+def partition_git_conventions(findings: Iterable[Finding]) -> GitConventionGatePartition:
+    """Bucket git_conventions Findings by severity for ship-gate routing.
+
+    BLOCK / HIGH route to ``gate`` (ship is blocked until resolved or
+    acknowledged), MEDIUM routes to ``warn`` (surface but allow ship), and
+    LOW / WARN route to ``info`` (log only). Any severity outside the closed
+    vocabulary also routes to ``info`` so a deserialized JSON payload with
+    an unfamiliar severity cannot crash the gate — mypy would normally
+    reject this branch but the runtime check protects untyped call sites.
+
+    Order preservation: within each bucket, findings keep their original
+    declaration order. ``validate_git_conventions`` already sorts by
+    ``(commit_index, severity_rank, message)``, so preserving input order
+    here keeps test assertions stable.
+
+    Args:
+        findings: Any iterable of ``Finding`` instances. Generators are
+            accepted; the partition tuple-ifies before returning so the
+            result stays immutable.
+
+    Returns:
+        :class:`GitConventionGatePartition` with frozen tuple fields.
+    """
+    gate: list[Finding] = []
+    warn: list[Finding] = []
+    info: list[Finding] = []
+    for f in findings:
+        severity = f.severity
+        if severity in ("BLOCK", "HIGH"):
+            gate.append(f)
+        elif severity == "MEDIUM":
+            warn.append(f)
+        else:
+            # LOW, WARN, INFO, or any out-of-vocabulary string — all advisory
+            # for the ship gate. Defense in depth against deserialized inputs.
+            info.append(f)
+    return GitConventionGatePartition(
+        gate=tuple(gate),
+        warn=tuple(warn),
+        info=tuple(info),
+    )
+
+
+def evaluate_git_conventions_gate(
+    feature_folder: Path,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+) -> GitConventionGatePartition:
+    """Run :func:`validate_git_conventions` and partition by severity.
+
+    Pure dispatch wrapper so the forge-ship skill does not need to know the
+    validator's import path. The runner seam is forwarded to the underlying
+    validator unchanged.
+
+    Args:
+        feature_folder: Path to ``.forge/features/<feature-id>/``.
+        runner: Subprocess seam, forwarded to
+            :func:`validate_git_conventions`. ``None`` selects the production
+            runner with the default 10 s timeout.
+
+    Returns:
+        :class:`GitConventionGatePartition`; empty buckets when there are no
+        findings.
+    """
+    findings = validate_git_conventions(feature_folder, runner=runner)
+    return partition_git_conventions(findings)
+
+
+def render_git_conventions_gate_prompt(partition: GitConventionGatePartition) -> str:
+    """Render the gate bucket as a human-readable prompt for forge-ship.
+
+    Empty gate bucket returns the empty string (the caller does not show the
+    prompt). Otherwise one line per finding, the original validator message
+    quoted verbatim with a ``[<severity>]`` suffix, plus a single footer
+    describing the recovery actions.
+
+    Args:
+        partition: A partition produced by :func:`partition_git_conventions`
+            (directly or via :func:`evaluate_git_conventions_gate`).
+
+    Returns:
+        Multiline string suitable for printing to the user, or ``""`` when
+        the gate bucket is empty.
+    """
+    if not partition.gate:
+        return ""
+    lines = [_GIT_CONV_GATE_HEADER]
+    lines.extend(f"- {f.message}  [{f.severity}]" for f in partition.gate)
+    lines.append("")
+    lines.append(_GIT_CONV_GATE_FOOTER)
+    return "\n".join(lines)
+
+
+def render_git_conventions_warn_summary(partition: GitConventionGatePartition) -> str:
+    """Render MEDIUM (warn) findings as a non-blocking summary line block.
+
+    Empty warn bucket returns the empty string. One line per finding,
+    structure mirrors :func:`render_git_conventions_gate_prompt` so the
+    surrounding skill prose can render either with a single visual rhythm.
+
+    Args:
+        partition: A partition produced by :func:`partition_git_conventions`.
+
+    Returns:
+        Multiline string, or ``""`` when the warn bucket is empty.
+    """
+    if not partition.warn:
+        return ""
+    lines = [_GIT_CONV_WARN_HEADER]
+    lines.extend(f"- {f.message}  [{f.severity}]" for f in partition.warn)
+    return "\n".join(lines)
