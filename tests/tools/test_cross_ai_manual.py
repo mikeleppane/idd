@@ -1,17 +1,25 @@
 """Tests for ``tools.cross_ai.manual`` — manual-mode orchestration helpers.
 
-Cases (a)-(l) per the cross-ai substrate plan:
+Cases per the cross-ai substrate plan:
 
-* (a)-(d) cover ``write_prompt_to_disk``: target path, parent-dir creation,
-  filename timestamp shape (colons replaced with hyphens; deterministic
-  via injected ``now=``), and the absolute-path return contract.
-* (e)-(f) cover ``read_paste_response``: verbatim read, ``FileNotFoundError``
+* ``write_prompt_to_disk`` — target path, parent-dir creation, filename
+  timestamp shape (colons replaced with hyphens; deterministic via
+  injected ``now=``), absolute-path return, and the security contract:
+  the body is taken as a plain string so the caller cannot accidentally
+  persist the unredacted ``Prompt.body`` while pretending to ship the
+  post-scrub bytes.
+* ``read_paste_response`` — verbatim UTF-8 read, ``FileNotFoundError``
   with the offending path included in the message.
-* (g)-(k) cover ``merge_findings_into_review``: empty-tuple no-op,
-  missing-file ``FileNotFoundError``, append-after-existing-rows
-  semantics, pipe-character escaping, and the row-count return value.
-* (l) snapshots the ``format_disclosure_summary`` output verbatim so any
-  drift in the operator-facing preview surfaces as a test failure.
+* ``extract_reviewer_id`` — frontmatter present + value, frontmatter
+  absent, frontmatter missing the ``reviewer`` field, frontmatter with
+  empty / quoted values.
+* ``merge_findings_into_review`` — empty-tuple no-op, missing-file
+  ``FileNotFoundError``, append-after-existing-rows semantics,
+  pipe-character escaping (including the literal ``\\\\|`` round-trip
+  case), and the row-count return value.
+* ``format_disclosure_summary`` — verbatim snapshot for the default
+  case, paste-back override, and a path-with-spaces case proving the
+  rendered shell command is wrapped with ``shlex.quote``.
 """
 
 from __future__ import annotations
@@ -24,25 +32,19 @@ import pytest
 from tools.cross_ai.detect import CLI
 from tools.cross_ai.disclosure import Disclosure
 from tools.cross_ai.manual import (
+    extract_reviewer_id,
     format_disclosure_summary,
     merge_findings_into_review,
     read_paste_response,
     write_prompt_to_disk,
 )
 from tools.cross_ai.parse import Finding
-from tools.cross_ai.prompt import Prompt, PromptTarget
+from tools.cross_ai.prompt import PromptTarget
 
 # --- shared fixtures -------------------------------------------------------
 
 
-def _make_prompt(body: str = "# Reviewer Prompt — plan target — feat-x\n\nbody") -> Prompt:
-    """Build a minimal ``Prompt`` for write tests; body is what hits disk."""
-    return Prompt(
-        target=PromptTarget.plan,
-        feature_id="feat-x",
-        body=body,
-        files_referenced=(PurePosixPath("tools/foo.py"),),
-    )
+_PROMPT_BODY: str = "# Reviewer Prompt — plan target — feat-x\n\nbody"
 
 
 def _seed_review_file(repo_root: Path, feature_id: str, target: PromptTarget) -> Path:
@@ -80,47 +82,113 @@ def _seed_review_file(repo_root: Path, feature_id: str, target: PromptTarget) ->
 
 
 def test_write_prompt_to_disk_writes_body_at_expected_path(tmp_path: Path) -> None:
-    # (a) Body lands verbatim at ``.forge/features/<id>/cross-ai/<target>-<ts>-prompt.md``.
-    prompt = _make_prompt(body="hello reviewer")
+    # Body lands verbatim at ``.forge/features/<id>/cross-ai/<target>-<ts>-prompt.md``.
     fixed_now = datetime(2026, 5, 10, 12, 0, 0, tzinfo=UTC)
 
-    written = write_prompt_to_disk(prompt, "feat-x", tmp_path, now=fixed_now)
+    written = write_prompt_to_disk(
+        "hello reviewer", PromptTarget.plan, "feat-x", tmp_path, now=fixed_now
+    )
 
     assert written.read_text(encoding="utf-8") == "hello reviewer"
 
 
 def test_write_prompt_to_disk_creates_missing_parent_directory(tmp_path: Path) -> None:
-    # (b) Parent dir is built on first call; helper does not assume the
+    # Parent dir is built on first call; helper does not assume the
     # caller pre-created the cross-ai subtree.
-    prompt = _make_prompt()
     target_dir = tmp_path / ".forge" / "features" / "feat-x" / "cross-ai"
     assert not target_dir.exists()
 
-    write_prompt_to_disk(prompt, "feat-x", tmp_path, now=datetime(2026, 1, 1, tzinfo=UTC))
+    write_prompt_to_disk(
+        _PROMPT_BODY, PromptTarget.plan, "feat-x", tmp_path, now=datetime(2026, 1, 1, tzinfo=UTC)
+    )
 
     assert target_dir.is_dir()
 
 
 def test_write_prompt_to_disk_filename_uses_dash_separated_timestamp(tmp_path: Path) -> None:
-    # (c) Filename timestamp is ``YYYY-MM-DDTHH-MM-SSZ`` — colons replaced
+    # Filename timestamp is ``YYYY-MM-DDTHH-MM-SSZ`` — colons replaced
     # with hyphens so the path is portable across filesystems. ``now=``
     # injection makes the assertion deterministic.
-    prompt = _make_prompt()
     fixed_now = datetime(2026, 5, 10, 14, 23, 7, tzinfo=UTC)
 
-    written = write_prompt_to_disk(prompt, "feat-x", tmp_path, now=fixed_now)
+    written = write_prompt_to_disk(
+        _PROMPT_BODY, PromptTarget.plan, "feat-x", tmp_path, now=fixed_now
+    )
 
     assert written.name == "plan-2026-05-10T14-23-07Z-prompt.md"
 
 
 def test_write_prompt_to_disk_returns_absolute_path(tmp_path: Path) -> None:
-    # (d) Return value is absolute so callers can persist it without
+    # Return value is absolute so callers can persist it without
     # re-resolving against the cwd.
-    prompt = _make_prompt()
-
-    written = write_prompt_to_disk(prompt, "feat-x", tmp_path, now=datetime(2026, 1, 1, tzinfo=UTC))
+    written = write_prompt_to_disk(
+        _PROMPT_BODY,
+        PromptTarget.plan,
+        "feat-x",
+        tmp_path,
+        now=datetime(2026, 1, 1, tzinfo=UTC),
+    )
 
     assert written.is_absolute()
+
+
+def test_write_prompt_to_disk_persists_redacted_text_not_raw(tmp_path: Path) -> None:
+    # Security contract: helper persists exactly the bytes it is given.
+    # Caller hands in the post-redaction text so a deny_regex match
+    # never reaches the file the operator pipes to the external CLI.
+    redacted_body = "# Reviewer Prompt — plan target — feat-x\n\nAPI key: [REDACTED:0]\n"
+    raw_secret = "API key: sk-supersecret-token-abc123"  # noqa: S105 — fake test fixture
+
+    written = write_prompt_to_disk(
+        redacted_body,
+        PromptTarget.plan,
+        "feat-x",
+        tmp_path,
+        now=datetime(2026, 5, 10, 12, 0, 0, tzinfo=UTC),
+    )
+
+    on_disk = written.read_text(encoding="utf-8")
+    assert "[REDACTED:0]" in on_disk
+    assert raw_secret not in on_disk
+    assert on_disk == redacted_body
+
+
+# --- extract_reviewer_id ---------------------------------------------------
+
+
+def test_extract_reviewer_id_returns_value_from_frontmatter() -> None:
+    text = "---\nreviewer: codex\ntimestamp: 2026-05-10T12:00:00Z\n---\n\n# Findings\n"
+    assert extract_reviewer_id(text) == "codex"
+
+
+def test_extract_reviewer_id_returns_none_when_no_frontmatter() -> None:
+    assert extract_reviewer_id("# Findings\n\n| ID | ...\n") is None
+    assert extract_reviewer_id("") is None
+
+
+def test_extract_reviewer_id_returns_none_when_field_missing() -> None:
+    text = "---\nfoo: bar\n---\n\nbody\n"
+    assert extract_reviewer_id(text) is None
+
+
+def test_extract_reviewer_id_returns_none_when_field_empty() -> None:
+    text = "---\nreviewer:   \n---\n\nbody\n"
+    assert extract_reviewer_id(text) is None
+
+
+def test_extract_reviewer_id_returns_none_when_no_closing_fence() -> None:
+    text = "---\nreviewer: codex\nfoo: bar\n\nbody\n"
+    assert extract_reviewer_id(text) is None
+
+
+def test_extract_reviewer_id_unwraps_quoted_value() -> None:
+    text = '---\nreviewer: "external-codex"\n---\n\nbody\n'
+    assert extract_reviewer_id(text) == "external-codex"
+
+
+def test_extract_reviewer_id_is_case_insensitive_on_key() -> None:
+    text = "---\nReviewer: gemini\n---\n\nbody\n"
+    assert extract_reviewer_id(text) == "gemini"
 
 
 # --- read_paste_response ---------------------------------------------------
@@ -215,8 +283,11 @@ def test_merge_findings_into_review_appends_after_existing_data_rows(tmp_path: P
 
 
 def test_merge_findings_into_review_escapes_pipe_characters_in_fields(tmp_path: Path) -> None:
-    # (j) A literal ``|`` inside any field would split the cell; the
-    # helper escapes it as ``\|`` so the table stays well-formed.
+    # A literal ``|`` inside any field would split the cell; the helper
+    # escapes it as ``\|`` so the table stays well-formed. We assert
+    # both the positive form (escaped row present) and the negative
+    # form (the unescaped row literal does not appear) directly so the
+    # check survives any future template line-count tweaks.
     _seed_review_file(tmp_path, "feat-x", PromptTarget.plan)
     finding = Finding(
         id="F-3",
@@ -233,8 +304,67 @@ def test_merge_findings_into_review_escapes_pipe_characters_in_fields(tmp_path: 
         encoding="utf-8"
     )
 
-    assert r"a \| b" in body
-    assert "a | b |" not in body.split("\n")[-5:][-3]  # the new row's Problem cell is escaped
+    expected_escaped_row = (
+        "| F-3 | MEDIUM | open | tools/bar.py:9 | a \\| b | rewrite | external-codex |"
+    )
+    unescaped_row_literal = (
+        "| F-3 | MEDIUM | open | tools/bar.py:9 | a | b | rewrite | external-codex |"
+    )
+    assert expected_escaped_row in body
+    assert unescaped_row_literal not in body
+
+
+def test_merge_findings_into_review_preserves_already_escaped_pipes(tmp_path: Path) -> None:
+    # A pre-escaped ``\|`` in reviewer text must NOT be double-escaped on
+    # merge — otherwise round-tripping (re-merging the same content)
+    # would inflate the escape sequence indefinitely. The escape helper
+    # treats a ``|`` as already-escaped only when an *odd* number of
+    # backslashes precedes it.
+    _seed_review_file(tmp_path, "feat-x", PromptTarget.plan)
+    finding = Finding(
+        id="F-4",
+        severity="LOW",
+        status="open",
+        location="loc",
+        problem=r"already \| escaped",
+        fix="ok",
+        source="external-codex",
+    )
+
+    merge_findings_into_review((finding,), PromptTarget.plan, "feat-x", tmp_path)
+    body = (tmp_path / ".forge" / "features" / "feat-x" / "REVIEW.plan.md").read_text(
+        encoding="utf-8"
+    )
+
+    # One backslash, one pipe — the original escape survives unchanged.
+    assert r"already \| escaped" in body
+    # Double-escape would have written ``\\|`` (two backslashes + pipe).
+    assert r"already \\| escaped" not in body
+
+
+def test_merge_findings_into_review_escapes_pipe_after_escaped_backslash(tmp_path: Path) -> None:
+    # Edge case: a literal ``\\`` (escaped backslash) followed by a live
+    # ``|``. An "always-treat-\\|-as-already-escaped" heuristic would
+    # eat the trailing backslash; the parity rule keeps the literal
+    # backslash and escapes the pipe.
+    _seed_review_file(tmp_path, "feat-x", PromptTarget.plan)
+    finding = Finding(
+        id="F-5",
+        severity="LOW",
+        status="open",
+        location="loc",
+        problem="prefix \\\\| suffix",  # literal \\ + literal |
+        fix="ok",
+        source="external-codex",
+    )
+
+    merge_findings_into_review((finding,), PromptTarget.plan, "feat-x", tmp_path)
+    body = (tmp_path / ".forge" / "features" / "feat-x" / "REVIEW.plan.md").read_text(
+        encoding="utf-8"
+    )
+
+    # Three backslashes + pipe: ``\\`` literal + ``\|`` escape.
+    assert "prefix \\\\\\| suffix" in body
 
 
 def test_merge_findings_into_review_returns_count_of_rows_appended(tmp_path: Path) -> None:
@@ -347,3 +477,35 @@ def test_format_disclosure_summary_honours_paste_back_command_override(tmp_path:
     # Flag rendering for the false branches is "no", not omitted.
     assert "  Cost warn:        no" in rendered
     assert "  Redactions:       no" in rendered
+
+
+def test_format_disclosure_summary_quotes_path_with_spaces(tmp_path: Path) -> None:
+    # The rendered ``Run externally:`` line must remain copy-pasteable
+    # when the repo path contains shell-meaningful characters. ``shlex.quote``
+    # wraps such paths in single quotes; a path with no special chars
+    # passes through unchanged (covered by the verbatim snapshot above).
+    spaced_dir = tmp_path / "dir with space"
+    spaced_dir.mkdir()
+    prompt_path = spaced_dir / "prompt.md"
+    prompt_path.write_text("placeholder", encoding="utf-8")
+
+    disclosure = Disclosure(
+        target=PromptTarget.plan,
+        cli=CLI.codex,
+        file_list=(),
+        excluded_files=(),
+        diff_loc=0,
+        command_preview="codex <self-contained-prompt>",
+        prompt_tokens=10,
+        prompt_cost_usd=0.0,
+        had_redactions=False,
+        cost_warn_triggered=False,
+    )
+
+    rendered = format_disclosure_summary(disclosure, prompt_path)
+
+    expected_command_line = f"    codex < '{prompt_path}' > response.md"
+    assert expected_command_line in rendered
+    # The unquoted form would break the shell — make sure it does not
+    # appear anywhere in the rendered block.
+    assert f"    codex < {prompt_path} >" not in rendered

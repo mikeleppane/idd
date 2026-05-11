@@ -9,13 +9,22 @@ escaping.
 Public surface (in ``__all__``)
 -------------------------------
 
-* :func:`write_prompt_to_disk` — atomically write a built reviewer
-  ``Prompt.body`` to ``.forge/features/<id>/cross-ai/<target>-<utc>-prompt.md``
-  and return the absolute path. ``now=`` is injectable so tests can lock
-  the timestamp portion of the filename.
+* :func:`write_prompt_to_disk` — atomically write a reviewer-bound
+  Markdown ``body`` (the post-redaction text the operator will pipe to
+  the external CLI) to
+  ``.forge/features/<id>/cross-ai/<target>-<utc>-prompt.md`` and return
+  the absolute path. ``now=`` is injectable so tests can lock the
+  timestamp portion of the filename. The helper takes the body as a
+  plain string, **not** a :class:`tools.cross_ai.prompt.Prompt`, so the
+  caller cannot accidentally persist the unredacted ``Prompt.body``
+  while pretending to ship the post-scrub bytes.
 * :func:`read_paste_response` — UTF-8 read of a pasted reviewer
   response. Errors propagate (``FileNotFoundError`` / ``UnicodeDecodeError``)
   so the skill can surface a precise failure rather than a silent miss.
+* :func:`extract_reviewer_id` — pull the ``reviewer:`` field out of the
+  optional YAML frontmatter that wraps a pasted response. Returns
+  ``None`` when frontmatter is absent or the field is missing so the
+  caller can fall back to a ``--reviewer <name>`` flag or ``"unknown"``.
 * :func:`merge_findings_into_review` — append parsed
   :class:`tools.cross_ai.parse.Finding` rows to the existing
   ``REVIEW.<target>.md`` table. Empty input is a fast-path no-op; a
@@ -25,7 +34,9 @@ Public surface (in ``__all__``)
   :class:`tools.cross_ai.disclosure.Disclosure` snapshot as the
   multi-line plain-text block the dispatcher prints to the operator.
   The text is a stable contract (snapshot-tested) — every visible
-  newline below is part of the agreed format.
+  newline below is part of the agreed format. Path placeholders inside
+  the rendered shell command are wrapped with :func:`shlex.quote` so a
+  repo path containing whitespace still produces a runnable command.
 
 Caller responsibilities
 -----------------------
@@ -50,15 +61,17 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shlex
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
 from tools.cross_ai.disclosure import Disclosure
 from tools.cross_ai.parse import Finding
-from tools.cross_ai.prompt import Prompt, PromptTarget
+from tools.cross_ai.prompt import PromptTarget
 
 __all__ = (
+    "extract_reviewer_id",
     "format_disclosure_summary",
     "merge_findings_into_review",
     "read_paste_response",
@@ -76,6 +89,12 @@ _TIMESTAMP_FMT: str = "%Y-%m-%dT%H-%M-%SZ"
 # constant rather than inlined so a future rename of the skill command
 # is a one-line change.
 _DEFAULT_PASTE_BACK_COMMAND: str = "/forge:review --cross-ai-paste response.md"
+
+# Frontmatter fence literal. A pasted reviewer response MAY open with
+# ``---`` on the very first line followed by ``key: value`` lines and a
+# closing ``---`` fence. Anything else (including a CRLF-prefixed
+# variant) falls through to the no-frontmatter branch.
+_FRONTMATTER_FENCE: str = "---"
 
 
 def _atomic_write_text(path: Path, body: str, *, prefix: str) -> None:
@@ -103,22 +122,34 @@ def _atomic_write_text(path: Path, body: str, *, prefix: str) -> None:
 
 
 def write_prompt_to_disk(
-    prompt: Prompt,
+    body: str,
+    target: PromptTarget,
     feature_id: str,
     repo_root: Path,
     *,
     now: datetime | None = None,
 ) -> Path:
-    """Persist ``prompt.body`` to the cross-AI prompt directory.
+    """Persist a reviewer-bound prompt ``body`` to the cross-AI directory.
 
     The destination is
     ``<repo_root>/.forge/features/<feature_id>/cross-ai/<target>-<utc>-prompt.md``.
     The parent directory is created if absent so the skill never has to
     pre-seed it.
 
+    The helper takes ``body`` as a plain string rather than a
+    :class:`tools.cross_ai.prompt.Prompt` so the caller is forced to
+    decide which bytes ship to the external CLI. In production the
+    caller passes :attr:`tools.redaction.RedactionResult.output_text`
+    (the post-scrub body); passing the raw ``Prompt.body`` would defeat
+    the redaction step that ran moments earlier. The string-level API
+    makes the redaction-vs-raw choice explicit at every call site.
+
     Args:
-        prompt: Built reviewer prompt — ``prompt.body`` is what hits
-            disk; ``prompt.target`` drives the filename prefix.
+        body: Markdown body to persist verbatim. In manual mode this is
+            the post-redaction text the operator will pipe to the
+            reviewer CLI; the helper does NOT redact.
+        target: ``PromptTarget.plan`` or ``PromptTarget.code`` — drives
+            the filename prefix.
         feature_id: Folder name under ``.forge/features/``.
         repo_root: Repository root containing ``.forge/``.
         now: Injectable UTC clock; defaults to ``datetime.now(UTC)``.
@@ -132,8 +163,8 @@ def write_prompt_to_disk(
     """
     timestamp = (now or datetime.now(UTC)).strftime(_TIMESTAMP_FMT)
     target_dir = repo_root / ".forge" / "features" / feature_id / "cross-ai"
-    prompt_path = target_dir / f"{prompt.target.value}-{timestamp}-prompt.md"
-    _atomic_write_text(prompt_path, prompt.body, prefix=".cross-ai-prompt-")
+    prompt_path = target_dir / f"{target.value}-{timestamp}-prompt.md"
+    _atomic_write_text(prompt_path, body, prefix=".cross-ai-prompt-")
     return prompt_path.resolve()
 
 
@@ -149,30 +180,117 @@ def read_paste_response(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _find_frontmatter_block(lines: list[str]) -> list[str] | None:
+    """Return the body lines of the leading YAML frontmatter, or ``None``.
+
+    The helper accepts a frontmatter only when the very first line is a
+    bare ``---`` and a matching closing ``---`` appears later in the
+    document. Anything else (no fence on line 1, no closing fence)
+    yields ``None`` so the caller treats the input as un-frontmattered.
+    """
+    if not lines or lines[0].strip() != _FRONTMATTER_FENCE:
+        return None
+    for index in range(1, len(lines)):
+        if lines[index].strip() == _FRONTMATTER_FENCE:
+            return lines[1:index]
+    return None
+
+
+def _unquote_value(value: str) -> str | None:
+    """Strip surrounding quotes from a YAML scalar, returning ``None`` if empty.
+
+    Wraps :func:`shlex.split` to peel ``"codex"`` / ``'codex'`` style
+    wrappers; un-quoted values pass through unchanged. A malformed
+    quote (raises ``ValueError`` from ``shlex``) falls back to the raw
+    value rather than dropping the field.
+    """
+    try:
+        tokens = shlex.split(value, posix=True)
+    except ValueError:
+        return value or None
+    if not tokens:
+        return None
+    return tokens[0]
+
+
+def extract_reviewer_id(response_text: str) -> str | None:
+    """Return the ``reviewer:`` value from optional YAML frontmatter.
+
+    A pasted reviewer response MAY open with a YAML frontmatter block::
+
+        ---
+        reviewer: codex
+        timestamp: 2026-05-10T12:00:00Z
+        ---
+
+        # Findings ...
+
+    The helper scans for that exact opening fence on line 1 and a
+    closing fence on a later line; everything between is parsed as
+    ``key: value`` lines. The ``reviewer`` value (stripped) is
+    returned; ``None`` is returned when:
+
+    * the response does not open with ``---`` on its first line, or
+    * no closing ``---`` fence is found, or
+    * the frontmatter parses but contains no ``reviewer`` field, or
+    * the ``reviewer`` field is present but empty after stripping.
+
+    Returning ``None`` lets the skill fall back to a ``--reviewer
+    <name>`` flag or the ``"unknown"`` sentinel without inventing a
+    hidden default. Quoted values (single or double) are unquoted via
+    :func:`shlex.split`; values with embedded ``:`` characters survive
+    because we only split on the FIRST ``:``.
+    """
+    if not response_text:
+        return None
+    block = _find_frontmatter_block(response_text.splitlines())
+    if block is None:
+        return None
+    for raw in block:
+        key, separator, raw_value = raw.partition(":")
+        if not separator or key.strip().lower() != "reviewer":
+            continue
+        value = raw_value.strip()
+        return _unquote_value(value) if value else None
+    return None
+
+
+def _count_trailing_backslashes(value: str, end: int) -> int:
+    """Count backslashes immediately preceding index ``end`` in ``value``.
+
+    Used by :func:`_escape_pipes` to decide whether a ``|`` is "already
+    escaped". A pipe is already escaped when the count of immediately
+    preceding backslashes is odd (each pair of backslashes is itself an
+    escaped backslash, so an odd remainder is the live escape).
+    """
+    count = 0
+    cursor = end - 1
+    while cursor >= 0 and value[cursor] == "\\":
+        count += 1
+        cursor -= 1
+    return count
+
+
 def _escape_pipes(value: str) -> str:
     r"""Escape literal ``|`` characters so a Markdown table row stays well-formed.
 
     A pipe inside a cell would split it; the standard escape is ``\|``.
-    Already-escaped pipes (``\|``) are preserved verbatim — we only
-    target *unescaped* pipes so a second merge of the same content does
-    not double-escape the previous merge's output.
+    A pipe is treated as already-escaped only when an *odd* number of
+    backslashes immediately precedes it — an even count means each
+    backslash is itself escaped (``\\``) and the trailing pipe is live.
+    This keeps a literal ``\\|`` (escaped backslash followed by literal
+    pipe) round-trippable instead of swallowing the backslash.
     """
     out: list[str] = []
-    index = 0
-    length = len(value)
-    while index < length:
-        char = value[index]
-        if char == "\\" and index + 1 < length and value[index + 1] == "|":
-            # Already-escaped pipe — pass both characters through untouched.
-            out.append("\\|")
-            index += 2
+    for index, char in enumerate(value):
+        if char != "|":
+            out.append(char)
             continue
-        if char == "|":
-            out.append("\\|")
-            index += 1
+        if _count_trailing_backslashes(value, index) % 2 == 1:
+            # Already escaped — preserve verbatim.
+            out.append("|")
             continue
-        out.append(char)
-        index += 1
+        out.append("\\|")
     return "".join(out)
 
 
@@ -207,6 +325,26 @@ def _is_table_row(line: str) -> bool:
     return stripped.startswith("|") and stripped.count("|") >= _MIN_TABLE_ROW_PIPES
 
 
+def _is_findings_heading(line: str) -> bool:
+    """Tolerant match for the ``# Findings`` heading.
+
+    Accepts any heading depth (``#``, ``##``, ``###`` …) and any
+    trailing suffix (``# Findings``, ``# Findings (cycle 2)``,
+    ``## Findings — external``) so future template variants do not
+    silently fall through. The required shape is one or more leading
+    ``#`` characters, one space, then a token whose lowercase form
+    equals ``findings``.
+    """
+    stripped = line.strip()
+    if not stripped.startswith("#"):
+        return False
+    hashes, _, remainder = stripped.partition(" ")
+    if set(hashes) != {"#"}:
+        return False
+    first_word = remainder.strip().split(" ", maxsplit=1)[0].lower()
+    return first_word == "findings"
+
+
 def _insert_index_after_findings_table(lines: list[str]) -> int:
     """Locate the insertion point immediately after the Findings table block.
 
@@ -218,7 +356,7 @@ def _insert_index_after_findings_table(lines: list[str]) -> int:
     """
     heading_index: int | None = None
     for index, line in enumerate(lines):
-        if line.strip().lower() == "# findings":
+        if _is_findings_heading(line):
             heading_index = index
             break
     if heading_index is None:
@@ -318,6 +456,12 @@ def format_disclosure_summary(
     blank lines between the metadata block and the run/paste hints are
     all load-bearing.
 
+    Path placeholders inside the rendered shell command are wrapped with
+    :func:`shlex.quote` so a repo path containing whitespace (or any
+    other shell-meaningful character) still produces a copy-pasteable
+    command. ``shlex.quote`` is a no-op for paths with no special
+    characters, so the snapshot stays stable for plain ASCII paths.
+
     Args:
         disclosure: Pre-dispatch summary built by
             :func:`tools.cross_ai.disclosure.build_disclosure`.
@@ -333,6 +477,8 @@ def format_disclosure_summary(
     paste_command = (
         paste_back_command if paste_back_command is not None else _DEFAULT_PASTE_BACK_COMMAND
     )
+    quoted_prompt_path = shlex.quote(str(prompt_path))
+    quoted_response = shlex.quote("response.md")
     return (
         "Cross-AI review (manual mode) — review before sending\n"
         f"  Target:           {disclosure.target.value}\n"
@@ -348,7 +494,7 @@ def format_disclosure_summary(
         f"  Prompt path:      {prompt_path}\n"
         "\n"
         "  Run externally:\n"
-        f"    {disclosure.cli.value} < {prompt_path} > response.md\n"
+        f"    {disclosure.cli.value} < {quoted_prompt_path} > {quoted_response}\n"
         "\n"
         "  Then paste back:\n"
         f"    {paste_command}"

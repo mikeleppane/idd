@@ -38,6 +38,7 @@ def test_skill_references_manual_mode_helpers_by_name() -> None:
     for helper in (
         "write_prompt_to_disk",
         "read_paste_response",
+        "extract_reviewer_id",
         "merge_findings_into_review",
         "format_disclosure_summary",
     ):
@@ -45,6 +46,23 @@ def test_skill_references_manual_mode_helpers_by_name() -> None:
             f"Skill must reference manual-mode helper {helper!r} by name "
             "so the planning agent calls the correct API"
         )
+
+
+def test_skill_references_redaction_config_adapter() -> None:
+    body = _skill_body()
+    assert "to_redaction_config" in body, (
+        "Skill must reference the to_redaction_config adapter so the planning "
+        "agent does not construct RedactionConfig(...) by hand and risk "
+        "passing the wrong dataclass to redaction.filter()"
+    )
+
+
+def test_skill_writes_redacted_output_text_not_raw_prompt_body() -> None:
+    body = _skill_body()
+    assert "write_prompt_to_disk(redaction_result.output_text" in body, (
+        "Step 4a must persist the redacted output_text, not prompt.body — "
+        "the on-disk file is what the operator pipes to the external CLI"
+    )
 
 
 def test_existing_heavy_subagent_step_not_displaced() -> None:
