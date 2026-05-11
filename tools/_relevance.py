@@ -56,8 +56,9 @@ class RelevanceRule[T]:
 def _percentile(values: list[int], pct: float) -> float:
     """Inclusive linear-interpolation percentile. Returns 0.0 for empty input.
 
-    Identical formula to ``tools.constitution._percentile``; duplicated here
-    so the relevance helper does not depend on the Constitution module.
+    Production callers pass ``pct in {25, 50}``; the ``hi`` clamp at the end
+    is defensive for the ``pct == 100`` boundary (``rank == len-1``) so the
+    helper stays robust if a future caller probes the top percentile.
     """
     if not values:
         return 0.0

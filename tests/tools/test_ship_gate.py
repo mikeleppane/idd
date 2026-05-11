@@ -946,18 +946,6 @@ def _lessons_default() -> list[Lesson]:
     ]
 
 
-def test_lesson_tag_re_extracts_single_tag() -> None:
-    """`[lesson:L007]` in a Problem cell yields one lesson_id."""
-    src_text = "Foo bar [lesson:L007] baz"
-    assert sg._LESSON_TAG_RE.findall(src_text) == ["L007"]
-
-
-def test_lesson_tag_re_extracts_multiple_tags() -> None:
-    """Multiple lesson tags in one cell are all extracted in order."""
-    src_text = "[lesson:L010] then [lesson:L007] later"
-    assert sg._LESSON_TAG_RE.findall(src_text) == ["L010", "L007"]
-
-
 def test_parse_review_findings_extracts_mixed_article_and_lesson_tags(tmp_path: Path) -> None:
     """A row containing both [constitution:A<n>] and [lesson:L<NNN>] tags emits one
     ShipFinding per tag — article-kind first, then lesson-kind.
