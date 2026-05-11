@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -279,14 +278,10 @@ def test_persist_drafted_constitution_append_failure_rolls_back_both(
     decisions = repo / "decisions.md"
     assert not decisions.exists()
 
-    original_open = Path.open
+    def _raise(_path: Path, _entry: str) -> None:
+        raise OSError("simulated append failure")
 
-    def _patched_open(self: Path, *a: Any, **kw: Any) -> Any:
-        if self == decisions and a and a[0] == "a":
-            raise OSError("simulated append failure")
-        return original_open(self, *a, **kw)
-
-    monkeypatch.setattr(Path, "open", _patched_open)
+    monkeypatch.setattr(am, "append_decisions_atomic", _raise)
 
     with pytest.raises(am.AmendError, match=r"decisions\.md append failed"):
         am.persist_drafted_constitution(
@@ -311,14 +306,10 @@ def test_persist_drafted_constitution_append_failure_preserves_existing_decision
     original_text = "# Decisions\n\n## 2026-01-01 — earlier\n**Context:** keep me.\n"
     decisions.write_text(original_text, encoding="utf-8")
 
-    original_open = Path.open
+    def _raise(_path: Path, _entry: str) -> None:
+        raise OSError("simulated append failure")
 
-    def _patched_open(self: Path, *a: Any, **kw: Any) -> Any:
-        if self == decisions and a and a[0] == "a":
-            raise OSError("simulated append failure")
-        return original_open(self, *a, **kw)
-
-    monkeypatch.setattr(Path, "open", _patched_open)
+    monkeypatch.setattr(am, "append_decisions_atomic", _raise)
 
     with pytest.raises(am.AmendError, match=r"decisions\.md append failed"):
         am.persist_drafted_constitution(

@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path, PurePosixPath
+from types import ModuleType
 from typing import Literal
 
 from tools import redaction
@@ -33,6 +34,17 @@ from tools.constitution import (
 from tools.validate._finding import EXIT_NONZERO_SEVERITIES
 from tools.validate.constitution import validate_constitution
 from tools.validate.conventions import Convention, load_conventions
+
+# fcntl is POSIX-only; keep tools.constitution_amend importable on Windows.
+# When fcntl is unavailable, ``append_decisions_atomic`` falls back to plain
+# read-modify-write via ``atomic_replace`` — single-machine non-concurrent
+# flows stay correct, and tools.archive uses the same guard for its own
+# advisory-lock seam.
+fcntl: ModuleType | None
+try:
+    import fcntl
+except ModuleNotFoundError:  # pragma: no cover - non-POSIX (Windows)
+    fcntl = None
 
 
 class AmendError(RuntimeError):
@@ -488,15 +500,27 @@ def ensure_decisions_file(decisions_path: Path) -> bool:
     Both the amend lifecycle and the ship-time ACK hook share this helper so
     a freshly-bootstrapped decisions.md always starts with the same header.
 
+    Race-free: claims the path via ``os.O_CREAT | os.O_EXCL | os.O_WRONLY``
+    so two concurrent callers cannot both think they created the file. The
+    losing caller sees ``FileExistsError`` and returns ``False``. Mirrors
+    the ``O_EXCL`` claim used by :func:`persist_drafted_constitution` for
+    the Constitution path so the bootstrap surfaces share one race model.
+
     Returns:
-        True when the file was created in this call (rollback callers must
-        remove it on append failure to keep the atomic-pair contract). False
-        when the file already existed.
+        True when this call created the file (rollback callers must remove
+        it on append failure to keep the atomic-pair contract). False when
+        the file already existed — either before this call or because a
+        concurrent caller won the claim.
     """
-    if decisions_path.exists():
-        return False
     decisions_path.parent.mkdir(parents=True, exist_ok=True)
-    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+    try:
+        fd = os.open(decisions_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return False
+    try:
+        os.write(fd, b"# Decisions\n\n")
+    finally:
+        os.close(fd)
     return True
 
 
@@ -557,6 +581,65 @@ def atomic_replace(target: Path, body: str) -> None:
             os.fsync(dir_fd)
     finally:
         os.close(dir_fd)
+
+
+def append_decisions_atomic(decisions_path: Path, entry: str) -> None:
+    r"""Atomically append ``entry`` to ``decisions_path``.
+
+    Read-modify-write via :func:`atomic_replace` so a process crash cannot
+    leave a partial row on disk: the temp-file rename is the single moment
+    the canonical name flips. Under POSIX, an advisory ``fcntl.flock``
+    serializes concurrent writers so two callers cannot both read the
+    pre-state and have the second writer's replace silently overwrite the
+    first writer's entry. The lock is held across the entire read,
+    concatenate, and replace.
+
+    Caller must have already bootstrapped the file via
+    :func:`ensure_decisions_file` if the canonical ``# Decisions\n\n``
+    header is required — this helper does not synthesize it. When the file
+    is missing, the helper treats the current body as empty and writes the
+    entry verbatim; ``ensure_decisions_file`` owns the bootstrap shape,
+    this helper owns the write primitive.
+
+    The entry string is appended verbatim. Callers are responsible for the
+    leading ``\n`` separator between the existing body and the new entry,
+    matching the shape used by every existing call site (see
+    :func:`tools.ship_gate.make_acknowledgement_hook` for the reference).
+
+    Platform note:
+        On non-POSIX platforms ``fcntl`` is unavailable; the helper falls
+        back to plain read-modify-write via :func:`atomic_replace`. Single
+        writer paths stay correct, but two concurrent writers can lose one
+        of the two entries (last writer wins). FORGE's CI runs on POSIX
+        so the advisory lock is the production path.
+
+    Raises:
+        OSError: When the parent directory is gone, the disk is full, or
+            the temp-file rename fails for another reason. Callers that
+            need rollback must catch and restore prior on-disk state
+            themselves; this helper is the write primitive, not the
+            lifecycle owner.
+    """
+    if fcntl is None:  # pragma: no cover - non-POSIX (Windows)
+        current = decisions_path.read_text(encoding="utf-8") if decisions_path.exists() else ""
+        atomic_replace(decisions_path, current + entry)
+        return
+
+    # Sibling lockfile keeps the lock inode disjoint from the file the
+    # atomic-replace flips, so the rename cannot orphan the lock. The
+    # lockfile is created on first append and left in place — re-creating
+    # it on every call would itself need synchronization.
+    decisions_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = decisions_path.with_suffix(decisions_path.suffix + ".lock")
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        current = decisions_path.read_text(encoding="utf-8") if decisions_path.exists() else ""
+        atomic_replace(decisions_path, current + entry)
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
 
 
 # Backwards-compatible private aliases for in-module call sites.
@@ -654,8 +737,7 @@ def amend_constitution(
         kind="amendment",
     )
     try:
-        with decisions_path.open("a", encoding="utf-8") as fh:
-            fh.write(entry)
+        append_decisions_atomic(decisions_path, entry)
     except OSError as exc:
         _atomic_replace(constitution, before)
         if decisions_created:
@@ -868,8 +950,7 @@ def persist_drafted_constitution(
         alternatives="Decline bootstrap and continue without a Constitution.",
     )
     try:
-        with decisions_path.open("a", encoding="utf-8") as fh:
-            fh.write(entry)
+        append_decisions_atomic(decisions_path, entry)
     except OSError as exc:
         constitution.unlink(missing_ok=True)
         if decisions_created:
@@ -1029,8 +1110,7 @@ def append_conventions_entries(
     decisions_created = ensure_decisions_file(decisions_path)
     adr = _format_conventions_adr(today=today, entries=entries)
     try:
-        with decisions_path.open("a", encoding="utf-8") as fh:
-            fh.write(adr)
+        append_decisions_atomic(decisions_path, adr)
     except OSError as exc:
         _restore_conventions(conventions_path, previous_body, file_existed)
         if decisions_created:
@@ -1114,8 +1194,7 @@ def log_advisory_entries(
     decisions_created = ensure_decisions_file(decisions_path)
     adr = _format_advisory_adr(today=today, entries=entries)
     try:
-        with decisions_path.open("a", encoding="utf-8") as fh:
-            fh.write(adr)
+        append_decisions_atomic(decisions_path, adr)
     except OSError as exc:
         if decisions_created:
             decisions_path.unlink(missing_ok=True)

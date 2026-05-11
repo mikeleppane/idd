@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from datetime import date
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -191,14 +190,10 @@ def test_append_conventions_entries_decisions_append_failure_rolls_back_absent_f
     repo = _setup_repo(tmp_path)
     decisions = repo / "decisions.md"
 
-    original_open = Path.open
+    def _raise(_path: Path, _entry: str) -> None:
+        raise OSError("simulated append failure")
 
-    def _patched_open(self: Path, *a: Any, **kw: Any) -> Any:
-        if self == decisions and a and a[0] == "a":
-            raise OSError("simulated append failure")
-        return original_open(self, *a, **kw)
-
-    monkeypatch.setattr(Path, "open", _patched_open)
+    monkeypatch.setattr(am, "append_decisions_atomic", _raise)
 
     with pytest.raises(am.AmendError, match=r"decisions\.md append failed"):
         am.append_conventions_entries(
@@ -231,14 +226,10 @@ def test_append_conventions_entries_decisions_append_failure_restores_existing_b
     before_body = (repo / ".forge" / "conventions.json").read_text(encoding="utf-8")
     before_decisions = decisions.read_text(encoding="utf-8")
 
-    original_open = Path.open
+    def _raise(_path: Path, _entry: str) -> None:
+        raise OSError("simulated append failure")
 
-    def _patched_open(self: Path, *a: Any, **kw: Any) -> Any:
-        if self == decisions and a and a[0] == "a":
-            raise OSError("simulated append failure")
-        return original_open(self, *a, **kw)
-
-    monkeypatch.setattr(Path, "open", _patched_open)
+    monkeypatch.setattr(am, "append_decisions_atomic", _raise)
 
     with pytest.raises(am.AmendError, match=r"decisions\.md append failed"):
         am.append_conventions_entries(
