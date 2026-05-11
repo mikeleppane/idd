@@ -72,7 +72,40 @@ _TRUNCATION_NONCE_RE = re.compile(rf"^[0-9a-f]{{{_TRUNCATION_NONCE_HEX_LEN}}}$")
 # sensitive-named candidate (e.g. ".env.example", "deploy.pem") gets the
 # filter for free — the regression test forces the branch via monkeypatch so
 # nobody prunes it for "dead code".
-_DENY_GLOBS: tuple[str, ...] = (".env*", "*.pem", "*.key", "id_rsa*")
+#
+# The expanded set spans three credential-file families: dotfiles
+# (``.env*``, ``.npmrc``, ``.netrc``, ``.git-credentials``), private-key /
+# cert shapes (``*.pem``, ``*.key``, ``id_rsa*``, ``*.ppk``, ``*.p12``,
+# ``*.pfx``, ``*.kdbx``, ``*.crt``, ``*.cer``, ``*.jks``, ``*.keystore``),
+# and credential JSON / config bundles (``credentials.json``,
+# ``service-account-*.json``, ``kubeconfig``). The list is intentionally
+# defense-in-depth: a body-level secret-pattern scanner runs after this
+# filter, so a borderline file (e.g. ``client.crt`` containing only a
+# public certificate) is still rejected at the name layer rather than
+# trusted to the body scan.
+_DENY_GLOBS: tuple[str, ...] = (
+    # dotfiles / config
+    ".env*",
+    ".npmrc",
+    ".netrc",
+    ".git-credentials",
+    # private-key / cert shapes
+    "*.pem",
+    "*.key",
+    "id_rsa*",
+    "*.ppk",
+    "*.p12",
+    "*.pfx",
+    "*.kdbx",
+    "*.crt",
+    "*.cer",
+    "*.jks",
+    "*.keystore",
+    # credential JSON / config bundles
+    "credentials.json",
+    "service-account-*.json",
+    "kubeconfig",
+)
 _MANIFEST_NAMES: tuple[str, ...] = (
     "pyproject.toml",
     "package.json",
@@ -86,13 +119,97 @@ _MANIFEST_NAMES: tuple[str, ...] = (
 )
 _DOC_NAMES: tuple[str, ...] = ("AGENTS.md", "CLAUDE.md", "README.md")
 
-# Content-level secret regex: triggered when a key-shaped label sits next to a
-# value-shaped token long enough to look like a credential. Used as a fallback
-# alongside ``tools.redaction.filter`` so unconfigured deny_regex still catches
-# obvious leaks in bootstrap signals.
-_SECRET_CONTENT_RE = re.compile(
-    r"(?i)(api[_-]?key|secret|password|token)\s*[:=]\s*['\"]?[A-Za-z0-9+/=_-]{12,}",
+
+@dataclass(frozen=True, kw_only=True)
+class _SecretPattern:
+    """One named credential-shape regex used by :func:`_detect_secret`.
+
+    Pairing the regex with a stable ``label`` lets the scanner tell callers
+    WHICH shape fired the drop (e.g. ``"aws_access_key"`` vs ``"jwt"``)
+    instead of the legacy "secret-shaped content" generic — useful for the
+    user-facing drop log and for tests that assert on the matched class.
+    """
+
+    label: str
+    regex: re.Pattern[str]
+
+
+# Content-level credential scanner. Each entry targets a single, explicit
+# token shape so the false-positive surface stays tight. The original
+# single regex (``(api[_-]?key|secret|password|token)\s*[:=]\s*['\"]?...``)
+# both missed every modern token format (JWT, AWS, GitHub PAT, Stripe,
+# Slack, GCP service-account, PEM private-key markers) and flagged
+# legitimate prose like ``secret = compute_hash(...)`` or English copy
+# (``password: NewPassword123Required``). The new design:
+#
+#   * Enumerates well-known token shapes first — those don't depend on
+#     label prefixes at all.
+#   * Falls back to a generic-assignment shape that REQUIRES quote
+#     delimiters around a 20+ char value, plus a narrow allow-list of
+#     credential-shaped labels. The quote requirement drops the unquoted
+#     prose false-positive class.
+#
+# Order matters: more-specific shapes run before the generic fallback so
+# the surfaced label is the most informative one (an AWS key embedded as
+# ``access_key = "AKIA..."`` reports ``aws_access_key``, not the broader
+# ``generic_assignment``).
+_SECRET_PATTERNS: tuple[_SecretPattern, ...] = (
+    _SecretPattern(
+        label="aws_access_key",
+        regex=re.compile(r"AKIA[0-9A-Z]{16}"),
+    ),
+    _SecretPattern(
+        label="github_pat",
+        regex=re.compile(r"gh[psour]_[A-Za-z0-9]{36,}"),
+    ),
+    _SecretPattern(
+        label="stripe_live_key",
+        regex=re.compile(r"sk_live_[0-9a-zA-Z]{24,}"),
+    ),
+    _SecretPattern(
+        label="slack_token",
+        regex=re.compile(r"xox[abprs]-[A-Za-z0-9-]{10,}"),
+    ),
+    _SecretPattern(
+        label="jwt",
+        regex=re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+"),
+    ),
+    _SecretPattern(
+        label="pem_private_key",
+        regex=re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"),
+    ),
+    _SecretPattern(
+        label="gcp_service_account",
+        regex=re.compile(r'"type"\s*:\s*"service_account"'),
+    ),
+    _SecretPattern(
+        label="generic_assignment",
+        regex=re.compile(
+            r"""(?ix)                               # case-insensitive, verbose
+            (?:^|[\s;,{])                           # boundary: SOL or separator
+            (?:
+                api[_-]?key
+              | secret[_-]?key
+              | access[_-]?key
+              | auth[_-]?token
+              | bearer[_-]?token
+              | client[_-]?secret
+              | private[_-]?key
+            )
+            \s*[:=]\s*
+            ['"`]                                   # opening quote (required)
+            [A-Za-z0-9+/=_-]{20,}                   # 20+ char base64-ish value
+            ['"`]                                   # closing quote (required)
+            """,
+        ),
+    ),
 )
+
+
+# Drop-reason vocabulary for :class:`DroppedFile`. Pinned as a module-level
+# alias so mypy strict treats the literal as a structural type — the
+# value passed in ``_collect_signals`` must be one of the two strings.
+_DropReason = Literal["deny_glob", "secret_content"]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -105,6 +222,29 @@ class SignalFile:
 
 
 @dataclass(frozen=True, kw_only=True)
+class DroppedFile:
+    """One file refused during signal collection, with structured reason.
+
+    Carries the path that was dropped, the reason category (``"deny_glob"``
+    for path-name filter hits, ``"secret_content"`` for body-scan hits),
+    and a detail string identifying the specific glob or pattern label
+    that triggered the drop. Surfacing the label lets the user see "GCP
+    service-account JSON detected in README.md" rather than the legacy
+    generic "secret-shaped content" message.
+
+    Symlink-escape drops are surfaced through
+    :attr:`BootstrapSignals.dropped_for_escape` instead — that channel
+    distinguishes a leaked credential (worth investigating) from a
+    hostile symlink (worth deleting) and is owned by the candidate-
+    classification pass before the read loop runs.
+    """
+
+    relative_path: PurePosixPath
+    reason: _DropReason
+    detail: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class BootstrapSignals:
     """Pure-data result of :func:`collect_bootstrap_signals`.
 
@@ -112,14 +252,20 @@ class BootstrapSignals:
     ``files`` list, regardless of cause — both deny-glob matches (sensitive
     name shape like ``.env``, ``id_rsa``) and secret-content rejections
     (the body contained a credential-shaped substring). Callers that need
-    to distinguish the two causes can re-scan paths via the documented
-    deny-glob set, but the public surface treats them uniformly: a dropped
-    path is one that did NOT make it into the bootstrap payload.
+    to distinguish the two causes inspect :attr:`dropped_records`, which
+    carries the structured reason + detail per entry.
 
     Attributes:
         files: Files that survived all filters, in priority order.
         dropped: Paths skipped or removed by either the deny-glob filter
-            or the secret-content scan.
+            or the secret-content scan. Kept as the legacy union for
+            back-compat with existing call sites; new code should consume
+            :attr:`dropped_records` instead.
+        dropped_records: Structured per-drop records carrying the reason
+            (``"deny_glob"`` vs ``"secret_content"``) and a detail string
+            naming the matched glob or secret-pattern label. Parallel to
+            :attr:`dropped` — every entry in ``dropped`` has exactly one
+            matching record here (and vice versa).
         dropped_for_escape: Paths refused because a symlink resolved to a
             location outside ``repo_root``. Kept separate from
             :attr:`dropped` so the user / skill can distinguish a leaked
@@ -134,22 +280,36 @@ class BootstrapSignals:
     truncated: list[PurePosixPath]
     total_bytes: int
     dropped_for_escape: list[PurePosixPath] = field(default_factory=list)
+    dropped_records: list[DroppedFile] = field(default_factory=list)
 
     @property
     def dropped_for_secrets(self) -> list[PurePosixPath]:
         """Back-compat alias for :attr:`dropped`.
 
         Kept so existing tests / skill orchestrators continue to read the
-        old field name. Prefer :attr:`dropped` in new code — the rename
-        reflects that this list also includes deny-glob rejections, not
-        only secret-content rejections.
+        old field name. Prefer :attr:`dropped_records` in new code — the
+        structured records carry the drop reason and detail label that
+        this flat list cannot express.
         """
         return self.dropped
 
 
 def _name_matches_deny_glob(name: str) -> bool:
     """True iff ``name`` matches any path-level deny glob."""
-    return any(globstar_match(name, g) for g in _DENY_GLOBS)
+    return _matching_deny_glob(name) is not None
+
+
+def _matching_deny_glob(name: str) -> str | None:
+    """Return the first deny-glob that ``name`` matches, or ``None``.
+
+    Surfacing the matching glob lets the caller record the structured
+    :class:`DroppedFile` detail so the user sees *which* shape the
+    filename hit — useful when several globs could plausibly match.
+    """
+    for glob in _DENY_GLOBS:
+        if globstar_match(name, glob):
+            return glob
+    return None
 
 
 def _is_within_repo(path: Path, repo_root: Path) -> bool:
@@ -313,20 +473,33 @@ def _read_and_truncate(path: Path, *, marker: str) -> tuple[str, bool]:
     return head.decode("utf-8", errors="replace"), False
 
 
-def _looks_like_secret(body: str) -> bool:
-    """Run body through ``tools.redaction.filter`` then a focused regex fallback.
+def _detect_secret(body: str) -> str | None:
+    """Return the matched secret-pattern label, or ``None`` when nothing fires.
 
-    ``redaction.filter`` honors any caller-configured ``deny_regex`` /
-    ``fatal_regex``; the default config carries empty regex lists, so the
-    fallback below is what fires when no project config has been threaded in.
+    Runs ``body`` through :func:`tools.redaction.filter` first so any
+    project-supplied ``deny_regex`` / ``fatal_regex`` takes precedence
+    (the redaction surface owns user-configurable patterns), then through
+    the curated :data:`_SECRET_PATTERNS` list. Surfacing the matched
+    label lets callers tell users WHICH credential shape triggered the
+    drop (e.g. ``"github_pat detected"``) rather than the legacy generic
+    "secret-shaped content detected" message.
+
+    Returns ``"redaction_deny"`` / ``"redaction_fatal"`` when the
+    redaction surface fired the rejection — those branches honor user
+    configuration and the curated label list does not own them.
     """
     result = redaction.filter(
         redaction.PromptPayload(text=body, files=()),
         redaction.RedactionConfig(),
     )
-    if result.had_denials or result.fatal_matches:
-        return True
-    return bool(_SECRET_CONTENT_RE.search(body))
+    if result.fatal_matches:
+        return "redaction_fatal"
+    if result.had_denials:
+        return "redaction_deny"
+    for pattern in _SECRET_PATTERNS:
+        if pattern.regex.search(body):
+            return pattern.label
+    return None
 
 
 def _collect_signals(
@@ -356,6 +529,7 @@ def _collect_signals(
 
     files: list[SignalFile] = []
     dropped: list[PurePosixPath] = []
+    dropped_records: list[DroppedFile] = []
     dropped_for_escape: list[PurePosixPath] = []
     truncated_paths: list[PurePosixPath] = []
     total_bytes = 0
@@ -368,14 +542,30 @@ def _collect_signals(
             dropped_for_escape.append(candidate.rel)
             continue
 
-        if _name_matches_deny_glob(candidate.rel.name):
+        matched_glob = _matching_deny_glob(candidate.rel.name)
+        if matched_glob is not None:
             dropped.append(candidate.rel)
+            dropped_records.append(
+                DroppedFile(
+                    relative_path=candidate.rel,
+                    reason="deny_glob",
+                    detail=matched_glob,
+                ),
+            )
             continue
 
         body, was_truncated = _read_and_truncate(candidate.path, marker=marker)
 
-        if _looks_like_secret(body):
+        secret_label = _detect_secret(body)
+        if secret_label is not None:
             dropped.append(candidate.rel)
+            dropped_records.append(
+                DroppedFile(
+                    relative_path=candidate.rel,
+                    reason="secret_content",
+                    detail=secret_label,
+                ),
+            )
             continue
 
         body_bytes = len(body.encode("utf-8"))
@@ -392,6 +582,7 @@ def _collect_signals(
     return BootstrapSignals(
         files=files,
         dropped=dropped,
+        dropped_records=dropped_records,
         dropped_for_escape=dropped_for_escape,
         truncated=truncated_paths,
         total_bytes=total_bytes,

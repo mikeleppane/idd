@@ -230,11 +230,17 @@ def test_collect_bootstrap_signals_handles_non_utf8_bytes(tmp_path: Path) -> Non
 
 
 def test_collect_bootstrap_signals_dropped_secret_does_not_count_to_total(tmp_path: Path) -> None:
+    # Use a credential-shaped label (``api_key``) rather than the legacy
+    # ``password`` prefix. The hardened scanner intentionally drops bare
+    # ``password`` from the allow-list to fix the prose false-positive
+    # class (``password: NewPassword123Required`` in English copy) — the
+    # quote-required generic-assignment shape now covers the remaining
+    # ``api_key = "..."`` / ``client_secret = "..."`` style leaks.
     _write(tmp_path, "pyproject.toml", '[project]\nname = "x"\n')
     _write(
         tmp_path,
         "README.md",
-        'password = "hunter2supersecretvalue123"\n',
+        'api_key = "hunter2supersecretvalue123"\n',
     )
 
     result = collect_bootstrap_signals(tmp_path)
