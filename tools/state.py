@@ -51,6 +51,10 @@ _FEATURE_ID_RE = re.compile(
     r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9]))+$"
 )
 
+# Git commit SHA: 7-40 lowercase hex characters. Mirrors the schema pattern
+# at ``schemas/state.schema.json#commits.items.properties.sha``.
+_COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
+
 
 VALID_TIERS = ("focused", "standard", "full")
 
@@ -834,6 +838,174 @@ def complete_review_target(
     targets_done = review_block.setdefault("targets_done", [])
     if review_target not in targets_done:
         targets_done.append(review_target)
+    write_state(path, payload, schema_path=schema_path)
+    return payload
+
+
+def set_execute_current_slice(
+    path: Path,
+    *,
+    slice_number: int,
+    schema_path: Path | None = None,
+) -> dict[str, Any]:
+    """Set ``phases.execute.current_slice`` and persist.
+
+    Standard / full tier execute walks slice-by-slice; the orchestrator
+    stamps the slice number before dispatching each wave so a mid-phase
+    interruption can resume at the right cursor. Schema permits the field
+    on every phase entry but ``forge-execute`` is the only consumer today,
+    hence the execute-specific guards in this helper.
+
+    Args:
+        path: state.json path.
+        slice_number: 1-based slice ordinal; schema minimum is 1.
+        schema_path: Optional schema for read+write validation.
+
+    Returns:
+        Updated state payload.
+
+    Raises:
+        StateError: ``slice_number`` is not a positive int (bools are
+            rejected even though they are an int subclass),
+            ``current_phase`` is not ``"execute"``, the ``phases.execute``
+            entry is missing or its status is not ``"in_progress"``, or
+            schema validation fails.
+    """
+    if not isinstance(slice_number, int) or isinstance(slice_number, bool) or slice_number < 1:
+        raise StateError(
+            f"slice_number must be a positive int (got {type(slice_number).__name__} "
+            f"{slice_number!r})"
+        )
+    payload = read_state(path, schema_path=schema_path)
+    current_phase = payload.get("current_phase")
+    if current_phase != "execute":
+        raise StateError(
+            f"cannot set execute.current_slice: current_phase is "
+            f"{current_phase!r}, expected 'execute'"
+        )
+    phases = payload.get("phases")
+    if not isinstance(phases, dict) or "execute" not in phases:
+        raise StateError("cannot set execute.current_slice: phases.execute entry missing")
+    execute_block = phases["execute"]
+    if not isinstance(execute_block, dict):
+        raise StateError("cannot set execute.current_slice: phases.execute entry is not a mapping")
+    status = execute_block.get("status")
+    if status != "in_progress":
+        raise StateError(
+            f"cannot set execute.current_slice: phases.execute.status is "
+            f"{status!r}, expected 'in_progress'"
+        )
+    execute_block["current_slice"] = slice_number
+    write_state(path, payload, schema_path=schema_path)
+    return payload
+
+
+def record_commit(
+    path: Path,
+    *,
+    sha: str,
+    phase: str,
+    subject: str,
+    logged_at: str | None = None,
+    schema_path: Path | None = None,
+) -> dict[str, Any]:
+    """Append a commit entry to ``state.commits[]``.
+
+    Replaces ad-hoc Edit / Write calls against the live ``state.json`` —
+    the state-writer hook refuses those, and bypassing it through Bash
+    skips schema validation. This helper stamps the entry, validates it,
+    and writes through the same atomic path as every other mutation.
+
+    Args:
+        path: state.json path.
+        sha: 7-40 lowercase hex character git SHA (matches schema pattern).
+        phase: Lifecycle phase the commit belongs to.
+        subject: Commit subject line; must be non-empty.
+        logged_at: Optional RFC 3339 timestamp; defaults to UTC now.
+        schema_path: Optional schema for read+write validation.
+
+    Returns:
+        Updated state payload.
+
+    Raises:
+        StateError: ``sha`` does not match the schema pattern, ``phase``
+            is not in :data:`VALID_LIFECYCLE_PHASES`, ``subject`` is empty
+            or not a string, ``state.commits`` is not a list, or schema
+            validation fails.
+    """
+    if not isinstance(sha, str) or not _COMMIT_SHA_RE.fullmatch(sha):
+        raise StateError(f"invalid commit sha {sha!r}; must be 7-40 lowercase hex chars")
+    if phase not in VALID_LIFECYCLE_PHASES:
+        raise StateError(f"invalid commit phase {phase!r}; must be one of {VALID_LIFECYCLE_PHASES}")
+    if not isinstance(subject, str) or not subject:
+        raise StateError("commit subject must be a non-empty string")
+    payload = read_state(path, schema_path=schema_path)
+    commits = payload.setdefault("commits", [])
+    if not isinstance(commits, list):
+        raise StateError("state.json `commits` field is not a list")
+    entry: dict[str, Any] = {
+        "sha": sha,
+        "phase": phase,
+        "subject": subject,
+        "logged_at": logged_at or _utc_now_iso(),
+    }
+    commits.append(entry)
+    write_state(path, payload, schema_path=schema_path)
+    return payload
+
+
+def append_deviation(
+    path: Path,
+    *,
+    phase: str,
+    cause: str,
+    resolution: str,
+    logged_at: str | None = None,
+    schema_path: Path | None = None,
+) -> dict[str, Any]:
+    """Append a deviation entry to ``state.deviations[]``.
+
+    Replaces ad-hoc Edit / Write calls against the live ``state.json`` —
+    the state-writer hook refuses those, and bypassing it through Bash
+    skips schema validation. Use this whenever a phase logs a non-fatal
+    deviation that ``tools.validate --target deviations`` will cross-check
+    against ``decisions.md``.
+
+    Args:
+        path: state.json path.
+        phase: Lifecycle phase the deviation belongs to.
+        cause: Why the deviation was needed; non-empty string.
+        resolution: What was done to address it; non-empty string.
+        logged_at: Optional RFC 3339 timestamp; defaults to UTC now.
+        schema_path: Optional schema for read+write validation.
+
+    Returns:
+        Updated state payload.
+
+    Raises:
+        StateError: ``phase`` is not in :data:`VALID_LIFECYCLE_PHASES`,
+            ``cause`` or ``resolution`` is empty or not a string,
+            ``state.deviations`` is not a list, or schema validation fails.
+    """
+    if phase not in VALID_LIFECYCLE_PHASES:
+        raise StateError(
+            f"invalid deviation phase {phase!r}; must be one of {VALID_LIFECYCLE_PHASES}"
+        )
+    if not isinstance(cause, str) or not cause:
+        raise StateError("deviation cause must be a non-empty string")
+    if not isinstance(resolution, str) or not resolution:
+        raise StateError("deviation resolution must be a non-empty string")
+    payload = read_state(path, schema_path=schema_path)
+    deviations = payload.setdefault("deviations", [])
+    if not isinstance(deviations, list):
+        raise StateError("state.json `deviations` field is not a list")
+    entry: dict[str, Any] = {
+        "phase": phase,
+        "cause": cause,
+        "resolution": resolution,
+        "logged_at": logged_at or _utc_now_iso(),
+    }
+    deviations.append(entry)
     write_state(path, payload, schema_path=schema_path)
     return payload
 
