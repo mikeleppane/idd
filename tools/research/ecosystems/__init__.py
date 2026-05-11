@@ -8,6 +8,32 @@ name)`` so registration order does not leak into results).
 """
 
 from tools.research.ecosystem import Ecosystem
-from tools.research.ecosystems import generic
+from tools.research.ecosystems import (
+    dart,
+    dotnet,
+    elixir,
+    generic,
+    go,
+    java,
+    node,
+    php,
+    python,
+    ruby,
+    rust,
+    swift,
+)
 
-PLUGINS: list[Ecosystem] = [generic.plugin]
+PLUGINS: list[Ecosystem] = [
+    python.plugin,
+    node.plugin,
+    rust.plugin,
+    go.plugin,
+    ruby.plugin,
+    java.plugin,
+    dotnet.plugin,
+    elixir.plugin,
+    php.plugin,
+    swift.plugin,
+    dart.plugin,
+    generic.plugin,
+]
