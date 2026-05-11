@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge.dev/schemas/conventions.schema.json",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id",
+      "source_file",
+      "source_line",
+      "pattern_kind",
+      "pattern",
+      "scope",
+      "severity"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_-]{2,63}$"
+      },
+      "source_file": {
+        "type": "string",
+        "minLength": 1
+      },
+      "source_line": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "pattern_kind": {
+        "type": "string",
+        "enum": ["forbidden_text", "required_text", "filename_glob_forbidden"]
+      },
+      "pattern": {
+        "type": "string",
+        "minLength": 1
+      },
+      "scope": {
+        "type": "array",
+        "minItems": 1,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": ["commit_body", "diff", "dispatch_brief"]
+        }
+      },
+      "severity": {
+        "type": "string",
+        "enum": ["BLOCK", "HIGH", "MEDIUM", "LOW", "WARN"]
+      }
+    }
+  }
+}

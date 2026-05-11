@@ -20,6 +20,7 @@ from ._finding import (
 from ._research_shape import validate_research
 from .cli import main
 from .constitution import validate_constitution
+from .conventions import validate_conventions
 from .delta import validate_delta
 from .domain_glossary import validate_domain_glossary
 from .health import validate_health
@@ -47,6 +48,7 @@ __all__ = [
     "validate_capability_uniqueness",
     "validate_config",
     "validate_constitution",
+    "validate_conventions",
     "validate_delta",
     "validate_deviations",
     "validate_domain_glossary",
