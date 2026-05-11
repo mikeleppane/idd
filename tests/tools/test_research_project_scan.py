@@ -18,6 +18,7 @@ single ``ScanResult`` consumable by the research subagent. Coverage:
 
 import dataclasses
 from pathlib import Path
+from unittest.mock import patch
 
 from tools.research.project_scan import ScanResult, scan
 
@@ -222,3 +223,72 @@ def test_go_entrypoint_first_cmd(tmp_path: Path) -> None:
     result = scan(tmp_path)
     # Sorted lookup picks "alpha" first deterministically.
     assert result.entrypoints["go"] == "cmd/alpha/main.go"
+
+
+def test_layout_returns_empty_when_repo_root_unreadable(tmp_path: Path) -> None:
+    # iterdir failing (e.g., permission denied) collapses to an empty
+    # layout instead of raising — exercises the OSError branch in
+    # ``_layout``.
+    real_iterdir = Path.iterdir
+
+    def fake_iterdir(self: Path) -> object:
+        if self == tmp_path:
+            raise PermissionError("blocked")
+        return real_iterdir(self)
+
+    with patch.object(Path, "iterdir", fake_iterdir):
+        result = scan(tmp_path)
+    assert result.layout == ()
+
+
+def test_node_entrypoint_invalid_json_falls_back_to_index_js(tmp_path: Path) -> None:
+    # Malformed package.json triggers the JSONDecodeError branch; the
+    # resolver then falls back to index.js when present.
+    (tmp_path / "package.json").write_text("{not-json", encoding="utf-8")
+    (tmp_path / "index.js").write_text("module.exports = {};\n", encoding="utf-8")
+    result = scan(tmp_path)
+    assert result.entrypoints["node"] == "index.js"
+
+
+def test_node_entrypoint_main_field_non_string_ignored(tmp_path: Path) -> None:
+    # ``main`` is a number — the isinstance check in _node_entrypoint
+    # rejects it and falls back to index.js.
+    (tmp_path / "package.json").write_text(
+        '{"name":"x","version":"0.0.1","main":42}',
+        encoding="utf-8",
+    )
+    (tmp_path / "index.js").write_text("module.exports = {};\n", encoding="utf-8")
+    result = scan(tmp_path)
+    assert result.entrypoints["node"] == "index.js"
+
+
+def test_node_entrypoint_top_level_array_ignored(tmp_path: Path) -> None:
+    # JSON parses successfully but is not a dict — exercises the
+    # isinstance(data, dict) guard.
+    (tmp_path / "package.json").write_text("[1, 2, 3]", encoding="utf-8")
+    (tmp_path / "index.js").write_text("module.exports = {};\n", encoding="utf-8")
+    result = scan(tmp_path)
+    assert result.entrypoints["node"] == "index.js"
+
+
+def test_go_entrypoint_empty_when_cmd_dir_missing(tmp_path: Path) -> None:
+    # No ``cmd/`` directory — _go_entrypoint hits the early return.
+    (tmp_path / "go.mod").write_text("module x\n\ngo 1.22\n", encoding="utf-8")
+    result = scan(tmp_path)
+    assert result.entrypoints["go"] == ""
+
+
+def test_go_entrypoint_empty_when_no_main_go_in_subdirs(tmp_path: Path) -> None:
+    # ``cmd/`` exists but contains a sibling file rather than a
+    # subdirectory with main.go — exercises the loop-completes-without-
+    # match branch.
+    (tmp_path / "go.mod").write_text("module x\n\ngo 1.22\n", encoding="utf-8")
+    cmd = tmp_path / "cmd"
+    cmd.mkdir()
+    (cmd / "README.md").write_text("hello\n", encoding="utf-8")
+    nested = cmd / "alpha"
+    nested.mkdir()
+    # No main.go in nested/
+    (nested / "helper.go").write_text("package alpha\n", encoding="utf-8")
+    result = scan(tmp_path)
+    assert result.entrypoints["go"] == ""
