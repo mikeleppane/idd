@@ -1162,8 +1162,63 @@ def test_partition_by_lesson_severity_mismatched_severity_raises() -> None:
         location="src/x.py:1",
         message="[lesson:L030] m",
     )
-    with pytest.raises(sg.ShipGateError, match=r"row Severity=.*lesson L030 has Severity="):
+    with pytest.raises(
+        sg.ShipGateError, match=r"row Severity=.*disagrees with lesson L030 Severity="
+    ):
         sg.partition_by_lesson_severity([finding], _lessons_default())
+
+
+def test_partition_by_lesson_severity_batches_all_mismatches(tmp_path: Path) -> None:
+    """All routing errors must surface in a single raise, not one-per-row.
+
+    Pre-fix the partitioner short-circuited on the first severity mismatch.
+    The user then fixed-and-reshipped N times for N misaligned rows.
+    """
+    bad_a = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L030",
+        severity="BLOCK",
+        location="src/a.py:1",
+        message="[lesson:L030] a",
+    )
+    bad_b = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L007",
+        severity="MEDIUM",
+        location="src/b.py:1",
+        message="[lesson:L007] b",
+    )
+    with pytest.raises(sg.ShipGateError) as exc:
+        sg.partition_by_lesson_severity([bad_a, bad_b], _lessons_default())
+    msg = str(exc.value)
+    assert "2 row(s) failed routing" in msg
+    assert "src/a.py:1" in msg
+    assert "src/b.py:1" in msg
+
+
+def test_partition_by_lesson_severity_batches_unknown_and_mismatch_together(
+    tmp_path: Path,
+) -> None:
+    """Unknown-lesson and severity-mismatch errors batch into the same raise."""
+    unknown = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L999",
+        severity="HIGH",
+        location="src/u.py:1",
+        message="[lesson:L999] u",
+    )
+    mismatch = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L030",
+        severity="BLOCK",
+        location="src/m.py:1",
+        message="[lesson:L030] m",
+    )
+    with pytest.raises(sg.ShipGateError) as exc:
+        sg.partition_by_lesson_severity([unknown, mismatch], _lessons_default())
+    msg = str(exc.value)
+    assert "unknown lesson id" in msg
+    assert "disagrees with lesson L030" in msg
 
 
 def test_partition_by_lesson_severity_multiple_lessons_split_correctly() -> None:

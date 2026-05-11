@@ -413,6 +413,12 @@ def partition_by_lesson_severity(
     gate: list[ShipFinding] = []
     warn: list[ShipFinding] = []
     info: list[ShipFinding] = []
+    # Accumulate ALL routing errors so a REVIEW.md with N misaligned rows
+    # surfaces them in a single raise instead of forcing N fix-then-reship
+    # cycles. Constructor mis-use (kind='lesson' without lesson_id) is still
+    # raised eagerly because that's a programmer error in the caller, not a
+    # batch-fixable data input.
+    routing_errors: list[str] = []
     for f in findings:
         if f.kind != "lesson":
             continue
@@ -423,23 +429,31 @@ def partition_by_lesson_severity(
             raise ShipGateError("kind='lesson' ShipFinding missing lesson_id")
         lesson = by_id.get(f.lesson_id)
         if lesson is None:
-            raise ShipGateError(
-                f"partition_by_lesson_severity: unknown lesson id {f.lesson_id!r} "
+            routing_errors.append(
+                f"unknown lesson id {f.lesson_id!r} at {f.location} "
                 f"(stale tag or retired lesson removed from .forge/intel/lessons.md)"
             )
+            continue
         expected_severity = _LESSON_SEVERITY_TO_SHIP[lesson.severity]
         if f.severity != expected_severity:
-            raise ShipGateError(
-                f"row Severity={f.severity!r} but lesson {lesson.id} has "
-                f"Severity={lesson.severity!r} (expected row Severity="
+            routing_errors.append(
+                f"row Severity={f.severity!r} at {f.location} disagrees with lesson "
+                f"{lesson.id} Severity={lesson.severity!r} (expected row Severity="
                 f"{expected_severity!r})"
             )
+            continue
         if lesson.severity in ("CRITICAL", "HIGH"):
             gate.append(f)
         elif lesson.severity == "MEDIUM":
             warn.append(f)
         else:
             info.append(f)
+    if routing_errors:
+        bullets = "\n  - ".join(routing_errors)
+        raise ShipGateError(
+            f"partition_by_lesson_severity: {len(routing_errors)} row(s) failed routing:\n"
+            f"  - {bullets}"
+        )
     return gate, warn, info
 
 
