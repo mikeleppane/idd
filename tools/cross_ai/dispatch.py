@@ -61,18 +61,16 @@ Atomicity
 ---------
 
 :func:`record_dispatch_approval` and :func:`write_response_to_disk`
-both write through ``<path>.tmp.<pid>`` then :func:`os.replace`. The
-intermediate file lives in the destination's parent directory so the
-rename is a same-filesystem move and atomic on POSIX; a partial write
-is cleaned up on any exception so callers never observe a torn file.
-The pattern mirrors :func:`tools.cross_ai.manual.write_prompt_to_disk`
-intentionally — the two helpers must agree on durability semantics or
-the cross-AI directory will accumulate orphan ``.tmp`` files.
+both delegate to :func:`tools.cross_ai.manual._atomic_write_text` so
+prompt, response, and config writes share one durability primitive
+(``tempfile.mkstemp`` in the destination's parent directory followed
+by :meth:`Path.replace`). Sharing the helper is deliberate — the two
+modules cannot diverge on temp-file collision-avoidance or torn-write
+cleanup without breaking the cross-AI directory's atomicity contract.
 """
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import subprocess
@@ -83,6 +81,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from tools.cross_ai.config import RetryPolicy
+from tools.cross_ai.manual import _atomic_write_text
 from tools.cross_ai.prompt import PromptTarget
 
 __all__ = (
@@ -147,27 +146,6 @@ class DispatchResult:
     exit_code: int
     attempts: int
     elapsed_seconds: float
-
-
-def _atomic_write_text(path: Path, body: str) -> None:
-    """Write ``body`` to ``path`` via ``<path>.tmp.<pid>`` + :func:`os.replace`.
-
-    The temp file is created in ``path.parent`` so the rename stays on
-    the same filesystem and ``os.replace`` is atomic (POSIX). On any
-    failure mid-write the partial temp file is removed so callers never
-    observe a torn destination. Mirrors the durability semantics of
-    :func:`tools.cross_ai.manual._atomic_write_text` deliberately.
-    """
-    parent = path.parent
-    parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = parent / f"{path.name}.tmp.{os.getpid()}"
-    try:
-        tmp_path.write_text(body, encoding="utf-8")
-        tmp_path.replace(path)
-    except Exception:
-        with contextlib.suppress(FileNotFoundError):
-            tmp_path.unlink()
-        raise
 
 
 def auto_dispatch(
@@ -247,6 +225,8 @@ def auto_dispatch(
                 input=prompt_text,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="strict",
                 check=True,
                 timeout=timeout_seconds,
                 env=env,
@@ -293,6 +273,14 @@ def record_dispatch_approval(
     on-disk bytes stay byte-identical so any file watcher pointed at
     ``config.json`` does not fire spuriously on a re-approval.
 
+    Schema invariant: the written ``cross_ai`` block always carries a
+    ``mode`` field — required by ``schemas/cross-ai-config.schema.json``
+    and enforced by :func:`tools.cross_ai.config.load_config`. When the
+    block is created (no prior ``cross_ai``), ``mode`` is seeded to
+    ``"manual"`` so a subsequent ``load_config`` does not blow up with
+    ``CrossAiConfigError 'mode' is a required property``. An existing
+    ``mode`` value is preserved as-is.
+
     Args:
         repo_root: Repository root that contains the ``.forge/``
             directory. The config path is computed as
@@ -325,11 +313,19 @@ def record_dispatch_approval(
     effective_now = (now or datetime.now(UTC)).replace(microsecond=0)
     effective_by = by if by is not None else os.environ.get("USER", "unknown")
 
+    # Seed ``mode`` only when absent — preserves an existing
+    # ``mode: "auto"`` / ``"disabled"`` setting unchanged.
+    if "mode" not in cross_ai_block:
+        cross_ai_block["mode"] = "manual"
     cross_ai_block["dispatch_approved_at"] = effective_now.isoformat()
     cross_ai_block["dispatch_approved_by"] = effective_by
     document["cross_ai"] = cross_ai_block
 
-    _atomic_write_text(config_path, json.dumps(document, indent=2, sort_keys=True))
+    _atomic_write_text(
+        config_path,
+        json.dumps(document, indent=2, sort_keys=True),
+        prefix=".cross-ai-config-",
+    )
 
 
 def write_response_to_disk(
@@ -368,5 +364,5 @@ def write_response_to_disk(
     timestamp = (now or datetime.now(UTC)).strftime(_TIMESTAMP_FMT)
     target_dir = repo_root / ".forge" / "features" / feature_id / "cross-ai"
     response_path = target_dir / f"{target.value}-{timestamp}-response.md"
-    _atomic_write_text(response_path, response_text)
+    _atomic_write_text(response_path, response_text, prefix=".cross-ai-response-")
     return response_path.resolve()
