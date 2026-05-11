@@ -20,6 +20,8 @@ from pathlib import Path, PurePosixPath
 
 from tools import redaction
 from tools.constitution import (
+    MAX_INJECTED_WORDS,
+    Article,
     ConstitutionError,
     _bare_dep_name,
     _read_package_json_top_level_deps,
@@ -281,6 +283,9 @@ class AmendResult:
 # "version: 1.2.3" or similar.
 _FRONTMATTER_VERSION_RE = re.compile(r"^version:\s*['\"]?(\d+\.\d+\.\d+)['\"]?\s*$", re.MULTILINE)
 _FRONTMATTER_UPDATED_RE = re.compile(r"^updated:.*$", re.MULTILINE)
+_FRONTMATTER_CREATED_RE = re.compile(
+    r'^created:\s*["\']?(\d{4}-\d{2}-\d{2})["\']?\s*$', re.MULTILINE
+)
 
 
 def _split_frontmatter(text: str) -> tuple[str, str]:
@@ -721,6 +726,187 @@ def bootstrap_constitution(
         f"\n## {today.isoformat()} — Constitution bootstrap: v0.1.0\n"
         f"**Context:** Bootstrap proposed {len(proposals)} starter articles; "
         f"accepted {len(accepted)}.\n"
+        f"**Change:** New Constitution seeded.\n"
+        f"**Alternatives considered:** Skip (default).\n"
+    )
+    try:
+        with decisions_path.open("a", encoding="utf-8") as fh:
+            fh.write(entry)
+    except OSError as exc:
+        constitution.unlink(missing_ok=True)
+        if decisions_created:
+            decisions_path.unlink(missing_ok=True)
+        raise AmendError(f"decisions.md append failed: {exc}") from exc
+    return constitution
+
+
+_VALID_LEVELS: frozenset[str] = frozenset({"CRITICAL", "SHOULD", "MAY"})
+_DUPLICATE_TRIGGER_COUNT = 2
+
+
+def _check_draft_frontmatter(text: str) -> None:
+    """Raise ``AmendError`` if frontmatter lacks a valid ``version:`` or ``created:``."""
+    try:
+        fm, _ = _split_frontmatter(text)
+    except AmendError as exc:
+        raise AmendError(f"draft frontmatter invalid: {exc}") from exc
+    if not _FRONTMATTER_VERSION_RE.search(fm):
+        raise AmendError(
+            "draft frontmatter missing or malformed `version:` (expected semver MAJOR.MINOR.PATCH)"
+        )
+    if not _FRONTMATTER_CREATED_RE.search(fm):
+        raise AmendError(
+            'draft frontmatter missing or malformed `created:` (expected "YYYY-MM-DD")'
+        )
+
+
+def _check_draft_articles(articles: list[Article]) -> None:
+    """Raise ``AmendError`` on per-article shape, duplicates, or budget violations."""
+    for article in articles:
+        if article.level not in _VALID_LEVELS:
+            raise AmendError(
+                f"draft article {article.id}: level {article.level!r} not in "
+                f"{sorted(_VALID_LEVELS)}"
+            )
+        if not article.rule:
+            raise AmendError(f"draft article {article.id}: empty `Rule:` field")
+        if article.reference is None:
+            raise AmendError(f"draft article {article.id}: missing `Reference:` field")
+        if article.rationale is None:
+            raise AmendError(f"draft article {article.id}: missing `Rationale:` field")
+
+    seen: dict[str, int] = {}
+    duplicates: list[str] = []
+    for article in articles:
+        seen[article.id] = seen.get(article.id, 0) + 1
+        if seen[article.id] == _DUPLICATE_TRIGGER_COUNT:
+            duplicates.append(article.id)
+    if duplicates:
+        raise AmendError(f"draft has duplicate article numbers: {sorted(duplicates)}")
+
+    over_cap = [(a.id, a.body_words) for a in articles if a.body_words > MAX_INJECTED_WORDS]
+    if over_cap:
+        rendered = ", ".join(f"{aid}={words} words" for aid, words in over_cap)
+        raise AmendError(f"draft article(s) exceed {MAX_INJECTED_WORDS}-word cap: {rendered}")
+
+
+def validate_drafted_markdown(text: str) -> list[Article]:
+    """Validate a skill-drafted Constitution body and return parsed Articles.
+
+    The skill (not Python) produces the markdown; this function is the gate
+    that catches structural, vocabulary, and budget violations before any
+    disk mutation. It performs no I/O.
+
+    Validation order:
+        1. Parser shape (delegated to ``parse_constitution_text``).
+        2. Frontmatter ``version:`` (semver) + ``created:`` (YYYY-MM-DD).
+        3. Per-article field presence (level vocabulary, rule, reference,
+           rationale).
+        4. Per-article body word count vs ``MAX_INJECTED_WORDS``.
+        5. Zero-article check.
+
+    Args:
+        text: Full Constitution body — frontmatter plus articles — as a
+            single string.
+
+    Returns:
+        Parsed :class:`tools.constitution.Article` records in declaration
+        order.
+
+    Raises:
+        AmendError: When the parser rejects the body, when frontmatter
+            shape is wrong, when an article is missing a required field,
+            when an article body exceeds the injection-budget word cap, or
+            when the draft carries zero articles.
+    """
+    try:
+        articles = parse_constitution_text(text)
+    except ConstitutionError as exc:
+        raise AmendError(f"draft parse failed: {exc}") from exc
+
+    # Frontmatter `version:` / `created:` are a bootstrap contract above what
+    # the loader checks; keep them out of the loader to avoid widening its
+    # surface for the amend path.
+    _check_draft_frontmatter(text)
+    _check_draft_articles(articles)
+
+    if not articles:
+        raise AmendError("draft has zero articles; bootstrap requires at least one")
+
+    return articles
+
+
+def persist_drafted_constitution(
+    *,
+    repo_root: Path,
+    body: str,
+    decisions_path: Path,
+    today: date | None = None,
+) -> Path:
+    """Persist a skill-drafted Constitution body via the atomic-pair contract.
+
+    Mirrors :func:`bootstrap_constitution`'s disk lifecycle but takes the
+    final markdown body from the caller (the skill) instead of running the
+    per-article proposer + reviewer dance. Refuses when a Constitution
+    already exists at ``repo_root/.forge/CONSTITUTION.md``.
+
+    Order:
+        1. Refuse if ``.forge/CONSTITUTION.md`` already exists.
+        2. Run :func:`validate_drafted_markdown` against ``body`` — propagate
+           ``AmendError`` on failure with no disk mutation.
+        3. Run the structural validator via a temp file. Propagate on failure.
+        4. ``ensure_decisions_file(decisions_path)``.
+        5. Atomically write the Constitution.
+        6. Append the bootstrap ADR entry to ``decisions.md``.
+        7. On append failure, delete the Constitution AND any freshly-created
+           ``decisions.md`` so both files end at pre-call state.
+
+    Args:
+        repo_root: Repository root containing ``.forge/``.
+        body: Full Constitution markdown to persist verbatim.
+        decisions_path: Target ``decisions.md`` for the ADR append.
+        today: Optional override for ``date.today()``; used by tests for
+            stable ADR timestamps.
+
+    Returns:
+        Absolute path to the newly-written Constitution.
+
+    Raises:
+        AmendError: When the Constitution already exists, when validation
+            (skill-shape or structural) rejects the body, or when the
+            atomic-pair write cannot complete.
+    """
+    today = today or date.today()
+    constitution = repo_root / ".forge" / "CONSTITUTION.md"
+    if constitution.exists():
+        raise AmendError(
+            f"Constitution already exists at {constitution}; use plain /forge:amend-constitution"
+        )
+
+    articles = validate_drafted_markdown(body)
+    version = _read_current_version(body)
+
+    # Run the structural validator against a temp copy so a failure leaves
+    # no on-disk Constitution.
+    with tempfile.NamedTemporaryFile(
+        prefix="forge-constitution-drafted-",
+        suffix=".md",
+        delete=False,
+        mode="w",
+        encoding="utf-8",
+    ) as handle:
+        handle.write(body)
+        candidate = Path(handle.name)
+    try:
+        _validate_constitution_body(candidate)
+    finally:
+        candidate.unlink(missing_ok=True)
+
+    decisions_created = ensure_decisions_file(decisions_path)
+    atomic_replace(constitution, body)
+    entry = (
+        f"\n## {today.isoformat()} — Constitution bootstrap: v{version} (skill-drafted)\n"
+        f"**Context:** Skill-drafted starter Constitution with {len(articles)} article(s).\n"
         f"**Change:** New Constitution seeded.\n"
         f"**Alternatives considered:** Skip (default).\n"
     )
