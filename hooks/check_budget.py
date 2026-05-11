@@ -8,7 +8,10 @@ non-empty ``files_in_scope`` list of bounded globs, and a non-empty
 ``forbidden`` list. Otherwise the hook returns a PreToolUse deny decision;
 otherwise it returns an empty object (allow).
 
-Stdlib only. Idempotent and side-effect-free.
+Idempotent and side-effect-free. Imports ``tools.validate.conventions`` for the
+dispatch-brief convention check; otherwise stdlib-only. The relaxation is
+intentional — re-implementing schema parsing + regex matching in the hook
+would duplicate code without saving meaningful startup cost.
 
 Hook input shape (per Claude Code docs):
 {
@@ -25,7 +28,24 @@ from __future__ import annotations
 import json
 import re
 import sys
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from tools.validate.conventions import Convention
+
+_load_conventions: Any | None
+_match_convention: Any | None
+try:
+    from tools.validate.conventions import (
+        load_conventions as _load_conventions,
+    )
+    from tools.validate.conventions import (
+        match_convention as _match_convention,
+    )
+except ImportError:  # pragma: no cover - hook may run with stdlib-only env
+    _load_conventions = None
+    _match_convention = None
 
 # Tool names that mean "subagent dispatch" across Claude Code versions.
 # Matcher in hooks.json is "Agent"; this defensive check covers historical
@@ -47,6 +67,15 @@ _BARE_EXTENSION_GLOB = re.compile(r"^\*\.[a-zA-Z0-9]+$")
 _EXECUTE_PHASE = "execute"
 
 _MARKER = "context_budget:"
+
+# Severities that turn a fired dispatch_brief rule into a deny. MEDIUM/LOW/WARN
+# fires are surfaced by the validator path; the hook is a strict gate.
+_CONVENTION_DENY_SEVERITIES = frozenset({"BLOCK", "HIGH"})
+
+# Cap on how far up the directory tree we walk looking for a ``.forge``
+# directory. The hook runs from arbitrary cwds; 8 levels covers any sane
+# repo layout without unbounded I/O on malformed environments.
+_REPO_ROOT_WALK_LIMIT = 8
 
 
 def _is_unbounded_glob(item: str) -> bool:
@@ -227,6 +256,123 @@ def _validate_budget(budget: Any) -> tuple[bool, str]:
     return True, "ok"
 
 
+_FORBIDDEN_EXCERPT_MAX = 80
+
+
+def _forbidden_text_excerpt(pattern: str, text: str) -> str:
+    """Return the matched substring (truncated) for a forbidden_text fire."""
+    try:
+        match = re.search(pattern, text)
+    except re.error:
+        return pattern
+    if match is None:
+        return pattern
+    excerpt = match.group(0)
+    if len(excerpt) > _FORBIDDEN_EXCERPT_MAX:
+        excerpt = excerpt[:_FORBIDDEN_EXCERPT_MAX]
+    return excerpt
+
+
+def _locate_repo_root(*, start: Path | None = None) -> Path | None:
+    """Walk up from ``start`` looking for the first ancestor with ``.forge/``.
+
+    Args:
+        start: Directory to begin the walk from. Defaults to ``Path.cwd()``.
+
+    Returns:
+        The first ancestor containing a ``.forge`` directory, or ``None`` when
+        no such ancestor is found within :data:`_REPO_ROOT_WALK_LIMIT` levels.
+    """
+    current = start if start is not None else Path.cwd()
+    try:
+        current = current.resolve()
+    except OSError:
+        return None
+    for _ in range(_REPO_ROOT_WALK_LIMIT):
+        if (current / ".forge").is_dir():
+            return current
+        parent = current.parent
+        if parent == current:
+            return None
+        current = parent
+    return None
+
+
+def _load_conventions_safely(repo_root: Path) -> list[Convention] | None:
+    """Load conventions for the dispatch-brief check; return None on any failure.
+
+    The hook never denies on a load-error path — schema or JSON shape errors
+    are owned by ``python -m tools.validate --target conventions``. Returning
+    ``None`` signals the caller to allow.
+    """
+    if _load_conventions is None:
+        return None
+    try:
+        rules: list[Convention] = _load_conventions(repo_root)
+    except (ValueError, OSError):
+        return None
+    return rules
+
+
+def _first_fired_deny_reason(rules: list[Convention], prompt: str) -> str | None:
+    """Return the deny reason for the first fired blocking rule, else ``None``.
+
+    Rules are scanned in lexicographic order on ``id``. ``filename_glob_forbidden``
+    is skipped silently — it is a schema violation in ``dispatch_brief`` scope
+    that ``load_conventions`` already rejected at load time.
+    """
+    if _match_convention is None:
+        return None
+    for rule in sorted(rules, key=lambda r: r.id):
+        if "dispatch_brief" not in rule.scope:
+            continue
+        if rule.pattern_kind == "filename_glob_forbidden":
+            continue
+        try:
+            fired = _match_convention(rule, text=prompt, scope="dispatch_brief")
+        except (ValueError, re.error):
+            continue
+        if not fired or rule.severity not in _CONVENTION_DENY_SEVERITIES:
+            continue
+        if rule.pattern_kind == "forbidden_text":
+            excerpt = _forbidden_text_excerpt(rule.pattern, prompt)
+            return f"{rule.id}: forbidden_text matched: {excerpt}"
+        return f"{rule.id}: required_text not found in dispatch_brief"
+    return None
+
+
+def _check_dispatch_brief_conventions(
+    prompt: str,
+    *,
+    repo_root: Path | None = None,
+) -> tuple[bool, str]:
+    """Evaluate ``scope: dispatch_brief`` rules against ``prompt``.
+
+    The hook is a strict gate: only ``BLOCK`` / ``HIGH`` severity fires deny.
+    Lower-severity rules are surfaced by the validator path, not here.
+
+    Args:
+        prompt: The dispatch prompt body.
+        repo_root: Optional override for testing. Production callers pass
+            ``None`` and the helper locates the repo via
+            :func:`_locate_repo_root`.
+
+    Returns:
+        ``(True, "ok")`` when no blocking rule fires. ``(False, reason)`` with
+        the first fired rule's id when one does.
+    """
+    root = repo_root if repo_root is not None else _locate_repo_root()
+    if root is None or not (root / ".forge" / "conventions.json").is_file():
+        return True, "ok"
+    rules = _load_conventions_safely(root)
+    if rules is None:
+        return True, "ok"
+    reason = _first_fired_deny_reason(rules, prompt)
+    if reason is None:
+        return True, "ok"
+    return False, reason
+
+
 def evaluate(prompt: str) -> tuple[bool, str]:
     """Return (allow, reason). allow=False means block the dispatch.
 
@@ -245,7 +391,11 @@ def evaluate(prompt: str) -> tuple[bool, str]:
     except json.JSONDecodeError as exc:
         return False, f"context_budget block is not valid JSON: {exc.msg}"
 
-    return _validate_budget(parsed)
+    allow, reason = _validate_budget(parsed)
+    if not allow:
+        return allow, reason
+
+    return _check_dispatch_brief_conventions(prompt)
 
 
 def main() -> int:
