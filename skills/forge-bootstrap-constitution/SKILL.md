@@ -54,9 +54,10 @@ The entry-point only changes which command surfaced the dispatch literal.
 1. **Refuse if Constitution exists.** Check
    `<repo_root>/.forge/CONSTITUTION.md`. If present, abort with the literal
    message
-   `"Constitution already exists at <path>; use /forge:amend-constitution"`
-   and propagate the abort to the caller. No disk mutation, no further
-   prompts.
+   `"Constitution already exists at <path>; use plain /forge:amend-constitution"`
+   (matches the exact wording raised by
+   `tools.constitution_amend.persist_drafted_constitution`) and propagate
+   the abort to the caller. No disk mutation, no further prompts.
 
 2. **AGENTS.md / CLAUDE.md absence warning (locked decision 5).** Before
    signal collection: if NEITHER `<repo_root>/AGENTS.md` NOR
