@@ -117,13 +117,16 @@ Promote a verified feature to a canonical capability and move the feature folder
    - Set frontmatter: `capability: <slug>`, `status: shipped`, `created: <YYYY-MM-DD>`, `last_updated: <YYYY-MM-DD>`, `evidence: [{<feature-id>: features/archive/<feature-id>/}]`, `bounded_context: null`.
    - Body sections come from the feature SPEC.md: Intent, Scope, Domain, Scenarios, Acceptance Criteria, Negative Requirements (verbatim or lightly edited for tense — feature spec may be future-tense, canonical is present-tense for shipped behavior).
    - Decisions section links to `features/archive/<feature-id>/decisions.md` (relative path).
-3.5 **Ship-time Constitution gate (§5.3.9).**
-   - Load filtered articles: `articles, _dropped = tools.constitution.load_and_filter(repo_root)`.
-   - Parse REVIEW.code.md: `findings = tools.ship_gate.parse_review_findings(.forge/features/<id>/REVIEW.code.md)` — the parser filters out `Status: resolved` and `Status: accepted-risk` rows automatically.
-   - Partition: `gate, warn, info = tools.ship_gate.partition_by_article_level(findings, articles)`.
-   - When `warn` is non-empty: print `tools.ship_gate.render_warn_summary(warn, articles)` (no acknowledge required; SHOULD-tagged findings WARN once per spec §5.3.9).
-   - When `gate` is non-empty: print `tools.ship_gate.render_gate_prompt(gate, articles)` and read user input.
-     - User types `ACKNOWLEDGE` (literal uppercase): build the ack hook via `ack_hook = tools.ship_gate.make_acknowledgement_hook(state_path=..., decisions_path=..., gate_findings=gate, articles=articles)` and **carry it into step 4** — do NOT call ack_hook here.
+3.5 **Ship-time Constitution + trap-memory gate.**
+   - Load filtered articles: `articles, _dropped_a = tools.constitution.load_and_filter(repo_root)`.
+   - Load filtered lessons: `lessons, _dropped_l = tools.intel.lessons.load_and_filter(repo_root)` — fresh repo without `.forge/intel/lessons.md` returns `([], [])`.
+   - Parse REVIEW.code.md: `findings = tools.ship_gate.parse_review_findings(.forge/features/<id>/REVIEW.code.md)` — the parser filters out `Status: resolved` and `Status: accepted-risk` rows automatically and emits one finding per `[constitution:A<n>]` tag AND one per `[lesson:L<NNN>]` tag in the row's Problem cell.
+   - Partition by article level: `gate_a, warn_a, info_a = tools.ship_gate.partition_by_article_level(findings, articles)`.
+   - Partition by lesson severity: `gate_l, warn_l, info_l = tools.ship_gate.partition_by_lesson_severity(findings, lessons)`.
+   - Merge: `gate = gate_a + gate_l`, `warn = warn_a + warn_l`.
+   - When `warn` is non-empty: print `tools.ship_gate.render_warn_summary(warn, articles, lessons=lessons)` (no acknowledge required; SHOULD-tagged articles and MEDIUM-severity lessons WARN only).
+   - When `gate` is non-empty: print `tools.ship_gate.render_gate_prompt(gate, articles, lessons=lessons)` and read user input.
+     - User types `ACKNOWLEDGE` (literal uppercase): build the ack hook via `ack_hook = tools.ship_gate.make_acknowledgement_hook(state_path=..., decisions_path=..., gate_findings=gate, articles=articles, lessons=lessons)` and **carry it into step 4** — do NOT call ack_hook here.
      - Anything else: abort ship with the user's choice surfaced; halt without state mutation.
    - When `gate` is empty: continue to step 3.55 with `ack_hook = None`.
 3.55 **Ship-time git-conventions gate (WS2).**
