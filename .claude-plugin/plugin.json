@@ -11,6 +11,5 @@
   "license": "MIT",
   "keywords": ["spec-driven", "tdd", "claude-code", "workflow"],
   "skills": "./skills/",
-  "commands": "./commands/",
-  "hooks": "./hooks/hooks.json"
+  "commands": "./commands/"
 }
