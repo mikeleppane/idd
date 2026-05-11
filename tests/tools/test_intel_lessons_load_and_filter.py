@@ -149,7 +149,13 @@ def test_load_and_filter_scope_keywords_score_via_tag_intersection(tmp_path: Pat
     assert "L005" in dropped
 
 
-def test_load_and_filter_caps_by_ascending_score_when_over_cap(tmp_path: Path) -> None:
+def test_load_and_filter_caps_by_ascending_score_when_over_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Lift the per-field authoring cap so the test can probe the dispatch-
+    # budget cap path with realistic word counts. Production authoring stays
+    # bounded by ``_MAX_FIELD_CHARS=1000``.
+    monkeypatch.setattr(lessons, "_MAX_FIELD_CHARS", 10_000)
     long_trap = "trap " + ("word " * 200)
     long_avoidance = "avoidance " + ("word " * 200)
     body = _file(
@@ -164,7 +170,11 @@ def test_load_and_filter_caps_by_ascending_score_when_over_cap(tmp_path: Path) -
     assert dropped, "cap pressure must force >= 1 drop"
 
 
-def test_load_and_filter_raises_when_critical_alone_exceed_cap(tmp_path: Path) -> None:
+def test_load_and_filter_raises_when_critical_alone_exceed_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Authoring cap lifted for the same reason as the previous test.
+    monkeypatch.setattr(lessons, "_MAX_FIELD_CHARS", 10_000)
     bloat = "word " * 400  # ~400 words per field
     body = _file(
         _entry(nid="L001", severity="CRITICAL", trap=bloat, avoidance=bloat),

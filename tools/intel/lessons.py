@@ -90,6 +90,14 @@ _INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
 
 _DEFAULT_HEADER = '---\nversion: 0.1.0\ncreated: "{created}"\n---\n\n# FORGE Lessons\n\n'
 
+# Authoring cap on individual Trap / Avoidance prose. The interactive skill
+# (forge-lesson) enforces this at the UI prompt, but the cap also lives here
+# so any direct ``append(lesson)`` caller — tests, future CLIs, library users —
+# cannot smuggle a 5000-char Trap into the file via the back door. The dispatch
+# budget cap (MAX_LESSON_WORDS) is independent: it controls cumulative budget
+# at filter time, not per-entry authoring length.
+_MAX_FIELD_CHARS: Final[int] = 1000
+
 # Refuse to read a lessons file larger than this cap. A typical lessons.md
 # holds a handful of entries at a few hundred chars each; 1 MiB is several
 # orders of magnitude past plausible content and guards against an accidental
@@ -295,6 +303,13 @@ def _block_to_lesson(block: dict[str, object]) -> Lesson:
 
     trap = _expect_str(block, "trap")
     avoidance = _expect_str(block, "avoidance")
+    for field_name, field_value in (("Trap", trap), ("Avoidance", avoidance)):
+        if len(field_value) > _MAX_FIELD_CHARS:
+            raise LessonError(
+                f"lesson {lesson_id}: {field_name} field is {len(field_value)} chars; "
+                f"cap is {_MAX_FIELD_CHARS}. Tighten the prose; future readers must "
+                "be able to scan the row in the dispatch budget summary."
+            )
     body_words = len((trap + " " + avoidance).split())
 
     return Lesson(

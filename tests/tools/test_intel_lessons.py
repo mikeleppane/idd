@@ -512,6 +512,32 @@ def test_parse_refuses_oversize_file(tmp_path: Path, monkeypatch: pytest.MonkeyP
         lessons.parse(path)
 
 
+def test_parse_refuses_oversize_trap_field(tmp_path: Path) -> None:
+    """Trap longer than the 1000-char cap blocks parse."""
+    long_trap = "x" * 1001
+    body = _file(_entry(trap=long_trap))
+    path = _write(tmp_path / "lessons.md", body)
+    with pytest.raises(lessons.LessonError, match=r"Trap field is 1001 chars"):
+        lessons.parse(path)
+
+
+def test_parse_refuses_oversize_avoidance_field(tmp_path: Path) -> None:
+    """Avoidance longer than the 1000-char cap blocks parse."""
+    long_avoidance = "y" * 1001
+    body = _file(_entry(avoidance=long_avoidance))
+    path = _write(tmp_path / "lessons.md", body)
+    with pytest.raises(lessons.LessonError, match=r"Avoidance field is 1001 chars"):
+        lessons.parse(path)
+
+
+def test_parse_accepts_exactly_1000_char_field(tmp_path: Path) -> None:
+    """The 1000-char cap is inclusive — exactly 1000 must parse."""
+    body = _file(_entry(trap="x" * 1000))
+    path = _write(tmp_path / "lessons.md", body)
+    parsed = lessons.parse(path)
+    assert len(parsed[0].trap) == 1000
+
+
 def test_append_refuses_concurrent_writer_under_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
