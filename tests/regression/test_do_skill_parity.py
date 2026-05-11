@@ -243,7 +243,7 @@ def test_skill_cleanup_hook_calls_cleanup_seeded_feature() -> None:
 
 def test_command_argument_hint_matches_refine_convention() -> None:
     text = _read(COMMAND_PATH)
-    assert 'argument-hint: "<idea> [--focused | --standard | --full]"' in text, (
+    assert 'argument-hint: "<idea> [--focused | --standard | --full] [--research]"' in text, (
         "commands/do.md must declare the locked argument-hint exactly"
     )
 
@@ -283,10 +283,12 @@ def test_command_drops_full_raises_caveat() -> None:
 
 def test_skill_self_review_checklist_present() -> None:
     text = _read(SKILL_PATH)
-    # The phase invariant is the tier-deterministic union ``{spec, refine}``;
-    # the per-phase status check generalizes to ``phases.<current_phase>.status``.
+    # The phase invariant is the tier-deterministic union
+    # ``{spec, refine, research}`` (research is the standard-tier opt-in
+    # entry); the per-phase status check generalises to
+    # ``phases.<current_phase>.status``.
     expected_substrings = [
-        'current_phase ∈ {"spec", "refine"}',
+        'current_phase ∈ {"spec", "refine", "research"}',
         "research",
         "routing",
         "state.json",
@@ -441,23 +443,26 @@ def test_skill_dispatch_resolves_by_current_phase() -> None:
 
 
 def test_skill_full_tier_self_review_accepts_refine_phase() -> None:
-    """The self-review checklist must accept refine as a valid seed phase.
+    """The self-review checklist must accept refine + research as valid seed phases.
 
-    The self-review checklist must accept ``current_phase ∈ {"spec",
-    "refine"}`` so full-tier seeds (which seed ``current_phase="refine"``)
-    survive without false positives.  Any hard-coded ``current_phase ==
-    "spec"`` line MUST be gone so the checklist generalizes correctly.
+    Standard with ``--research`` lands ``current_phase="research"``, full
+    tier seeds ``current_phase="refine"``, and focused / standard-without
+    seeds ``current_phase="spec"``. The self-review checklist must accept
+    the three-element union so no tier path raises false positives. Any
+    hard-coded ``current_phase == "spec"`` line MUST be gone so the
+    checklist generalises correctly.
     """
     text = _read(SKILL_PATH)
-    assert 'current_phase ∈ {"spec", "refine"}' in text, (
-        "SKILL.md self-review must mention current_phase ∈ {'spec', 'refine'} "
-        "to accept both focused/standard (spec) and full (refine) seed phases"
+    assert 'current_phase ∈ {"spec", "refine", "research"}' in text, (
+        "SKILL.md self-review must mention current_phase ∈ {'spec', "
+        "'refine', 'research'} to accept focused/standard (spec), full "
+        "(refine), and standard-with-research (research) seed phases"
     )
     # Hard-coded spec-only assertion must be gone so the checklist does not
     # falsely fail on full-tier seeds.
     assert 'current_phase == "spec"' not in text, (
         "SKILL.md self-review must NOT hard-code current_phase == 'spec'; "
-        "the contract is the {'spec', 'refine'} union"
+        "the contract is the {'spec', 'refine', 'research'} union"
     )
 
 
@@ -569,4 +574,161 @@ def test_do_command_rejects_multi_flag_input() -> None:
     assert "Pass at most one of --focused / --standard / --full" in text, (
         "commands/do.md must mirror the literal multi-flag rejection prose "
         "'Pass at most one of --focused / --standard / --full'"
+    )
+
+
+# ---------------------------------------------------------------------------
+# --research opt-in flag locks
+# ---------------------------------------------------------------------------
+
+
+def test_skill_documents_research_flag() -> None:
+    """SKILL.md must document the optional ``--research`` flag in inputs.
+
+    Standard tier opts into the research phase via ``--research``; full
+    tier always runs research; focused tier refuses the flag. The skill
+    inputs list must enumerate the flag so the LLM has a documented
+    contract for parsing it.
+    """
+    text = _read(SKILL_PATH)
+    assert "`--research`" in text, (
+        "SKILL.md must document --research as an optional flag in the Inputs section"
+    )
+
+
+def test_skill_focused_research_refusal_literal() -> None:
+    """SKILL.md must carry the focused + ``--research`` refusal hint verbatim.
+
+    Locks the spec-§5.3.8 escalate hint so a future edit cannot quietly
+    re-route focused features through the research phase.
+    """
+    text = _read(SKILL_PATH)
+    expected = 'research escalates to standard tier; use /forge:do --standard --research "<idea>"'
+    assert expected in text, (
+        f"SKILL.md must carry the locked focused+--research refusal hint {expected!r}"
+    )
+
+
+def test_skill_threads_research_opt_in_into_seed_call() -> None:
+    """SKILL.md step 8 must thread ``research_opt_in=`` to the routing helper.
+
+    Without the kwarg the routing helper defaults to ``False`` and the
+    standard tier silently skips research even when the user passed
+    ``--research``. The skill prose MUST name the kwarg literally so the
+    LLM cannot drop it.
+    """
+    text = _read(SKILL_PATH)
+    assert "research_opt_in=" in text, (
+        "SKILL.md must invoke seed_routed_feature with research_opt_in= so "
+        "the standard --research opt-in actually reaches the helper"
+    )
+
+
+def test_skill_research_dispatch_literal() -> None:
+    """SKILL.md must print ``Next: /forge:research --feature <feature_id>``
+    on its own line for the standard-with-research dispatch path.
+
+    Mirrors the spec/refine line-anchored assertions: substring
+    containment is too lax — anchor against complete lines (optionally
+    inline-coded with backticks) so future edits cannot break the
+    dispatch contract by inserting prose mid-literal.
+    """
+    text = _read(SKILL_PATH)
+    expected = "Next: /forge:research --feature <feature_id>"
+
+    def _line_matches(raw: str) -> bool:
+        stripped = raw.strip()
+        if stripped.startswith("`") and stripped.endswith("`"):
+            stripped = stripped[1:-1]
+        return stripped == expected
+
+    matching = [line for line in text.splitlines() if _line_matches(line)]
+    assert matching, (
+        f"SKILL.md must print the locked research dispatch literal "
+        f"{expected!r} as its own line (optionally inline-coded with "
+        f"backticks); no exact-line match found"
+    )
+
+
+def test_skill_drops_unconditional_research_skip_claim() -> None:
+    """The legacy "research stays skipped on all three tiers" prose must be gone.
+
+    Full tier and standard with ``--research`` both run research; the
+    legacy skip marker is suppressed in those cases. The skill must NOT
+    advertise the marker as universal or a future edit will silently
+    contradict the actual seed behavior.
+    """
+    text = _read(SKILL_PATH)
+    assert "research stays skipped on all three" not in text, (
+        "SKILL.md must NOT claim the research deferral entry is present "
+        "on every tier; full and standard-with-research suppress it"
+    )
+
+
+# ---------------------------------------------------------------------------
+# commands/do.md --research documentation locks
+# ---------------------------------------------------------------------------
+
+
+def test_command_documents_research_flag() -> None:
+    """commands/do.md must document the optional ``--research`` flag.
+
+    Mirrors the SKILL.md inputs lock — operators grepping the command
+    file for valid flags must see ``--research`` listed alongside the
+    tier flags.
+    """
+    text = _read(COMMAND_PATH)
+    assert "`--research`" in text, "commands/do.md must document --research as an optional flag"
+
+
+def test_command_documents_focused_research_refusal() -> None:
+    """commands/do.md must carry the focused + ``--research`` refusal hint.
+
+    The literal hint mirrors the SKILL.md and routing helper wording so
+    the contract surface is identical wherever an operator reads it.
+    """
+    text = _read(COMMAND_PATH)
+    expected = 'research escalates to standard tier; use /forge:do --standard --research "<idea>"'
+    assert expected in text, (
+        f"commands/do.md must carry the focused+--research refusal hint {expected!r}"
+    )
+
+
+def test_command_documents_tier_phase_counts() -> None:
+    """commands/do.md must document per-tier phase counts.
+
+    The tier table is the operator-facing summary of the lifecycle. It
+    must enumerate focused (3), standard (8), standard with research
+    (9), and full (11) so a reader can decide which tier + flag
+    combination matches their feature without grepping skill prose. The
+    post-ship ``qa`` phase ships only when ``/forge:do`` seeds
+    ``flow_version: 3``; the template does not seed it today, so the
+    user-facing count stays at 11.
+    """
+    text = _read(COMMAND_PATH)
+    # Phase-count anchors — each tier must be locatable via its number
+    # paired with a recognisable label.
+    assert "| focused |" in text
+    assert "| 3 |" in text
+    assert "| standard |" in text
+    assert "| 8 |" in text
+    assert "standard + research" in text
+    assert "| 9 |" in text
+    assert "| full |" in text
+    assert "| 11 |" in text
+
+
+def test_command_dispatch_summary_includes_research_branch() -> None:
+    """commands/do.md description + lifecycle prose must surface the
+    research dispatch branch.
+
+    Without this lock the command file could silently drop the
+    research dispatch surface and operators would have no
+    command-level signal that ``--standard --research`` routes
+    differently from bare ``--standard``.
+    """
+    text = _read(COMMAND_PATH)
+    assert "/forge:research" in text, (
+        "commands/do.md must reference /forge:research as the dispatch "
+        "target for standard --research seeds"
     )

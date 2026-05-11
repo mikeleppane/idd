@@ -28,6 +28,8 @@ build/
 !tests/fixtures/**/target_repo/.forge/
 # Smoke fixtures intentionally ship a synthetic .forge/ tree per feature.
 !tests/smoke/**/.forge/
+# Research-mode fixtures intentionally ship a synthetic .forge/ tree per mode.
+!tests/fixtures/_research/**/.forge/
 
 # Local config
 .env

@@ -9,6 +9,7 @@ needed; delegated findings carry the **source** validator's `target` string
 so provenance is preserved across the boundary (P2a follow-up #2, option A).
 """
 
+from ._config_shape import validate_config
 from ._finding import (
     EXIT_NONZERO_SEVERITIES,
     MAX_FIX_HINT_LEN,
@@ -16,6 +17,7 @@ from ._finding import (
     Severity,
     ValidationError,
 )
+from ._research_shape import validate_research
 from .cli import main
 from .constitution import validate_constitution
 from .delta import validate_delta
@@ -43,6 +45,7 @@ __all__ = [
     "validate_anchors",
     "validate_capability_spec_sections",
     "validate_capability_uniqueness",
+    "validate_config",
     "validate_constitution",
     "validate_delta",
     "validate_deviations",
@@ -52,6 +55,7 @@ __all__ = [
     "validate_negative_requirements",
     "validate_plan_tasks",
     "validate_qa_shape",
+    "validate_research",
     "validate_scenarios",
     "validate_tdd_evidence",
     "validate_verified_deps",

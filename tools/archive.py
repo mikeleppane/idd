@@ -365,20 +365,21 @@ def cleanup_seeded_feature(repo_root: Path, feature_id: str) -> bool:
 
 _FEATURE_TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "feature"
 
-# Locked verbatim per M3 spec §5.3.2 step 6 + plan deviation #4.  Surfaces in
-# the seed state.json so health-validate flags `research` as intentionally
-# skipped rather than a missing phase.
+# Skipped-phase marker written into seed state.json so health-validate flags
+# ``research`` as intentionally skipped rather than reading the absent phase
+# block as a missing-step regression.
 _RESEARCH_SKIPPED_ENTRY: dict[str, str] = {
     "phase": "research",
-    "reason": "M3 deferred — manual research acceptable",
+    "reason": "research deferred; manual research acceptable",
 }
 
 # Seed-time entry phases accepted by ``create_feature_folder``.  ``"spec"`` is
-# the focused/standard entry; ``"refine"`` is the full-tier entry.  Any other
-# lifecycle phase value (e.g. ``"plan"``, ``"execute"``) is post-seed territory
-# and is rejected here so /forge:do callers cannot accidentally create a
-# folder mid-lifecycle.
-_VALID_SEED_PHASES: frozenset[str] = frozenset({"spec", "refine"})
+# the focused/standard entry; ``"refine"`` is the full-tier entry; ``"research"``
+# is the standard-tier opt-in entry (``/forge:do --standard --research``). Any
+# other lifecycle phase value (e.g. ``"plan"``, ``"execute"``) is post-seed
+# territory and is rejected here so /forge:do callers cannot accidentally create
+# a folder mid-lifecycle.
+_VALID_SEED_PHASES: frozenset[str] = frozenset({"spec", "refine", "research"})
 
 
 def _render_seed_spec_md(template: str, *, feature_id: str, tier: str) -> str:
@@ -414,14 +415,17 @@ def create_feature_folder(
     tier: str,
     current_phase: str = "spec",
     schema_path: Path | None = None,
+    include_research_skip: bool = True,
 ) -> Path:
     """Seed a fresh ``.forge/features/<feature_id>/`` folder for ``/forge:do``.
 
     Composes the three ``templates/feature/`` files (state.json, SPEC.md,
     decisions.md) into a new feature folder with substitutions for
     ``feature_id`` and ``tier``.  The ``current_phase`` keyword controls the
-    seed entry: ``"spec"`` (focused/standard) or ``"refine"`` (full-tier
-    only).  Any other lifecycle phase is post-seed territory and is refused.
+    seed entry: ``"spec"`` (focused/standard), ``"refine"`` (full-tier only),
+    or ``"research"`` (standard-tier opt-in via
+    ``/forge:do --standard --research`` and full-tier).  Any other lifecycle
+    phase is post-seed territory and is refused.
 
     Per-file write is atomic via ``atomic_replace`` (tempfile +
     ``Path.replace`` on the same directory — POSIX-rename semantics).
@@ -434,12 +438,14 @@ def create_feature_folder(
     ``tools.state.write_state(..., schema_path=schema_path)`` so an invalid
     seed payload refuses BEFORE the folder is left behind on disk.
 
-    State body shape (per spec §5.3.2 step 6 + plan deviation #4):
+    State body shape:
 
       - ``feature_id`` / ``tier`` (validated above)
-      - ``current_phase`` (``"spec"`` or ``"refine"``)
+      - ``current_phase`` (``"spec"``, ``"refine"``, or ``"research"``)
       - ``phases.<current_phase> = {"status": "in_progress", "started_at": <utc-iso>}``
-      - ``skipped = [{"phase": "research", "reason": "M3 deferred — manual research acceptable"}]``
+      - ``skipped`` = ``[{"phase": "research", ...}]`` when
+        ``include_research_skip`` is ``True`` (legacy default for features
+        that never run research); otherwise ``[]``.
       - ``deviations = []``
       - ``commits = []``
 
@@ -449,31 +455,42 @@ def create_feature_folder(
     Validation order (locked):
         1. ``feature_id`` slug format.
         2. ``tier`` membership in ``VALID_TIERS``.
-        3. ``current_phase`` membership in ``{"spec", "refine"}``.
+        3. ``current_phase`` membership in ``{"spec", "refine", "research"}``.
         4. ``current_phase == "refine"`` ⇒ ``tier == "full"`` (refine is
-           full-tier-only per the locked P4 deep-followup decision).
-        5. Folder collision via ``feature_folder_exists``.
+           full-tier-only per the locked deep-followup decision).
+        5. ``current_phase == "research"`` ⇒ ``tier in {"standard", "full"}``
+           (research never runs on focused tier).
+        6. Folder collision via ``feature_folder_exists``.
 
     Args:
         repo_root: Repository root containing the ``.forge/`` tree.
         feature_id: Feature folder name in YYYY-MM-DD-slug form.
         tier: One of ``VALID_TIERS`` (focused/standard/full).
-        current_phase: Seed entry phase; one of ``{"spec", "refine"}``.
-            Defaults to ``"spec"`` for the focused/standard entry.
-            ``"refine"`` opens the full-tier entry and additionally requires
-            ``tier == "full"``.
+        current_phase: Seed entry phase; one of
+            ``{"spec", "refine", "research"}``.  Defaults to ``"spec"`` for
+            the focused/standard entry.  ``"refine"`` opens the full-tier
+            entry and additionally requires ``tier == "full"``.  ``"research"``
+            opens the standard-with-opt-in or full-tier research entry and
+            additionally requires ``tier in {"standard", "full"}``.
         schema_path: Optional path to ``schemas/state.schema.json``.  When
             given, ``write_state`` validates the seed payload before any disk
             mutation.
+        include_research_skip: When ``True`` (default), seed
+            ``skipped = [{"phase": "research", ...}]`` so health-validate
+            recognises research as intentionally deferred (legacy behavior
+            for features that never run research).  When ``False``, seed
+            ``skipped = []`` — research is part of the effective phase list
+            for this feature, so the deferral marker would lie about the
+            actual lifecycle.
 
     Returns:
         Path to the new ``.forge/features/<feature_id>/`` folder.
 
     Raises:
         ArchiveError: ``feature_id`` slug malformed, ``tier`` not in
-            ``VALID_TIERS``, ``current_phase`` outside ``{"spec","refine"}``,
-            ``current_phase == "refine"`` without ``tier == "full"``, or the
-            feature folder already exists.
+            ``VALID_TIERS``, ``current_phase`` outside the seed-phase set,
+            tier/phase pairing violation, or the feature folder already
+            exists.
         StateError: Seed payload fails schema validation when
             ``schema_path`` is given (folder rmtree'd before re-raise).
         OSError: Per-file write failure (folder rmtree'd before re-raise).
@@ -483,10 +500,15 @@ def create_feature_folder(
         raise ArchiveError(f"invalid tier: {tier!r}; must be one of {VALID_TIERS}")
     if current_phase not in _VALID_SEED_PHASES:
         raise ArchiveError(
-            f"invalid current_phase {current_phase!r}; must be one of {{'spec', 'refine'}}"
+            f"invalid current_phase {current_phase!r}; "
+            "must be one of {'spec', 'refine', 'research'}"
         )
     if current_phase == "refine" and tier != "full":
         raise ArchiveError(f"current_phase 'refine' requires tier 'full'; got tier {tier!r}")
+    if current_phase == "research" and tier not in ("standard", "full"):
+        raise ArchiveError(
+            f"current_phase 'research' requires tier in {{'standard', 'full'}}; got tier {tier!r}"
+        )
     if feature_folder_exists(repo_root, feature_id):
         raise ArchiveError(f"feature folder already exists: {feature_id!r}")
 
@@ -503,12 +525,20 @@ def create_feature_folder(
 
     try:
         # state.json — validated before any disk write via write_state.
+        # ``include_research_skip`` controls the legacy ``skipped[research]``
+        # deferral marker. When research is part of the effective phase list
+        # for this feature (full tier always; standard with ``--research``),
+        # the marker is suppressed so health-validate does not contradict the
+        # actual lifecycle.
+        skipped_seed: list[dict[str, str]] = (
+            [dict(_RESEARCH_SKIPPED_ENTRY)] if include_research_skip else []
+        )
         seed_state: dict[str, object] = {
             "feature_id": feature_id,
             "tier": tier,
             "current_phase": current_phase,
             "phases": {current_phase: {"status": "in_progress", "started_at": _utc_now_iso()}},
-            "skipped": [dict(_RESEARCH_SKIPPED_ENTRY)],
+            "skipped": skipped_seed,
             "deviations": [],
             "commits": [],
         }

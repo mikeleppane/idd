@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "skills": {
+    "forge-research":          { "phase": "research",  "tiers": ["standard", "full"] },
     "forge-spec":              { "phase": "spec",      "tiers": ["focused", "standard", "full"] },
     "forge-scenarios":         { "phase": "scenarios", "tiers": ["standard", "full"] },
     "forge-plan":              { "phase": "plan",      "tiers": ["standard", "full"] },

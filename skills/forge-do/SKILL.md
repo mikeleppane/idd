@@ -1,6 +1,6 @@
 ---
 name: forge-do
-description: Adaptive routing entry-point for FORGE features. Use when the user invokes /forge:do "<idea>" — proposes a tier (focused/standard/full) for the idea, seeds the feature folder + state.json + routing block, and dispatches tier-deterministically to /forge:spec (focused/standard) or /forge:refine (full).
+description: Adaptive routing entry-point for FORGE features. Use when the user invokes /forge:do "<idea>" — proposes a tier (focused/standard/full) for the idea, seeds the feature folder + state.json + routing block, and dispatches tier-deterministically to /forge:spec (focused/standard), /forge:refine (full), or /forge:research (standard with --research).
 model: sonnet
 disable-model-invocation: true
 ---
@@ -9,12 +9,15 @@ disable-model-invocation: true
 
 ## When this skill applies
 
-The user invoked `/forge:do "<idea>" [--focused | --standard | --full]`.
-All three tiers route end-to-end. Focused/standard seed
-`current_phase="spec"` and dispatch to `/forge:spec`; full seeds
-`current_phase="refine"` and dispatches to `/forge:refine`. The skill
-resolves the dispatch literal from `state.json.current_phase` after the
-seed completes.
+The user invoked
+`/forge:do "<idea>" [--focused | --standard | --full] [--research]`.
+All three tiers route end-to-end. Focused seeds `current_phase="spec"`
+and dispatches to `/forge:spec`. Standard without `--research` seeds
+`current_phase="spec"` and dispatches to `/forge:spec`. Standard with
+`--research` seeds `current_phase="research"` and dispatches to
+`/forge:research`. Full seeds `current_phase="refine"` and dispatches to
+`/forge:refine`. The skill resolves the dispatch literal from
+`state.json.current_phase` after the seed completes.
 
 ## Inputs
 
@@ -22,12 +25,18 @@ seed completes.
   verbatim into `state.json.routing.idea` by the routing helper.
 - `--focused` / `--standard` / `--full` — optional tier override. Wins
   over the LLM proposal when supplied.
+- `--research` — optional flag. Opts the feature into the research
+  phase. Standard tier seeds `current_phase="research"` and writes
+  `routing.phase_list` with `research` at index 0. Full tier always
+  runs research, so the flag is a no-op there. Focused tier refuses
+  the flag with the locked escalate hint
+  `research escalates to standard tier; use /forge:do --standard --research "<idea>"`.
 
 ## Steps
 
-1. **Parse args + emit secrets warning.** Read the positional `<idea>`
-   and any tier flag. Before anything is written to disk, print the
-   one-line warning:
+1. **Parse args + emit secrets warning.** Read the positional `<idea>`,
+   any tier flag, and the optional `--research` flag. Before anything
+   is written to disk, print the one-line warning:
 
    `sensitive content (tokens, passwords) discouraged — text is persisted to state.json.routing.idea verbatim`
 
@@ -39,12 +48,24 @@ seed completes.
    `/forge:do "<idea>" --focused --standard`), abort with the literal
    message `Pass at most one of --focused / --standard / --full; got <list>`
    where `<list>` enumerates the supplied flags. No disk mutation
-   occurs; the user re-invokes with a single flag. **Idea length
-   cap:** abort with the literal cap if `idea > 4000 chars`. The
-   routing helper mirrors this check (`tools.routing.seed_routed_feature`
-   raises `ValueError` with `"idea exceeds 4000-char cap (got <n>
-   chars); trim before /forge:do"`); skill-side abort surfaces the
-   same wording without going through schema validation.
+   occurs; the user re-invokes with a single flag.
+
+   **Focused + `--research` refusal.** If the user passes `--focused`
+   together with `--research`, abort BEFORE any disk mutation with the
+   literal message
+   `research escalates to standard tier; use /forge:do --standard --research "<idea>"`.
+   The routing helper mirrors this refusal
+   (`tools.routing.seed_routed_feature` raises `ValueError` with the
+   same wording); skill-side abort surfaces the same hint without
+   going through the helper. The user re-invokes with the standard
+   tier or drops the flag.
+
+   **Idea length cap:** abort with the literal cap if
+   `idea > 4000 chars`. The routing helper mirrors this check
+   (`tools.routing.seed_routed_feature` raises `ValueError` with
+   `"idea exceeds 4000-char cap (got <n> chars); trim before /forge:do"`);
+   skill-side abort surfaces the same wording without going through
+   schema validation.
 2. **Constitution preflight (per spec §5.3.1 + D-10).** If
    `.forge/CONSTITUTION.md` is absent, present the user with three
    choices: skip, bootstrap, cancel. The default = skip so a brand-new
@@ -101,21 +122,32 @@ seed completes.
    proposal. The resolved tier is one of `focused` / `standard` / `full`
    and is passed verbatim to `seed_routed_feature` as `final_tier=`.
 8. **Seed via routing helper.** Call
-   `tools.routing.seed_routed_feature(repo_root, idea=<idea>, final_tier=<tier>, proposed_tier=<llm_tier>, rationale=<one_sentence>, constitution_present=<bool>, feature_slug=<chosen_slug_or_None>)`.
+   `tools.routing.seed_routed_feature(repo_root, idea=<idea>, final_tier=<tier>, proposed_tier=<llm_tier>, rationale=<one_sentence>, constitution_present=<bool>, feature_slug=<chosen_slug_or_None>, research_opt_in=<bool>)`.
    When step 4 took the suffix-disambig branch, pass the chosen
    disambiguated slug as `feature_slug=` — the helper uses it verbatim
    for `feature_id` while `idea` is persisted into `routing.idea`
    unchanged, so the user's original phrasing remains in the audit
    record. When step 4 found no collision, omit `feature_slug` (or
    pass `None`) and the helper derives the slug via
-   `tools.archive.slug_from_idea(idea)` as before.
+   `tools.archive.slug_from_idea(idea)` as before. Pass
+   `research_opt_in=True` when the user supplied `--research` (and the
+   resolved tier is standard); otherwise pass `False`. The helper
+   refuses focused+`research_opt_in` and raises before any disk write,
+   but the skill-side abort in step 1 already prevents reaching the
+   helper with that combination.
    The helper composes `tools.archive.create_feature_folder` and
    `tools.state.record_routing_decision` (both with `schema_path` set to
    `<repo_root>/schemas/state.schema.json` so an invalid payload refuses
-   before disk mutation). On any post-seed exception inside the helper,
-   it invokes `tools.archive.cleanup_seeded_feature(repo_root, feature_id)`
-   before re-raising. `ArchiveError`, `StateError`, and `ValueError`
-   surface to the user with the seeded folder already cleaned up by the
+   before disk mutation). On full tier the helper writes the 11-entry
+   `routing.phase_list`; on
+   standard with `--research` the helper writes the 9-entry list with
+   `research` at index 0; on focused or standard-without-flag the
+   helper omits the field and consumers fall back to the per-tier
+   static table via `tools.state.get_phase_list`'s lazy-derive branch.
+   On any post-seed exception inside the helper, it invokes
+   `tools.archive.cleanup_seeded_feature(repo_root, feature_id)` before
+   re-raising. `ArchiveError`, `StateError`, and `ValueError` surface
+   to the user with the seeded folder already cleaned up by the
    helper.
 9. **Cleanup hook (UI cancel paths).** Wrap step 8 in a try/finally
    that calls `tools.archive.cleanup_seeded_feature(repo_root, feature_id)`
@@ -138,31 +170,44 @@ seed completes.
     - `state.json` validates against `schemas/state.schema.json`.
     - `routing` block present with `idea`, `final_tier`, `decided_at`,
       and `constitution_present` populated.
-    - `current_phase ∈ {"spec", "refine"}` matching the seeded tier
-      (focused/standard → `spec`; full → `refine`) AND the corresponding
+    - `current_phase ∈ {"spec", "refine", "research"}` matching the
+      seeded tier (focused → `spec`; standard without `--research` →
+      `spec`; standard with `--research` → `research`; full →
+      `refine`) AND the corresponding
       `phases.<current_phase>.status == "in_progress"`.
-    - `skipped` contains the `research` deferral entry
-      (`{"phase": "research", "reason": "M3 deferred — manual research acceptable"}`)
-      on every tier — research stays skipped on all three.
+    - `skipped` is empty when the effective phase list contains
+      `research` (full tier, standard with `--research`); otherwise
+      `skipped` carries the legacy deferral entry
+      `{"phase": "research", "reason": "research deferred; manual research acceptable"}`
+      so health-validate recognises research as intentionally skipped
+      on the focused / standard-without-flag paths.
+    - `routing.phase_list` is present and unique-valued on full tier
+      and on standard with `--research`; absent on focused and
+      standard-without-flag (consumers lazy-derive via
+      `tools.state.get_phase_list`).
     - The feature folder contains exactly three files: `state.json`,
       `SPEC.md`, and `decisions.md`.
 11. **Dispatch to first phase.** Resolve the dispatch literal by
     `state.json.current_phase` after the seed:
     `spec` → `/forge:spec --feature <feature_id>`;
-    `refine` → `/forge:refine --feature <feature_id>`. Print exactly one
-    of:
+    `refine` → `/forge:refine --feature <feature_id>`;
+    `research` → `/forge:research --feature <feature_id>`. Print
+    exactly one of:
 
     `Next: /forge:spec --feature <feature_id>`
 
     `Next: /forge:refine --feature <feature_id>`
 
-    The `--feature <id>` form is REQUIRED on both branches. A bare
-    `/forge:spec` (or `/forge:refine`) would re-run the new-feature
-    creation path against the pre-seeded folder and clash on the
-    collision check. The forge-spec pre-seed branch detects the seeded
-    `routing` block and skips steps 1–4 of its own lifecycle; the
-    forge-refine pre-seed branch (T4) does the same for full-tier
-    seeds.
+    `Next: /forge:research --feature <feature_id>`
+
+    The `--feature <id>` form is REQUIRED on every branch. A bare
+    `/forge:spec` (or `/forge:refine` / `/forge:research`) would
+    re-run the new-feature creation path against the pre-seeded
+    folder and clash on the collision check. The forge-spec pre-seed
+    branch detects the seeded `routing` block and skips steps 1–4 of
+    its own lifecycle; the forge-refine pre-seed branch does the same
+    for full-tier seeds; the forge-research entry consumes the seeded
+    `routing` block when `current_phase="research"`.
 
 ## Failure modes
 
@@ -186,13 +231,21 @@ seed completes.
 
 - `.forge/features/<feature_id>/state.json` — created by
   `tools.archive.create_feature_folder` via the routing helper. Seeds
-  `feature_id`, `tier`, `current_phase` (= `spec` for focused/standard,
+  `feature_id`, `tier`, `current_phase` (= `spec` for focused / standard
+  without `--research`, `research` for standard with `--research`,
   `refine` for full), `phases.<current_phase>.status: "in_progress"`,
-  `phases.<current_phase>.started_at: <utc>`, and the research deferral
-  entry in `skipped[]`.
+  `phases.<current_phase>.started_at: <utc>`. The research deferral
+  entry in `skipped[]` is seeded only on tiers whose effective phase
+  list does NOT include `research` (focused, standard without
+  `--research`); on full and standard-with-research the marker is
+  suppressed so it cannot contradict the live lifecycle.
 - `state.json.routing` — written by `tools.state.record_routing_decision`
   (called inside the routing helper). Contains `idea`, `final_tier`,
-  `proposed_tier`, `rationale`, `constitution_present`, `decided_at`.
+  `proposed_tier`, `rationale`, `constitution_present`, `decided_at`,
+  and (for full and standard-with-`--research`) `phase_list` carrying
+  the explicit lifecycle. Focused and standard-without-flag omit
+  `phase_list`; consumers reach for the per-tier static table via
+  `tools.state.get_phase_list`'s lazy-derive branch.
 - `.forge/features/<feature_id>/SPEC.md` and `decisions.md` — copied
   unmodified from `templates/feature/`. The forge-spec pre-seed branch
   populates `SPEC.md`; `decisions.md` stays empty until the first
@@ -209,10 +262,13 @@ seed completes.
 - `tools.state.record_routing_decision` — sole writer of the routing
   block (P1 contract).
 - `commands/do.md` — slash spec.
-- `/forge:spec --feature <feature_id>` — next phase for focused/standard
-  tiers; pre-seed branch consumes the seeded routing block and skips
-  its own steps 1–4.
+- `/forge:spec --feature <feature_id>` — next phase for focused and
+  standard-without-`--research`; pre-seed branch consumes the seeded
+  routing block and skips its own steps 1–4.
 - `/forge:refine --feature <feature_id>` — next phase for full tier;
-  pre-seed branch (T4) consumes the seeded routing block and enters the
+  pre-seed branch consumes the seeded routing block and enters the
   Socratic loop directly.
+- `/forge:research --feature <feature_id>` — next phase for standard
+  with `--research`; consumes the seeded routing block + the
+  `routing.phase_list` carrying `research` at index 0.
 - `/forge:change` — capability-collision delta route.

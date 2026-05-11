@@ -72,6 +72,13 @@ up a guard described below.
 2. **Generate the feature id.** Format: `YYYY-MM-DD-<kebab-slug>`. Slug = 2–5 words, derived from the idea.
 3. **Check for collision.** If `.forge/features/<id>/` already exists, abort with: "Feature folder already exists. Re-run with `--feature <id>` to refine, or pick a different slug." Use `tools.state.feature_folder_exists(repo_root, feature_id)`.
 4. **Create the feature folder.** `.forge/features/<id>/`. Copy `templates/feature/state.json`, `templates/feature/SPEC.md`, and `templates/feature/decisions.md` into it; set `feature_id`, `tier` (default `focused`), and `current_phase: "spec"`.
+4a. **Research-aware prelude (when applicable).** Read `state.json.phases.research`. Behavior is mode-driven:
+
+    - When `phases.research.status == "done"`: read the body of `.forge/features/<id>/RESEARCH.md` and prepend the first ≤6000 chars (≈1500 tokens at 4 chars/token; truncate at the nearest paragraph boundary `\n\n`) to the spec context block under the header `## Research excerpt (mode: <research_grounding>)` (the `research_grounding` value is read from RESEARCH.md frontmatter). Subsequent template-fill steps consume the excerpt as background grounding alongside the user idea.
+    - When `phases.research.status == "skipped"`: log the carry-over line `Research skipped: <reason>; spec proceeds without external grounding excerpt.` to skill output and continue without an excerpt; `<reason>` is the matching entry in `state.json.skipped[].reason` (when present) or the literal string `no reason recorded`.
+    - When `phases.research` is absent (legacy v1/v2 features authored before the research phase shipped, or focused tier where research never runs): no-op.
+
+    The prelude is read-only; it never mutates `state.json` or RESEARCH.md.
 5. **Initialize SPEC.md** from the copied template; `decisions.md` stays empty until the first decision is logged.
 5a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<idea>, files_in_scope=[])`. When `articles[]` is non-empty, include them in the spec-author subagent's dispatch budget under the `articles` field. The author MUST keep CRITICAL articles' rules in view while drafting Intent + Negative Requirements.
 6. **Fill the template — one section at a time, asking only when ambiguous.**

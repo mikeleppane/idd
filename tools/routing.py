@@ -11,20 +11,30 @@ The function composes T0.5 + T2 + existing P5/P1 helpers:
   * :func:`tools.archive.slug_from_idea` — derive the capability slug.
   * :func:`tools.state.feature_folder_exists` — collision check.
   * :func:`tools.archive.create_feature_folder` — seed folder + state.json
-    body + SPEC.md + decisions.md (current_phase=spec, phases.spec=
-    in_progress, skipped[research]).
+    body + SPEC.md + decisions.md (``current_phase`` derived from tier +
+    research opt-in; ``include_research_skip`` set so the legacy deferral
+    marker is suppressed when research is part of the effective phase
+    list).
   * :func:`tools.state.record_routing_decision` — append the validated
-    ``routing`` block to the seeded state.json.
+    ``routing`` block to the seeded state.json (carrying ``phase_list``
+    when tier seeds an explicit lifecycle).
   * :func:`tools.archive.cleanup_seeded_feature` — best-effort rollback of
     the seeded folder when ``record_routing_decision`` fails AFTER the
     folder was created on disk.
 
-All three tiers seed normally: ``focused`` / ``standard`` enter at
-``current_phase="spec"``, and ``full`` enters at ``current_phase="refine"``
-(refine is full-tier-only per the locked constraint enforced by
-``create_feature_folder``).  Unknown tiers refuse via :class:`ValueError`
-BEFORE any mutation, so the seed slot can never leave a partial folder
-behind.
+Entry-phase resolution per (tier, research_opt_in):
+
+  * ``full`` → ``current_phase="refine"`` (research already in the pipeline
+    as the second phase; the flag is a no-op).
+  * ``standard`` + ``research_opt_in=True`` → ``current_phase="research"``.
+  * ``standard`` + ``research_opt_in=False`` → ``current_phase="spec"``.
+  * ``focused`` + ``research_opt_in=False`` → ``current_phase="spec"``.
+  * ``focused`` + ``research_opt_in=True`` → :class:`ValueError` BEFORE any
+    disk mutation (research never runs on focused; operator routed to the
+    standard tier instead).
+
+Unknown tiers refuse via :class:`ValueError` BEFORE any mutation, so the
+seed slot can never leave a partial folder behind.
 
 Coverage AC: 100% on this module.
 """
@@ -45,6 +55,7 @@ from tools.archive import (
 )
 from tools.state import (
     VALID_TIERS,
+    derive_phase_list,
     feature_folder_exists,
     record_routing_decision,
 )
@@ -64,6 +75,44 @@ _FEATURE_SLUG_RE: re.Pattern[str] = re.compile(r"^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-
 _IDEA_MAX_CHARS: int = 4000
 
 
+def _resolve_seed_lifecycle(
+    *,
+    final_tier: str,
+    research_opt_in: bool,
+) -> tuple[str, list[str] | None, bool]:
+    """Return ``(current_phase, effective_phase_list, include_research_skip)``.
+
+    Pure decision table over ``(tier, research_opt_in)`` extracted from
+    :func:`seed_routed_feature` so the parent function stays under the
+    branch-count linter cap.  ``effective_phase_list`` is ``None`` for
+    tiers that ride the legacy lazy-derive path (focused; standard without
+    ``--research``); otherwise the explicit list lands on
+    ``routing.phase_list``. ``include_research_skip`` rides off the same
+    decision: any tier whose effective lifecycle contains ``research``
+    suppresses the legacy ``skipped[research]`` marker so it cannot
+    contradict the actual run.
+
+    Caller must have already refused the focused + ``research_opt_in``
+    combination; this helper does not re-check that pairing.
+    """
+    if final_tier == "full":
+        # ``flow_version`` is not seeded in the template, so the lazy default
+        # (v1/v2) yields the 11-entry pre-v3 list. The qa entry only joins
+        # when the feature later opts into v3.
+        full_list = derive_phase_list(tier="full")
+        return "refine", full_list, "research" not in full_list
+    if final_tier == "standard" and research_opt_in:
+        # Standard with --research prepends ``research`` to the standard
+        # 8-phase list, yielding a 9-entry sequence starting with research.
+        # uniqueItems holds because the standard list never carries research.
+        std_list = ["research", *derive_phase_list(tier="standard")]
+        return "research", std_list, False
+    # Focused (no flag, since the focused+flag refusal already raised) and
+    # standard without --research both ride the legacy spec entry; the
+    # legacy ``skipped[research]`` marker survives for back-compat.
+    return "spec", None, True
+
+
 def seed_routed_feature(
     repo_root: Path,
     *,
@@ -74,6 +123,7 @@ def seed_routed_feature(
     constitution_present: bool = False,
     today: date | None = None,
     feature_slug: str | None = None,
+    research_opt_in: bool = False,
 ) -> Path:
     """Seed a ``/forge:do`` feature folder + routing block in one validated step.
 
@@ -136,6 +186,13 @@ def seed_routed_feature(
             schema-aligned slug shape ``slug_from_idea`` produces).  When
             omitted, the slug is derived via ``slug_from_idea(idea)`` (the
             no-collision path).
+        research_opt_in: When ``True``, opt the feature into the research
+            phase. On standard tier this seeds ``current_phase="research"``
+            and writes the 9-entry research-first ``routing.phase_list``.
+            On full tier the flag is a no-op (research already runs as the
+            second phase). On focused tier the flag refuses with a
+            ``ValueError`` BEFORE any disk mutation, pointing the operator
+            at the standard tier.
 
     Returns:
         Path to the new ``.forge/features/<feature_id>/`` folder.  The
@@ -161,6 +218,15 @@ def seed_routed_feature(
     if final_tier not in VALID_TIERS:
         raise ValueError(f"invalid final_tier {final_tier!r}; must be one of {VALID_TIERS}")
 
+    # Focused tier never runs research — escalate guidance points the
+    # operator at the standard tier so they can opt in there. Refusal is
+    # raised BEFORE any disk mutation. Wording locked verbatim per
+    # docs/specs/2026-05-09-m8-research-and-cross-ai-design.md §5.3.8.
+    if final_tier == "focused" and research_opt_in:
+        raise ValueError(
+            'research escalates to standard tier; use /forge:do --standard --research "<idea>"'
+        )
+
     # Pre-validate idea length BEFORE any other mutation so the operator
     # sees a clean cap error instead of the schema's verbose ValidationError
     # dump (which inlines the full payload). The schema mirrors the same
@@ -172,12 +238,14 @@ def seed_routed_feature(
             "trim before /forge:do"
         )
 
-    # Step 2: derive seed entry phase from tier.  Full tier enters at
-    # refine (Socratic loop owns the spec hand-off via complete_phase +
-    # start_phase later).  Focused/standard enter at spec directly.
-    # ``create_feature_folder`` enforces the refine⇒full constraint so a
-    # mis-paired (refine, focused) seed would refuse before any disk write.
-    current_phase = "refine" if final_tier == "full" else "spec"
+    # Step 2: derive seed entry phase + effective phase list from
+    # (tier, research_opt_in). ``create_feature_folder`` enforces the
+    # refine⇒full and research⇒{standard, full} constraints, so a mis-paired
+    # seed refuses before any disk write.
+    current_phase, effective_phase_list, include_research_skip = _resolve_seed_lifecycle(
+        final_tier=final_tier,
+        research_opt_in=research_opt_in,
+    )
 
     # Step 3: feature_id = <today>-<slug>.  ``today`` injection keeps tests
     # deterministic without monkeypatching ``datetime.date``.  When
@@ -236,6 +304,7 @@ def seed_routed_feature(
         tier=final_tier,
         current_phase=current_phase,
         schema_path=schema_path,
+        include_research_skip=include_research_skip,
     )
 
     # Step 7: append the routing block.  This is the only post-seed write,
@@ -262,6 +331,7 @@ def seed_routed_feature(
             proposed_tier=proposed_tier,
             rationale=rationale,
             constitution_present=constitution_present,
+            phase_list=effective_phase_list,
             schema_path=schema_path,
         )
     except BaseException as original:

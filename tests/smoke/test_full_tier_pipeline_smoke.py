@@ -109,9 +109,15 @@ def test_full_tier_pipeline_happy_walk(tmp_path: Path) -> None:
     assert "decided_at" in payload["routing"]
     assert payload["refined_idea"].startswith("Ship a percentage-rollout flag")
 
-    assert next_phase_command(payload) == "/forge:spec"
+    assert next_phase_command(payload) == "/forge:research"
 
     complete_phase(state_path, "refine", schema_path=SCHEMA_PATH)
+    start_phase(state_path, "research", schema_path=SCHEMA_PATH)
+    payload = read_state(state_path, schema_path=SCHEMA_PATH)
+    assert payload["current_phase"] == "research"
+    assert next_phase_command(payload) == "/forge:spec"
+
+    complete_phase(state_path, "research", schema_path=SCHEMA_PATH)
     start_phase(state_path, "spec", schema_path=SCHEMA_PATH)
     payload = read_state(state_path, schema_path=SCHEMA_PATH)
     assert payload["current_phase"] == "spec"

@@ -160,18 +160,27 @@ def test_full_tier_walk_seed_to_domain_via_state_helpers(tmp_path: Path) -> None
     )
     state_path = _state_path(folder)
 
-    # Refine entry: _FULL_NEXT["refine"] -> /forge:spec.
+    # Refine entry: _FULL_NEXT["refine"] -> /forge:research.
     payload = read_state(state_path, schema_path=SCHEMA_PATH)
     assert payload["current_phase"] == "refine"
-    assert next_phase_command(payload) == "/forge:spec"
+    assert next_phase_command(payload) == "/forge:research"
 
-    # Refine populates refined_idea + completes; spec phase opens.
+    # Refine populates refined_idea + completes; research phase opens.
     record_refined_idea(
         state_path,
         refined="The billing subsystem charges cards via Stripe.",
         schema_path=SCHEMA_PATH,
     )
     complete_phase(state_path, "refine", schema_path=SCHEMA_PATH)
+    start_phase(state_path, "research", schema_path=SCHEMA_PATH)
+
+    # Research entry: _FULL_NEXT["research"] -> /forge:spec.
+    payload = read_state(state_path, schema_path=SCHEMA_PATH)
+    assert payload["current_phase"] == "research"
+    assert next_phase_command(payload) == "/forge:spec"
+
+    # Research → spec boundary.
+    complete_phase(state_path, "research", schema_path=SCHEMA_PATH)
     start_phase(state_path, "spec", schema_path=SCHEMA_PATH)
 
     # Spec entry: _FULL_NEXT["spec"] -> /forge:domain.

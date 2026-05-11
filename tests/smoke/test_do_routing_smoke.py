@@ -109,7 +109,7 @@ def test_focused_walk_seed_to_execute(tmp_path: Path) -> None:
     assert payload["routing"]["final_tier"] == "focused"
     assert payload["routing"]["idea"] == "add OAuth login flow"
     assert payload["skipped"] == [
-        {"phase": "research", "reason": "M3 deferred — manual research acceptable"}
+        {"phase": "research", "reason": "research deferred; manual research acceptable"}
     ]
     # _FOCUSED_NEXT["spec"] -> /forge:execute.
     assert next_phase_command(payload) == "/forge:execute"

@@ -12,7 +12,8 @@ This file lets non-Claude tools (Cursor, Aider, Codex) discover the same FORGE s
 | `forge-scenarios`         | `skills/forge-scenarios/SKILL.md`         | explicit | Standard-tier scenarios: expand SPEC.md § Scenarios into rigorous Gherkin and emit `.feature` files when a BDD framework is detected. |
 | `forge-plan`              | `skills/forge-plan/SKILL.md`              | explicit | Standard-tier plan: file-bound, acceptance-mapped slice + wave PLAN.md with a Verified Dependencies section. |
 | `forge-crucible`          | `skills/forge-crucible/SKILL.md`          | explicit | Standard-tier crucible ritual: assumptions inversion → adversarial Q&A → pre-mortem, producing UNDERSTANDING.md. |
-| `forge-review`            | `skills/forge-review/SKILL.md`            | explicit | Standard-tier review: cheap self-review + optional heavy subagent pass + convergence loop on HIGH+ findings (max 3 cycles). Targets PLAN.md or code diff. |
+| `forge-research`          | `skills/forge-research/SKILL.md`          | explicit | Codebase + external library discovery before spec; emits RESEARCH.md with mode-aware citations. Full tier auto; standard with `--research`; focused refused. |
+| `forge-review`            | `skills/forge-review/SKILL.md`            | explicit | In-house heavy-pass review with convergence loop on HIGH+ findings (max 3 cycles). Targets PLAN.md or code diff. `--cross-ai` flag delegates to manual or auto external CLI per config; `--cross-ai-paste <path>` merges externally-generated findings. |
 | `forge-execute`           | `skills/forge-execute/SKILL.md`           | explicit | Run the execute phase. Focused tier drives directly from SPEC.md acceptance criteria; standard / full tiers drive slice-by-slice from PLAN.md with wave parallelism and per-subagent context budgets. |
 | `forge-verify`            | `skills/forge-verify/SKILL.md`            | explicit | Three-layer verification: code-audit + Layer 2 scenario execution (when a BDD framework is detected via `tools.bdd_detect`) + conversational UAT. |
 | `forge-ship`              | `skills/forge-ship/SKILL.md`              | explicit | Standard-tier ship: write the canonical capability SPEC.md and archive the feature folder. M2 supports first-ship only; delta proposals are M3+. |
@@ -38,7 +39,8 @@ This file lets non-Claude tools (Cursor, Aider, Codex) discover the same FORGE s
 | `/forge:scenarios` | `commands/scenarios.md` | Run the scenarios phase: expand SPEC.md § Scenarios into Gherkin and (when supported) `.feature` files. Standard/full tier only. |
 | `/forge:plan`      | `commands/plan.md`      | Run the plan phase: author PLAN.md with vertical slices, waves, and Verified Dependencies. Standard/full tier only. |
 | `/forge:crucible`  | `commands/crucible.md`  | Run the crucible phase: three-step adversarial ritual producing UNDERSTANDING.md. Standard/full tier only. |
-| `/forge:review`    | `commands/review.md`    | Run the review phase against the active feature. `--target plan` (default after crucible) or `--target code` (default after execute). Cross-AI review is M4 territory. |
+| `/forge:research`  | `commands/research.md`  | Run the research phase: codebase + external library discovery before spec. Emits RESEARCH.md with grounding mode (`full`/`degraded`/`websearch`/`byod`/`byod-partial`). Args: `--feature <id>`, `--skip "<reason>"`. |
+| `/forge:review`    | `commands/review.md`    | Run the review phase against the active feature. `--target plan` (default after crucible) or `--target code` (default after execute). `--cross-ai` writes a manual prompt for an external CLI; `--cross-ai --auto` dispatches automatically (opt-in); `--cross-ai-paste <path>` merges an externally-generated response. |
 | `/forge:execute`   | `commands/execute.md`   | Run the execute phase against the active feature. |
 | `/forge:verify`    | `commands/verify.md`    | Run the verify phase against the active feature. |
 | `/forge:ship`      | `commands/ship.md`      | Run the ship phase: write the canonical capability SPEC.md and archive the feature. First-ship only in M2; `--change <id>` merges an approved delta proposal (M3+). |
@@ -60,6 +62,7 @@ This file lets non-Claude tools (Cursor, Aider, Codex) discover the same FORGE s
 | `templates/feature/VERIFICATION.md` | Acceptance-criteria audit table. |
 | `templates/feature/decisions.md`    | Append-only ADR-lite log. |
 | `templates/feature/state.json`      | Phase machine state per feature. |
+| `templates/feature/RESEARCH.md`     | Research artifact: codebase findings, external docs (grounding-mode-aware citations), domain notes, risks. |
 
 ## Engineering skills (`.agents/skills/`)
 

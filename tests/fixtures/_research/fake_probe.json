@@ -1,0 +1,5 @@
+{
+  "full": {"context7_callable": true, "websearch_present": true},
+  "no_context7_yes_websearch": {"context7_callable": false, "websearch_present": true},
+  "neither": {"context7_callable": false, "websearch_present": false}
+}

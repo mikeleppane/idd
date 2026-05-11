@@ -51,6 +51,22 @@
             }
           },
           "additionalProperties": false
+        },
+        "research": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": { "type": "string", "enum": ["pending", "in_progress", "done", "skipped"] },
+            "started_at":   { "type": "string", "format": "date-time" },
+            "completed_at": { "type": "string", "format": "date-time" },
+            "current_slice": { "type": "integer", "minimum": 1 },
+            "parallel_used": {
+              "type": "boolean",
+              "default": false,
+              "description": "Reserved for M8 P2 intel-aware multi-agent escalation; P0 ships single-agent only. Absence implies false. Locking the field shape now keeps the M8 P2 consumer from forcing a schema bump on day one."
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": {
@@ -128,7 +144,17 @@
         "rationale": { "type": "string" },
         "constitution_present": { "type": "boolean" },
         "decided_at": { "type": "string", "format": "date-time" },
-        "refine_attempts": { "type": "integer", "minimum": 0, "maximum": 5 }
+        "refine_attempts": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "phase_list": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["refine", "research", "spec", "domain", "scenarios", "plan", "crucible", "review", "execute", "verify", "ship", "qa"]
+          },
+          "uniqueItems": true,
+          "minItems": 1,
+          "description": "Ordered list of phases this feature will execute. Set by /forge:do at routing time. Lazy-derived for legacy features lacking the field. Order-sensitive (consumed positionally by next_phase_command); review never repeats (uniqueItems)."
+        }
       }
     },
     "refined_idea": {

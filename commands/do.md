@@ -1,7 +1,7 @@
 ---
 name: do
-description: Adaptive routing entry-point. Proposes a tier (focused/standard/full) for a free-text idea, seeds the feature folder + state.json + routing block, and dispatches tier-deterministically (focused/standard → /forge:spec; full → /forge:refine). Use when the user wants to start a new FORGE feature from a free-text idea without picking the tier upfront.
-argument-hint: "<idea> [--focused | --standard | --full]"
+description: Adaptive routing entry-point. Proposes a tier (focused/standard/full) for a free-text idea, seeds the feature folder + state.json + routing block, and dispatches tier-deterministically (focused / standard-without-flag → /forge:spec; full → /forge:refine; standard with --research → /forge:research). Use when the user wants to start a new FORGE feature from a free-text idea without picking the tier upfront.
+argument-hint: "<idea> [--focused | --standard | --full] [--research]"
 model: sonnet
 ---
 
@@ -12,7 +12,8 @@ the skill proposes a tier (focused, standard, or full) plus a phase
 list, confirms with the user, seeds the feature folder under
 `.forge/features/<feature_id>/`, writes the `routing` block on
 `state.json`, and dispatches tier-deterministically to `/forge:spec`
-(focused/standard) or `/forge:refine` (full).
+(focused / standard without `--research`), `/forge:refine` (full), or
+`/forge:research` (standard with `--research`).
 
 ## Args
 
@@ -22,6 +23,27 @@ list, confirms with the user, seeds the feature folder under
   flag wins over the LLM's proposal.
   `Pass at most one of --focused / --standard / --full` — multi-flag
   input is rejected at parse time before any disk mutation.
+- `--research` — optional flag. Standard tier opts into the research
+  phase; the skill seeds `current_phase="research"`, writes
+  `routing.phase_list` with `research` at index 0, and dispatches to
+  `/forge:research`. Full tier auto-includes research (the flag is a
+  no-op there). Focused tier refuses with the literal hint
+  `research escalates to standard tier; use /forge:do --standard --research "<idea>"`.
+
+## Tiers
+
+| Tier | Flag(s) | Phase count | Lifecycle |
+| --- | --- | --- | --- |
+| focused | `--focused` (or LLM picks) | 3 | `spec → execute → verify` |
+| standard | `--standard` (or LLM picks) | 8 | `spec → scenarios → plan → crucible → review → execute → verify → ship` |
+| standard + research | `--standard --research` | 9 | `research → spec → scenarios → plan → crucible → review → execute → verify → ship` |
+| full | `--full` (or LLM picks) | 11 | `refine → research → spec → domain → scenarios → plan → crucible → review → execute → verify → ship` |
+
+Focused + `--research` is rejected at parse time; the operator must
+re-invoke with `--standard --research`. The `review` phase fires twice
+on standard / full (target=plan, then target=code) but appears only once
+in `routing.phase_list` per the schema's `uniqueItems: true` rule —
+target rotation is encoded in `phases.review.targets_done`.
 
 ## Behavior
 

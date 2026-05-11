@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge.dev/schemas/cross-ai-config.schema.json",
+  "type": "object",
+  "required": ["mode"],
+  "additionalProperties": false,
+  "properties": {
+    "mode": {"type": "string", "enum": ["manual", "auto", "disabled"], "default": "manual"},
+    "allowed_clis": {
+      "type": "array",
+      "items": {"type": "string", "enum": ["codex", "claude", "gemini"]},
+      "uniqueItems": true
+    },
+    "timeout_seconds": {"type": "integer", "minimum": 10, "maximum": 600, "default": 120},
+    "max_prompt_tokens": {"type": "integer", "minimum": 1000, "maximum": 200000, "default": 100000},
+    "cost_warn_threshold_usd": {"type": "number", "minimum": 0, "default": 0.50},
+    "retry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max": {"type": "integer", "minimum": 0, "maximum": 3, "default": 1},
+        "backoff_seconds": {"type": "integer", "minimum": 0, "default": 30}
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "deny_globs": {"type": "array", "items": {"type": "string"}},
+        "deny_regex": {"type": "array", "items": {"type": "string"}},
+        "fatal_regex": {"type": "array", "items": {"type": "string"}},
+        "allow_globs": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "dispatch_approved_at": {"type": "string", "format": "date-time"},
+    "dispatch_approved_by": {"type": "string"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"mode": {"const": "auto"}}, "required": ["mode"]},
+      "then": {"required": ["allowed_clis"], "properties": {"allowed_clis": {"minItems": 1}}}
+    }
+  ]
+}

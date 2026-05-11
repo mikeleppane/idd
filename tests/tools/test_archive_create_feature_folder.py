@@ -6,11 +6,11 @@ write is atomic via tempfile + os.replace; the multi-file folder seed is
 best-effort, not transactional — on any per-file failure, shutil.rmtree
 removes the partial folder before re-raising.
 
-State body shape locked by spec §5.3.2 step 6 + plan deviation #4:
+State body shape locked by spec §5.3.2 step 6:
   - feature_id, tier
   - current_phase = "spec"
   - phases.spec = {status: "in_progress", started_at: <utc-iso>}
-  - skipped = [{phase: "research", reason: "M3 deferred — manual research acceptable"}]
+  - skipped = [{phase: "research", reason: "research deferred; manual research acceptable"}]
   - deviations = []
   - commits = []
 """
@@ -199,7 +199,7 @@ def test_create_feature_folder_partial_failure_rmtrees(
 
 
 def test_create_feature_folder_research_skipped_entry_present(tmp_path: Path) -> None:
-    """skipped contains the research entry verbatim (deviation #4)."""
+    """skipped contains the research entry verbatim."""
     feature_id = "2026-05-08-research-skip"
     create_feature_folder(
         tmp_path,
@@ -209,7 +209,7 @@ def test_create_feature_folder_research_skipped_entry_present(tmp_path: Path) ->
     )
     payload = _read_state(tmp_path / ".forge" / "features" / feature_id)
     assert payload["skipped"] == [
-        {"phase": "research", "reason": "M3 deferred — manual research acceptable"}
+        {"phase": "research", "reason": "research deferred; manual research acceptable"}
     ]
 
 

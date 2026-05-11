@@ -49,6 +49,116 @@ _REFINE_ATTEMPTS_CAP: Final[int] = 5
 _FLOW_VERSION_V3: Final[int] = 3
 
 
+# Canonical per-tier phase orderings, sourced from spec sections 6.1-6.3
+# (`docs/specs/2026-05-09-m8-research-and-cross-ai-design.md`). The full-tier
+# list carries the post-ship ``qa`` step only when the feature is at
+# ``flow_version >= 3``; v1/v2 stop at ``ship`` per spec line 730. Standard
+# tier intentionally omits ``research``: research is opt-in via
+# ``/forge:do --research`` (which writes ``routing.phase_list`` explicitly),
+# so the lazy default for legacy standard features is the no-research list.
+_PHASE_LIST_FOCUSED: Final[tuple[str, ...]] = ("spec", "execute", "verify")
+_PHASE_LIST_STANDARD: Final[tuple[str, ...]] = (
+    "spec",
+    "scenarios",
+    "plan",
+    "crucible",
+    "review",
+    "execute",
+    "verify",
+    "ship",
+)
+_PHASE_LIST_FULL_PRE_V3: Final[tuple[str, ...]] = (
+    "refine",
+    "research",
+    "spec",
+    "domain",
+    "scenarios",
+    "plan",
+    "crucible",
+    "review",
+    "execute",
+    "verify",
+    "ship",
+)
+_PHASE_LIST_FULL_V3: Final[tuple[str, ...]] = (*_PHASE_LIST_FULL_PRE_V3, "qa")
+
+
+def derive_phase_list(*, tier: str, flow_version: int | None = None) -> list[str]:
+    """Return the canonical lifecycle phase list for ``(tier, flow_version)``.
+
+    Pure transformation. Does no I/O and reads no payload state. Callers
+    typically reach this via ``get_phase_list`` rather than directly; the
+    only direct caller is the schema-bounded routing seeder.
+
+    Args:
+        tier: One of ``VALID_TIERS``.
+        flow_version: Optional state-machine generation. Absence is treated
+            as v1 by application convention (matches ``read_state``); the
+            full-tier list carries the trailing ``qa`` step only when this
+            is ``>= _FLOW_VERSION_V3``.
+
+    Returns:
+        A fresh ``list[str]`` of lifecycle phase names in execution order.
+
+    Raises:
+        StateError: when ``tier`` is not in ``VALID_TIERS``.
+    """
+    if tier == "focused":
+        return list(_PHASE_LIST_FOCUSED)
+    if tier == "standard":
+        return list(_PHASE_LIST_STANDARD)
+    if tier == "full":
+        if (flow_version or 1) >= _FLOW_VERSION_V3:
+            return list(_PHASE_LIST_FULL_V3)
+        return list(_PHASE_LIST_FULL_PRE_V3)
+    raise StateError(f"unknown tier {tier!r}; must be one of {VALID_TIERS}")
+
+
+def get_phase_list(payload: dict[str, Any]) -> list[str] | None:
+    """Return the canonical phase list for ``payload``, or ``None``.
+
+    Read-only accessor over an already-parsed ``state.json`` payload. Pure:
+    never mutates ``payload`` and never touches the filesystem. Decision 4
+    of the M8 P0 plan: the dict returned by ``read_state`` is **not**
+    augmented with a derived ``phase_list``; callers that need the list
+    reach for it through this accessor instead. That preserves the
+    ``read → mutate → write_state`` round-trip guarantee for legacy
+    features whose on-disk file lacks the field.
+
+    Resolution order:
+
+    1. ``payload['routing']`` is not a dict → ``None``.
+    2. ``payload['routing']['phase_list']`` is a non-empty list → fresh
+       ``list(...)`` copy of it (defensive against caller mutation).
+    3. Otherwise look up ``tier = payload['tier']``; when ``tier`` is in
+       ``VALID_TIERS``, derive the canonical list via
+       :func:`derive_phase_list`. Unknown tier (or absent tier) → ``None``.
+
+    Args:
+        payload: Parsed ``state.json`` mapping.
+
+    Returns:
+        Ordered list of lifecycle phase names, or ``None`` when no list
+        can be resolved.
+    """
+    routing = payload.get("routing")
+    if not isinstance(routing, dict):
+        return None
+    explicit = routing.get("phase_list")
+    if isinstance(explicit, list) and explicit:
+        return list(explicit)
+    tier = payload.get("tier")
+    if isinstance(tier, str) and tier in VALID_TIERS:
+        flow_version = payload.get("flow_version")
+        fv = (
+            flow_version
+            if isinstance(flow_version, int) and not isinstance(flow_version, bool)
+            else None
+        )
+        return derive_phase_list(tier=tier, flow_version=fv)
+    return None
+
+
 def _validator_for(schema: dict[str, Any]) -> jsonschema.Draft202012Validator:
     return jsonschema.Draft202012Validator(
         schema,
@@ -326,6 +436,7 @@ def record_routing_decision(
     proposed_tier: str | None = None,
     rationale: str | None = None,
     constitution_present: bool = False,
+    phase_list: list[str] | None = None,
     schema_path: Path | None = None,
     now: str | None = None,
 ) -> dict[str, Any]:
@@ -338,6 +449,11 @@ def record_routing_decision(
         proposed_tier: Tier the router proposed before user override.
         rationale: One-sentence reason from the router or user.
         constitution_present: True when .forge/CONSTITUTION.md was loaded at routing time.
+        phase_list: Optional ordered list of unique lifecycle phase names. When
+            given, persisted into ``routing.phase_list`` and consumed by
+            ``next_phase_command`` for sequencing. When ``None`` (default), the
+            field is omitted and consumers fall back to the per-tier static
+            table via ``get_phase_list``'s lazy-derive branch.
         schema_path: Optional schema for read+write validation.
         now: Optional ISO 8601 timestamp; defaults to UTC now.
 
@@ -352,7 +468,7 @@ def record_routing_decision(
     if proposed_tier is not None and proposed_tier not in VALID_TIERS:
         raise StateError(f"invalid proposed_tier {proposed_tier!r}; must be one of {VALID_TIERS}")
     payload = read_state(path, schema_path=schema_path)
-    # M3 cross-check: final_tier must match the seeded state.json.tier so a
+    # Cross-check: final_tier must match the seeded state.json.tier so a
     # focused/standard feature cannot quietly end up with routing.final_tier
     # set to "full" (which would corrupt downstream phase-pump tables and
     # next_phase_command resolution). seed_routed_feature already passes
@@ -371,6 +487,10 @@ def record_routing_decision(
         block["proposed_tier"] = proposed_tier
     if rationale is not None:
         block["rationale"] = rationale
+    if phase_list is not None:
+        # Defensive copy so caller mutations after the call do not leak into
+        # the persisted block. Schema enforces uniqueItems + enum membership.
+        block["phase_list"] = list(phase_list)
     payload["routing"] = block
     write_state(path, payload, schema_path=schema_path)
     return payload
@@ -780,7 +900,10 @@ _FOCUSED_NEXT: dict[str, str | None] = {
 _STANDARD_NEXT: dict[str, str | None] = {
     # 'refine' is intentionally absent — refine is full-tier only and was
     # never supposed to enter the standard pipeline (deep-M-A2). Standard
-    # tier starts at /forge:spec.
+    # tier starts at /forge:spec; the optional research opt-in (seeded via
+    # routing.phase_list at /forge:do --standard --research time) lands the
+    # feature at current_phase="research" and uses the entry below.
+    "research": "/forge:spec",
     "spec": "/forge:scenarios",
     "scenarios": "/forge:plan",
     "plan": "/forge:crucible",
@@ -793,7 +916,8 @@ _STANDARD_NEXT: dict[str, str | None] = {
 
 _FULL_NEXT: dict[str, str | None] = {
     **_STANDARD_NEXT,
-    "refine": "/forge:spec",
+    "refine": "/forge:research",
+    "research": "/forge:spec",
     "spec": "/forge:domain",
     "domain": "/forge:scenarios",
 }
@@ -810,10 +934,113 @@ def _next_review_command(state_payload: dict[str, Any]) -> str:
     return "/forge:verify"
 
 
+# Sentinel returned by ``_next_from_phase_list`` when ``routing.phase_list``
+# applies and resolves to "terminal" (current_phase is the last entry and
+# the static table has nothing to add). The caller surfaces this as
+# ``None``; the bare ``None`` return means "phase_list did not apply, fall
+# through to the static table."
+_PHASE_LIST_TERMINAL: Final[object] = object()
+
+
+def _next_from_phase_list(  # noqa: PLR0911
+    state_payload: dict[str, Any],
+) -> str | object | None:
+    """Return the next slash-command when ``routing.phase_list`` applies.
+
+    Resolution:
+
+    * ``routing.phase_list`` absent / empty → ``None`` (caller falls back
+      to the per-tier static table).
+    * ``current_phase`` not in ``phase_list`` → ``None`` (legacy /
+      inconsistent state; caller falls back to the static table to
+      preserve backward compatibility).
+    * ``current_phase == "execute"`` AND the list also contains
+      ``review`` AND ``review.targets_done`` is missing ``code``: route
+      back to ``/forge:review --target code`` to preserve the dual-pass
+      review semantics. The phase_list is a single linear sequence and
+      cannot encode the implicit second review visit; this re-routing
+      mirrors the behavior the per-tier static table previously
+      provided.
+    * ``current_phase`` is the last entry → :data:`_PHASE_LIST_TERMINAL`
+      sentinel (caller surfaces ``None`` from ``next_phase_command``).
+    * Otherwise the next entry in ``phase_list`` drives the slash literal:
+      ``review`` delegates to :func:`_next_review_command` (preserves the
+      ``targets_done`` two-pass semantics); a ``ship → qa`` transition
+      keeps the ``--against merged`` flag from the static table; every
+      other phase becomes ``f"/forge:{next_phase}"``.
+
+    PLR0911 silenced: each early-return is an independent guard against a
+    distinct shape failure (missing routing / empty list / unknown phase /
+    terminal / non-string entry); collapsing them obscures intent.
+
+    Returns:
+        Slash command ``str``, the :data:`_PHASE_LIST_TERMINAL` sentinel,
+        or ``None``.
+    """
+    routing = state_payload.get("routing")
+    if not isinstance(routing, dict):
+        return None
+    phase_list = routing.get("phase_list")
+    if not isinstance(phase_list, list) or not phase_list:
+        return None
+
+    phase = state_payload.get("current_phase")
+    if not isinstance(phase, str) or phase not in phase_list:
+        return None
+
+    # Dual-pass review semantics: phase_list is a single linear sequence
+    # but the review phase is visited twice (target=plan then target=code).
+    # Delegate to ``_next_review_command`` whenever the current phase is
+    # review, and re-route execute → review/code when the code-target is
+    # still pending. Both branches mirror the legacy static-table logic
+    # so a phase_list-bearing feature behaves identically to its
+    # legacy-fallback counterpart through the review/execute ping-pong.
+    if phase == "review":
+        return _next_review_command(state_payload)
+    if phase == "execute" and "review" in phase_list:
+        review_block = state_payload.get("phases", {}).get("review", {})
+        targets_done = review_block.get("targets_done", []) or []
+        if "code" not in targets_done:
+            return "/forge:review --target code"
+
+    idx = phase_list.index(phase)
+    if idx == len(phase_list) - 1:
+        # End of the explicit list. The seeder writes the v1/v2 list (no
+        # ``qa``) for full-tier features, but the static table still
+        # carries the ``ship → /forge:qa --against merged`` transition for
+        # post-merge migration. Falling through to the static table only
+        # when phase_list is exhausted preserves that bridge without
+        # letting the static table override an in-flight phase_list walk.
+        return _PHASE_LIST_TERMINAL
+
+    next_phase = phase_list[idx + 1]
+    if not isinstance(next_phase, str):
+        return None
+
+    if next_phase == "review":
+        return _next_review_command(state_payload)
+    if next_phase == "qa" and phase == "ship":
+        return "/forge:qa --against merged"
+    return f"/forge:{next_phase}"
+
+
 def next_phase_command(state_payload: dict[str, Any]) -> str | None:
     """Return the slash-command for the next pipeline phase, or None when done.
 
-    Read-only. Pure function over a state.json payload. See M3 spec §5.3.7.
+    Read-only. Pure function over a state.json payload.
+
+    Resolution order:
+
+    1. When ``routing.phase_list`` is present, non-empty, AND
+       ``current_phase`` appears in it, the list drives the next
+       command. End-of-list → ``None``.
+    2. Otherwise fall back to the per-tier static table
+       (``_FOCUSED_NEXT`` / ``_STANDARD_NEXT`` / ``_FULL_NEXT``).
+
+    The fallback preserves backward compatibility for legacy features
+    whose state.json predates the routing-block wire-up; the
+    list-first preference honors any caller (e.g. the routing seeder)
+    that wrote an explicit ordering.
 
     Args:
         state_payload: Parsed state.json (must contain `tier`, `current_phase`,
@@ -828,12 +1055,23 @@ def next_phase_command(state_payload: dict[str, Any]) -> str | None:
     if not isinstance(phase, str) or not isinstance(tier, str):
         return None
 
+    list_result = _next_from_phase_list(state_payload)
+    if isinstance(list_result, str):
+        return list_result
+    if list_result is _PHASE_LIST_TERMINAL:
+        # End of the explicit list. The seeder writes the v1/v2 phase list
+        # without ``qa``, but the static full/standard table carries the
+        # ``ship → /forge:qa --against merged`` post-merge bridge; honor
+        # that transition so flow_version v3 features still land in qa
+        # after ship completes. Every other terminal-of-list state returns
+        # ``None`` per the routing-precedence contract.
+        ship_to_qa = phase == "ship" and tier in ("standard", "full")
+        return "/forge:qa --against merged" if ship_to_qa else None
+
     if tier == "focused":
         return _FOCUSED_NEXT.get(phase)
 
     table = {"standard": _STANDARD_NEXT, "full": _FULL_NEXT}.get(tier)
     if table is None:
         return None
-    if phase == "review":
-        return _next_review_command(state_payload)
-    return table.get(phase)
+    return _next_review_command(state_payload) if phase == "review" else table.get(phase)

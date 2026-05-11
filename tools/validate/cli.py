@@ -15,8 +15,10 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from ._config_shape import validate_config
 from ._feature_layout import PLAN_FILENAME, SPEC_FILENAME
 from ._finding import EXIT_NONZERO_SEVERITIES, Finding, _finding_to_dict
+from ._research_shape import validate_research
 from .constitution import validate_constitution
 from .delta import validate_delta
 from .domain_glossary import validate_domain_glossary
@@ -42,12 +44,13 @@ _PER_FILE_TARGETS: frozenset[str] = frozenset(
         "spec-semantic",
         "plan-tasks",
         "verified-deps",
+        "research",
     }
 )
 _PER_FOLDER_TARGETS: frozenset[str] = frozenset(
     {"deviations", "tdd_evidence", "domain_glossary", "qa_shape"}
 )
-_REPO_WIDE_TARGETS: frozenset[str] = frozenset({"health", "ship", "all"})
+_REPO_WIDE_TARGETS: frozenset[str] = frozenset({"health", "ship", "all", "config"})
 
 # Reserved sub-folder names under ``.forge/features/`` and ``.forge/changes/``
 # that the ``--target all`` dispatcher must skip — they are not live artifacts.
@@ -66,7 +69,9 @@ _TARGET_CHOICES: tuple[str, ...] = (
     "tdd_evidence",
     "domain_glossary",
     "qa_shape",
+    "research",
     "constitution",
+    "config",
     "health",
     "ship",
     "all",
@@ -137,6 +142,17 @@ def _dispatch_qa_shape(args: argparse.Namespace, repo_root: Path) -> list[Findin
     return list(validate_qa_shape(repo_root, args.path.name))
 
 
+def _dispatch_research(args: argparse.Namespace, repo_root: Path) -> list[Finding]:  # noqa: ARG001
+    return list(validate_research(args.path))
+
+
+def _dispatch_config(
+    args: argparse.Namespace,  # noqa: ARG001
+    repo_root: Path,
+) -> list[Finding]:
+    return list(validate_config(repo_root / ".forge" / "config.json"))
+
+
 def _dispatch_constitution(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
     resolved = args.path if args.path is not None else repo_root / ".forge" / "CONSTITUTION.md"
     return list(validate_constitution(resolved))
@@ -156,6 +172,36 @@ def _dispatch_ship(
     return list(validate_capability_uniqueness(repo_root))
 
 
+def _validate_feature(
+    feature: Path,
+    repo_root: Path,
+    *,
+    check_registries: bool,
+) -> list[Finding]:
+    """Run every per-feature validator over a single feature directory."""
+    findings: list[Finding] = []
+    findings.extend(validate_deviations(feature))
+    findings.extend(validate_tdd_evidence(repo_root, feature.name))
+    findings.extend(validate_domain_glossary(repo_root, feature.name))
+    findings.extend(validate_qa_shape(repo_root, feature.name))
+    research = feature / "RESEARCH.md"
+    if research.is_file():
+        findings.extend(validate_research(research))
+    spec = feature / SPEC_FILENAME
+    plan = feature / PLAN_FILENAME
+    if spec.is_file():
+        findings.extend(validate_negative_requirements(spec))
+        findings.extend(validate_frontmatter(spec, kind="spec"))
+        findings.extend(validate_scenarios(spec))
+        findings.extend(validate_anchors(spec, repo_root=repo_root))
+    if plan.is_file():
+        findings.extend(validate_frontmatter(plan, kind="plan"))
+        if spec.is_file():
+            findings.extend(validate_plan_tasks(plan, spec_path=spec))
+        findings.extend(validate_verified_deps(plan, check_registries=check_registries))
+    return findings
+
+
 def _dispatch_all(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
     """Walk the full .forge tree, invoking every applicable validator.
 
@@ -167,6 +213,7 @@ def _dispatch_all(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
     findings: list[Finding] = []
     findings.extend(validate_health(repo_root))
     findings.extend(validate_capability_uniqueness(repo_root))
+    findings.extend(validate_config(repo_root / ".forge" / "config.json"))
 
     constitution = repo_root / ".forge" / "CONSTITUTION.md"
     if constitution.is_file():
@@ -184,28 +231,15 @@ def _dispatch_all(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
     features_root = repo_root / ".forge" / "features"
     if features_root.is_dir():
         for feature in sorted(features_root.iterdir()):
-            if not feature.is_dir():
+            if not feature.is_dir() or feature.name in _RESERVED_SUBFOLDERS:
                 continue
-            if feature.name in _RESERVED_SUBFOLDERS:
-                continue
-            findings.extend(validate_deviations(feature))
-            findings.extend(validate_tdd_evidence(repo_root, feature.name))
-            findings.extend(validate_domain_glossary(repo_root, feature.name))
-            findings.extend(validate_qa_shape(repo_root, feature.name))
-            spec = feature / SPEC_FILENAME
-            plan = feature / PLAN_FILENAME
-            if spec.is_file():
-                findings.extend(validate_negative_requirements(spec))
-                findings.extend(validate_frontmatter(spec, kind="spec"))
-                findings.extend(validate_scenarios(spec))
-                findings.extend(validate_anchors(spec, repo_root=repo_root))
-            if plan.is_file():
-                findings.extend(validate_frontmatter(plan, kind="plan"))
-                if spec.is_file():
-                    findings.extend(validate_plan_tasks(plan, spec_path=spec))
-                findings.extend(
-                    validate_verified_deps(plan, check_registries=args.check_registries)
+            findings.extend(
+                _validate_feature(
+                    feature,
+                    repo_root,
+                    check_registries=args.check_registries,
                 )
+            )
     return findings
 
 
@@ -222,7 +256,9 @@ _TARGET_DISPATCH: dict[str, Callable[[argparse.Namespace, Path], list[Finding]]]
     "tdd_evidence": _dispatch_tdd_evidence,
     "domain_glossary": _dispatch_domain_glossary,
     "qa_shape": _dispatch_qa_shape,
+    "research": _dispatch_research,
     "constitution": _dispatch_constitution,
+    "config": _dispatch_config,
     "health": _dispatch_health,
     "ship": _dispatch_ship,
     "all": _dispatch_all,
