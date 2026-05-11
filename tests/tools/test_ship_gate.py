@@ -1679,3 +1679,69 @@ def test_ack_hook_idempotent_when_decisions_atomic_replace_failed_first_try(
     assert len(state_payload["deviations"]) == 1, (
         "state.json must carry exactly one deviation entry after the retry"
     )
+
+
+# --- File-size cap on REVIEW.code.md parsing -------------------------------
+
+
+def test_parse_review_findings_refuses_oversize_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refuse to parse a REVIEW file larger than the cap."""
+    path = tmp_path / "REVIEW.code.md"
+    monkeypatch.setattr(sg, "_MAX_REVIEW_FILE_BYTES", 128)
+    path.write_text("x" * 256, encoding="utf-8")
+    with pytest.raises(sg.ShipGateError, match="refuse to parse"):
+        sg.parse_review_findings(path)
+
+
+# --- accepted-risk reason cap ---------------------------------------------
+
+
+def test_parse_review_findings_rejects_oversize_accepted_risk_reason(tmp_path: Path) -> None:
+    """``accepted-risk:<reason>`` must be bounded to 200 chars on the Resolved-by cell."""
+    bad = tmp_path / "review_long_reason.md"
+    long_reason = "x" * 201  # over the 200-char cap
+    bad.write_text(
+        f"""---
+spec: 2026-05-11-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Resolved by | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|-------------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | accepted-risk:{long_reason} | src/x.py:1 | [constitution:A1] m | f | self |
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(sg.ShipGateError, match="unrecognized Resolved by"):
+        sg.parse_review_findings(bad)
+
+
+def test_parse_review_findings_accepts_bounded_accepted_risk_reason(tmp_path: Path) -> None:
+    """A 200-char reason still parses; the upper bound is inclusive."""
+    ok = tmp_path / "review_bounded_reason.md"
+    bounded_reason = "x" * 200
+    ok.write_text(
+        f"""---
+spec: 2026-05-11-demo
+target: code
+status: resolved
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Resolved by | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|-------------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | accepted-risk:{bounded_reason} | src/x.py:1 | [constitution:A1] m | f | self |
+""",
+        encoding="utf-8",
+    )
+    findings = sg.parse_review_findings(ok)
+    assert len(findings) == 1
+    assert findings[0].resolved_by == f"accepted-risk:{bounded_reason}"

@@ -499,3 +499,14 @@ def test_to_budget_dict_locked_shape(tmp_path: Path) -> None:
     assert payload["tags"] == ["dispatch", "validation"]
     assert "body_words" not in payload
     assert "captured" not in payload
+
+
+def test_parse_refuses_oversize_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Files larger than the cap raise LessonError before parsing kicks in."""
+    path = tmp_path / ".forge" / "intel" / "lessons.md"
+    path.parent.mkdir(parents=True)
+    # Lower the cap to a tiny value so we don't have to create a 1 MiB file.
+    monkeypatch.setattr(lessons, "_MAX_LESSONS_FILE_BYTES", 128)
+    path.write_text(_HEADER + ("x" * 256), encoding="utf-8")
+    with pytest.raises(lessons.LessonError, match="refuse to parse"):
+        lessons.parse(path)

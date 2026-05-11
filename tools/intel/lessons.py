@@ -78,9 +78,28 @@ _INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
 
 _DEFAULT_HEADER = '---\nversion: 0.1.0\ncreated: "{created}"\n---\n\n# FORGE Lessons\n\n'
 
+# Refuse to read a lessons file larger than this cap. A typical lessons.md
+# holds a handful of entries at a few hundred chars each; 1 MiB is several
+# orders of magnitude past plausible content and guards against an accidental
+# (or hostile) multi-GB file from blowing up the parser's two regex passes and
+# splitlines list at ~3x peak memory.
+_MAX_LESSONS_FILE_BYTES: Final[int] = 1 << 20
+
 
 class LessonError(RuntimeError):
     """Raised when the lessons artifact cannot be parsed, allocated, or amended."""
+
+
+def _read_lessons_file(path: Path) -> str:
+    """Read ``path`` enforcing :data:`_MAX_LESSONS_FILE_BYTES`."""
+    size = path.stat().st_size
+    if size > _MAX_LESSONS_FILE_BYTES:
+        raise LessonError(
+            f"lessons file at {path} is {size} bytes; refuse to parse "
+            f"a file larger than {_MAX_LESSONS_FILE_BYTES} bytes "
+            "(suspected malformed or out-of-scope content)"
+        )
+    return path.read_text(encoding="utf-8")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -149,7 +168,7 @@ def parse(path: Path) -> list[Lesson]:
     """
     if not path.exists():
         return []
-    return parse_text(path.read_text(encoding="utf-8"))
+    return parse_text(_read_lessons_file(path))
 
 
 def parse_text(text: str) -> list[Lesson]:
@@ -418,7 +437,7 @@ def append(repo_root: Path, draft: Lesson, *, today: date | None = None) -> Path
         )
 
     if path.exists():
-        prior_text = path.read_text(encoding="utf-8")
+        prior_text = _read_lessons_file(path)
         # parse() already ran inside next_id(); reuse the file body verbatim.
         new_text = _append_to_body(prior_text, draft)
     else:
@@ -480,7 +499,7 @@ def amend_status(
     _check_superseded_target(by_id, lesson_id, new_status)
 
     new_body = _rewrite_status(
-        path.read_text(encoding="utf-8"),
+        _read_lessons_file(path),
         lesson_id=lesson_id,
         new_status=new_status,
     )

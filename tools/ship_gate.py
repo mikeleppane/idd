@@ -86,11 +86,20 @@ _VALID_STATUS_VALUES: frozenset[str] = frozenset({"open", "resolved", "accepted-
 # the gate via the old `severity in {BLOCK,HIGH,MEDIUM}` short-circuit.
 _VALID_SEVERITY_VALUES: frozenset[str] = frozenset({"BLOCK", "HIGH", "MEDIUM", "LOW"})
 # `Resolved by` vocabulary: 40-hex SHA, the literal `spec-edit` / `plan-edit`,
-# or `accepted-risk:<reason>` where <reason> is any non-empty trailing text.
+# or `accepted-risk:<reason>` where <reason> is any non-empty trailing text,
+# bounded to 200 chars so a runaway cell cannot inflate the in-memory finding.
 # Empty cells are tolerated and surface as ``resolved_by=None``; this pattern
 # only runs against non-empty cells. The 40-hex form is what the trap-memory
 # harvest path keys on; the literals carry no SHA so harvest skips them.
-_VALID_RESOLVED_BY_PATTERN = re.compile(r"^([0-9a-f]{40}|spec-edit|plan-edit|accepted-risk:.+)$")
+_VALID_RESOLVED_BY_PATTERN = re.compile(
+    r"^([0-9a-f]{40}|spec-edit|plan-edit|accepted-risk:.{1,200})$"
+)
+
+# Refuse to parse a REVIEW file larger than this cap. A typical REVIEW.code.md
+# holds a couple of dozen findings; 1 MiB is several orders of magnitude past
+# plausible content and guards against an accidental (or hostile) huge file
+# from blowing up the splitlines + per-row regex passes.
+_MAX_REVIEW_FILE_BYTES = 1 << 20
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -183,6 +192,13 @@ def parse_review_findings(path: Path) -> list[ShipFinding]:
     if not path.exists():
         return []
 
+    size = path.stat().st_size
+    if size > _MAX_REVIEW_FILE_BYTES:
+        raise ShipGateError(
+            f"REVIEW file at {path} is {size} bytes; refuse to parse "
+            f"a file larger than {_MAX_REVIEW_FILE_BYTES} bytes "
+            "(suspected malformed or out-of-scope content)"
+        )
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
 
