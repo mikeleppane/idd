@@ -25,6 +25,7 @@ from .delta import validate_delta
 from .domain_glossary import validate_domain_glossary
 from .git_conventions import validate_git_conventions
 from .health import validate_health
+from .lessons import validate_lessons
 from .plan import validate_plan_tasks, validate_verified_deps
 from .qa_shape import validate_qa_shape
 from .spec_semantic import validate_anchors, validate_scenarios
@@ -52,7 +53,9 @@ _PER_FILE_TARGETS: frozenset[str] = frozenset(
 _PER_FOLDER_TARGETS: frozenset[str] = frozenset(
     {"deviations", "tdd_evidence", "domain_glossary", "qa_shape", "git-conventions"}
 )
-_REPO_WIDE_TARGETS: frozenset[str] = frozenset({"health", "ship", "all", "config", "conventions"})
+_REPO_WIDE_TARGETS: frozenset[str] = frozenset(
+    {"health", "ship", "all", "config", "conventions", "lessons"}
+)
 
 # Reserved sub-folder names under ``.forge/features/`` and ``.forge/changes/``
 # that the ``--target all`` dispatcher must skip — they are not live artifacts.
@@ -77,6 +80,7 @@ _TARGET_CHOICES: tuple[str, ...] = (
     "conventions",
     "git-conventions",
     "health",
+    "lessons",
     "ship",
     "all",
 )
@@ -181,6 +185,13 @@ def _dispatch_health(
     repo_root: Path,
 ) -> list[Finding]:
     return list(validate_health(repo_root))
+
+
+def _dispatch_lessons(
+    args: argparse.Namespace,  # noqa: ARG001
+    repo_root: Path,
+) -> list[Finding]:
+    return list(validate_lessons(repo_root))
 
 
 def _dispatch_ship(
@@ -293,6 +304,7 @@ _TARGET_DISPATCH: dict[str, Callable[[argparse.Namespace, Path], list[Finding]]]
     "config": _dispatch_config,
     "conventions": _dispatch_conventions,
     "health": _dispatch_health,
+    "lessons": _dispatch_lessons,
     "ship": _dispatch_ship,
     "all": _dispatch_all,
 }

@@ -25,6 +25,7 @@ from .delta import validate_delta
 from .domain_glossary import validate_domain_glossary
 from .git_conventions import GitConventionsConfig, validate_git_conventions
 from .health import validate_health
+from .lessons import validate_lessons
 from .plan import validate_plan_tasks, validate_verified_deps
 from .qa_shape import validate_qa_shape
 from .spec_semantic import validate_anchors, validate_scenarios
@@ -57,6 +58,7 @@ __all__ = [
     "validate_frontmatter",
     "validate_git_conventions",
     "validate_health",
+    "validate_lessons",
     "validate_negative_requirements",
     "validate_plan_tasks",
     "validate_qa_shape",
