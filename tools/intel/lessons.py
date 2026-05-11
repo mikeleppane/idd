@@ -68,15 +68,10 @@ _FIELD_RE = re.compile(
     r"^\*\*(Captured|Resolved by|Trap|Avoidance|Tags|Severity|Status):\*\*\s*(.*)$"
 )
 _FIELD_KEYS = ("captured", "resolved by", "trap", "avoidance", "tags", "severity", "status")
-_FIELD_INTERNAL: dict[str, str] = {
-    "captured": "captured",
-    "resolved by": "resolved_by",
-    "trap": "trap",
-    "avoidance": "avoidance",
-    "tags": "tags",
-    "severity": "severity",
-    "status": "status",
-}
+# Only one marker name needs renaming when mapped to the internal field key —
+# the rest are identity. Keep the rename table small and explicit instead of
+# spelling out six identity entries that obscure the actual transformation.
+_FIELD_RENAME: dict[str, str] = {"resolved by": "resolved_by"}
 _REQUIRED_FIELDS = ("captured", "resolved_by", "trap", "avoidance", "tags", "severity", "status")
 
 _CAPTURED_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s+from\s+feature\s+(\S+)\s*$")
@@ -185,8 +180,14 @@ def parse(path: Path) -> list[Lesson]:
     1. File missing -> empty list.
     2. Per-entry header + field shape (id, captured, resolved-by, tags,
        severity, status).
-    3. Cross-entry checks (unique ids, monotonic order, superseded targets
-       exist and are not already superseded).
+    3. Cross-entry checks (unique ids, monotonic ascending id order,
+       superseded targets exist and are not already superseded).
+
+    Monotonic order is structural: :func:`append` always lands at end of
+    file, so the natural growth direction is ascending. Manually reordering
+    entries (e.g. alphabetical sort) makes the file unparseable and locks
+    the writer out of :func:`amend_status` until the original order is
+    restored. Re-sort by ``L<NNN>`` numerically if a reorder is necessary.
     """
     if not path.exists():
         return []
@@ -254,7 +255,7 @@ def _consume_line(
         if marker not in _FIELD_KEYS:
             state.active_field = None
             return
-        internal = _FIELD_INTERNAL[marker]
+        internal = _FIELD_RENAME.get(marker, marker)
         state.active_field = internal
         state.current[internal] = field_match.group(2).strip()
         return
@@ -559,8 +560,6 @@ def amend_status(
     repo_root: Path,
     lesson_id: str,
     new_status: str,
-    *,
-    today: date | None = None,
 ) -> Path:
     """Flip an existing lesson's Status field.
 
@@ -574,10 +573,6 @@ def amend_status(
     Rejects missing ``lesson_id``, bad ``new_status`` shape, missing
     superseded targets, and chains (target already superseded).
     """
-    # ``today`` accepted for API symmetry with :func:`append`. Lessons.md
-    # currently records no per-amend timestamp so the value is unused here;
-    # accept it now to avoid widening the signature later.
-    del today
     path = _lessons_path(repo_root)
     if not path.exists():
         raise LessonError(f"lessons file not found at {path}")
@@ -667,9 +662,17 @@ def _rewrite_status(text: str, *, lesson_id: str, new_status: str) -> str:
 MAX_LESSON_WORDS: Final[int] = 600
 """Dispatch-budget cap for ``lessons[]``.
 
-Separate from :data:`tools.constitution.MAX_INJECTED_WORDS` so a heavy lesson
-load cannot squeeze CRITICAL Constitution articles out of the budget. The
-caller injects both lists side-by-side; each list pays its own cap.
+Sized at roughly half of :data:`tools.constitution.MAX_INJECTED_WORDS`
+(1153 ~= 1500 tokens / 1.3 words-per-token). Articles describe the project's
+durable rules and earn the larger budget; lessons describe transient
+failure modes and pay the smaller cap. Keeping the two caps independent
+means a heavy lesson load cannot squeeze CRITICAL Constitution articles
+out of their own budget — the caller injects both lists side-by-side and
+each list pays its own cap.
+
+Revisit if real-world dispatches consistently report lessons being trimmed
+at the cap. Until then, 600 words ~= 780 tokens stays comfortable inside
+the ~3000-token total subagent context overhead.
 """
 
 

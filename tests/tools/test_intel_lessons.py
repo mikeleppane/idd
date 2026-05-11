@@ -521,6 +521,57 @@ def test_parse_refuses_oversize_trap_field(tmp_path: Path) -> None:
         lessons.parse(path)
 
 
+def test_parse_empty_file_returns_empty_list(tmp_path: Path) -> None:
+    """A zero-byte file parses to an empty lesson list (no header required)."""
+    path = _write(tmp_path / "lessons.md", "")
+    assert lessons.parse(path) == []
+
+
+def test_parse_frontmatter_only_returns_empty_list(tmp_path: Path) -> None:
+    """A header-only file with no lesson entries returns an empty list."""
+    path = _write(tmp_path / "lessons.md", _HEADER)
+    assert lessons.parse(path) == []
+
+
+def test_parse_handles_crlf_line_endings(tmp_path: Path) -> None:
+    """Files saved with Windows-style CRLF must still parse cleanly."""
+    body = _file(_entry(nid="L001")).replace("\n", "\r\n")
+    path = _write(tmp_path / "lessons.md", body)
+    parsed = lessons.parse(path)
+    assert len(parsed) == 1
+    assert parsed[0].id == "L001"
+
+
+def test_parse_handles_header_shaped_trap_prose(tmp_path: Path) -> None:
+    """A Trap that starts with '##' must not produce a phantom second header.
+
+    The parser's _FIELD_RE matches first, so the line is captured as the
+    Trap field value rather than a fresh lesson header. The serialiser's
+    inline-markdown sanitiser later trims the leading '##' from the title
+    derivation; we just need the parse path to be loud-or-silent, not
+    bewildering.
+    """
+    body = _file(
+        _entry(nid="L001", trap="## sneaky heading shape — looks like a header"),
+    )
+    path = _write(tmp_path / "lessons.md", body)
+    parsed = lessons.parse(path)
+    assert len(parsed) == 1
+    assert "sneaky heading shape" in parsed[0].trap
+
+
+def test_amend_status_retired_to_superseded(tmp_path: Path) -> None:
+    """retired -> superseded-by:L<NNN> is an allowed transition."""
+    body = _file(
+        _entry(nid="L001", status="retired"),
+        _entry(nid="L002"),
+    )
+    _write(tmp_path / ".forge" / "intel" / "lessons.md", body)
+    lessons.amend_status(tmp_path, "L001", "superseded-by:L002")
+    parsed = lessons.parse(tmp_path / ".forge" / "intel" / "lessons.md")
+    assert parsed[0].status == "superseded-by:L002"
+
+
 def test_parse_error_includes_source_line_number(tmp_path: Path) -> None:
     """Per-block parser errors must name the source line of the offending header.
 
