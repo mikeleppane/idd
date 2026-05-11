@@ -38,6 +38,8 @@ FORGE optimizes for **disciplined, resumable** software work over speed-first co
 - [The crucible](#the-crucible)
 - [Verification](#verification)
 - [QA: black-box outsider pass](#qa-black-box-outsider-pass)
+- [Research phase](#research-phase)
+- [Cross-AI peer review](#cross-ai-peer-review)
 - [Per-feature artifacts](#per-feature-artifacts)
 - [Use outside Claude Code](#use-outside-claude-code)
 - [Compatibility](#compatibility)
@@ -159,7 +161,7 @@ refine → research → spec → domain → scenarios → plan → crucible → 
 | Phase | Output | Purpose |
 | --- | --- | --- |
 | **refine** | refined idea statement | Sharpen a vague idea into a single-feature scope |
-| **research** *(deferred — manual)* | `RESEARCH.md` (optional) | Gather facts before the spec is locked. Currently recorded as skipped in `state.json.skipped`; manual research before spec is acceptable. Schema landed; routing in flight. |
+| **research** | `RESEARCH.md` | Codebase + external library discovery before the spec is locked. Auto-runs on `--full`; opt-in via `--research` on `--standard`; refused on `--focused`. Emits codebase findings, external docs (with grounding-mode citations), domain notes, and risks. |
 | **spec** | `SPEC.md` | Behavior contract: Intent, Domain, Scope, Scenarios, Acceptance, Open Questions |
 | **domain** | `DOMAIN.md` (full tier) — glossary, bounded contexts, aggregates, invariants | Ubiquitous language with auto-rendered bounded-context Mermaid; SPEC.md `# Domain` becomes a pointer |
 | **scenarios** | Gherkin scenarios in `SPEC.md` | BDD acceptance criteria; auto-escalates to `.feature` files when the project supports it |
@@ -254,6 +256,41 @@ The QA artifact is `QA.md` with frontmatter `verdict` + `confidence` (high|parti
 - **Post-merge phase (terminal).** `/forge:qa --against merged` runs against the merged artifact after ship. Required for `--full`; opt-in for `--standard`/`--focused`. Phase flips `state.json.phases.qa.status` to `done` and triggers archive.
 
 The skill is the same in both timings; only the `--against` flag differs.
+
+---
+
+## Research phase
+
+Before locking a spec for non-trivial work, the research phase emits a `RESEARCH.md` with four sections: codebase findings (top-level layout, modules touched, extension points), external docs (library-by-library, with citation), domain notes (glossary candidates), and risks surfaced. The phase auto-runs on `--full`; opt into it on `--standard` with `/forge:do --standard --research "<idea>"`; `--focused` refuses.
+
+External library docs are gathered through one of five grounding modes:
+
+| Mode | When | Citation format |
+| --- | --- | --- |
+| `full` | Context7 MCP server installed and reachable | `[context7:<library_id>:<snippet_id>]` |
+| `degraded` | No Context7, no BYOD coverage, no WebSearch fallback | none — explicit unavailable marker required in body |
+| `websearch` | Opt-in via `.forge/config.json` `research.websearch_fallback: true` (privacy implication; sends queries externally) | `[websearch:<url>]` |
+| `byod` | All extracted libraries have files at `.forge/external-docs/<library>.md` | `[byod:<library>:<section-anchor>]` |
+| `byod-partial` | Mixed: some libraries covered locally, some missing | mixed; uncovered libraries fall through to the degraded rule |
+
+The bring-your-own-docs (BYOD) pattern lets air-gapped repos pre-stage authoritative docs locally — drop a markdown file at `.forge/external-docs/<library>.md` and the research subagent reads it as the citation source. Files older than `research.byod_stale_days` (default 90) emit a staleness warning.
+
+Ecosystem detection is **pluggable**: out of the box, FORGE recognizes Python, Node, Rust, Go, Ruby, Java, .NET, Elixir, PHP, Swift, and Dart manifests. Polyglot repos (e.g., Node frontend + Python backend) return multiple ecosystem records; library extraction unions across them. Repos using an ecosystem FORGE doesn't recognize fall back to a generic dir-walk and a one-time prompt to pin the ecosystem via `.forge/config.json`. Adding support for a new ecosystem is a single-file plugin — no skill prose changes.
+
+The grounding mode and BYOD coverage are recorded in the RESEARCH.md frontmatter and surfaced in the ship-time risk summary.
+
+---
+
+## Cross-AI peer review
+
+`/forge:review --cross-ai` delegates the review pass to an external CLI (codex, claude, or gemini) for an independent second opinion. Two modes:
+
+- **Manual (default).** The skill builds a self-contained prompt (spec excerpt, diff, finding format), applies the redaction filter, prints a disclosure summary (file count, diff LOC, estimated tokens, estimated USD with ±50% precision, redaction summary), then writes the prompt to `.forge/features/<id>/cross-ai/<target>-<ts>-prompt.md`. You dispatch the external CLI yourself; paste the response back via `/forge:review --cross-ai-paste <path>`. Manual mode performs no external dispatch and does not consume the auto-mode dispatch-approval cache.
+- **Auto (opt-in).** With `cross_ai.mode: auto` in `.forge/config.json` or the `--auto` flag per invocation, the skill spawns the external CLI directly via `subprocess.run` and captures the response. First-run-per-repo requires you to type `APPROVE` (cached as `cross_ai.dispatch_approved_at`); a cost-warn gate fires every invocation when the estimated USD exceeds `cross_ai.cost_warn_threshold_usd` (default `$0.50`) and requires `APPROVE-COST` (or `--skip-cost-warn` with a `decisions.md` deviation row).
+
+Redaction runs deterministically before any prompt materialization. The default deny-list strips `.env`, credentials, secrets, `.aws/`, and `.ssh/` files entirely; user-extendable via `cross_ai.redaction.deny_globs`, `deny_regex`, and `fatal_regex` in `.forge/config.json`. `fatal_regex` matches refuse dispatch unconditionally — even in auto mode.
+
+Findings parsed from the external response are merged into `REVIEW.<target>.md` with `Source: external-<model>` and feed the existing convergence loop on the same 3-cycle cap.
 
 ---
 
