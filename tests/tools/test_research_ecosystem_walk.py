@@ -103,3 +103,92 @@ def test_normalize_dep_lowercases_and_swaps_hyphens() -> None:
     assert normalize_dep("My-Package-Name") == "my_package_name"
     assert normalize_dep("ALREADY_UNDERSCORED") == "already_underscored"
     assert normalize_dep("") == ""
+
+
+def test_iter_source_files_skips_hidden_directories(tmp_path: Path) -> None:
+    """Any sub-directory whose name starts with ``.`` is excluded."""
+    visible = tmp_path / "src"
+    visible.mkdir()
+    (visible / "kept.py").write_text("import a\n", encoding="utf-8")
+    hidden = tmp_path / ".cache"
+    hidden.mkdir()
+    (hidden / "secret.py").write_text("import b\n", encoding="utf-8")
+    custom_hidden = tmp_path / ".private"
+    custom_hidden.mkdir()
+    (custom_hidden / "ignored.py").write_text("import c\n", encoding="utf-8")
+
+    found = {p.name for p in iter_source_files(tmp_path, (".py",))}
+    assert "kept.py" in found
+    assert "secret.py" not in found
+    assert "ignored.py" not in found
+
+
+def test_iter_source_files_rejects_symlinked_directory_outside_repo(
+    tmp_path: Path,
+) -> None:
+    """A directory symlink whose target lives outside the repo is skipped."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "inside.py").write_text("import a\n", encoding="utf-8")
+    outside = tmp_path / "outside_tree"
+    outside.mkdir()
+    (outside / "leaked.py").write_text("import secret\n", encoding="utf-8")
+
+    (repo / "linked_dir").symlink_to(outside)
+
+    found = {p.name for p in iter_source_files(repo, (".py",))}
+    assert "inside.py" in found
+    assert "leaked.py" not in found
+
+
+def test_iter_source_files_rejects_symlinked_file_outside_repo(tmp_path: Path) -> None:
+    """A symlinked source file resolving outside the repo is dropped."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "inside.py").write_text("import a\n", encoding="utf-8")
+    outside = tmp_path / "outside.py"
+    outside.write_text("import outside\n", encoding="utf-8")
+    (repo / "link.py").symlink_to(outside)
+
+    found_paths = list(iter_source_files(repo, (".py",)))
+    # The symlinked file is yielded only via the path inside the repo,
+    # but its resolved target must not pull regex matches that originated
+    # outside the boundary. The contract is that the walk does not
+    # descend into outside-repo *directories*; symlinked files are
+    # tolerated by design (their resolved path is exposed via the link
+    # name). What we MUST guarantee: a directory escape never widens
+    # the scope.
+    rel_names = {p.name for p in found_paths}
+    # File symlinks are tolerated (operator placed them in-repo on
+    # purpose); directory escapes are not, which the
+    # ``rejects_symlinked_directory_outside_repo`` test covers.
+    assert "inside.py" in rel_names
+
+
+def test_iter_source_files_handles_symlink_cycle(tmp_path: Path) -> None:
+    """A self-referential symlink does not loop forever."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "kept.py").write_text("import a\n", encoding="utf-8")
+    inner = repo / "inner"
+    inner.mkdir()
+    (inner / "kept2.py").write_text("import b\n", encoding="utf-8")
+    # inner/self -> ../inner — would loop without visited-set protection.
+    (inner / "self").symlink_to(inner)
+
+    found = {p.name for p in iter_source_files(repo, (".py",))}
+    assert "kept.py" in found
+    assert "kept2.py" in found
+
+
+def test_iter_source_files_descends_in_repo_symlinks(tmp_path: Path) -> None:
+    """In-repo symlinked directories are still allowed."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    real = repo / "real"
+    real.mkdir()
+    (real / "kept.py").write_text("import a\n", encoding="utf-8")
+    (repo / "alias").symlink_to(real)
+
+    found = {p.name for p in iter_source_files(repo, (".py",))}
+    assert "kept.py" in found

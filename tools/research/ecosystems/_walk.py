@@ -42,15 +42,29 @@ EXCLUDED_DIR_NAMES: frozenset[str] = frozenset(
 def iter_source_files(repo_root: Path, suffixes: Iterable[str]) -> Iterator[Path]:
     """Yield repo-relative source files matching any of ``suffixes``.
 
-    Skips directories listed in :data:`EXCLUDED_DIR_NAMES` (matched by
-    name at any depth) and any path component starting with ``.``
-    other than the repo root itself. Symlinks are followed only when
-    they resolve within the repo to keep the walk bounded.
+    Walk contract:
+
+    * Skips directories listed in :data:`EXCLUDED_DIR_NAMES` (matched by
+      name at any depth).
+    * Skips every directory whose basename starts with ``.`` (except the
+      repo root itself). This keeps ``.git`` / ``.venv`` / ``.cache`` /
+      hand-rolled hidden dirs out of the scan.
+    * Refuses to descend into symlinked directories whose resolved target
+      is **not** inside ``repo_root`` — the walk is a project-scan, so
+      pulling files from outside the repo would violate the bounded
+      research-phase contract.
+    * Tracks already-visited resolved directories to avoid infinite loops
+      from in-tree symlink cycles.
     """
     suffix_set = {s.lower() for s in suffixes}
     if not repo_root.is_dir():
         return
+    try:
+        root_resolved = repo_root.resolve()
+    except OSError:
+        return
     stack: list[Path] = [repo_root]
+    visited: set[Path] = set()
     while stack:
         current = stack.pop()
         try:
@@ -58,14 +72,64 @@ def iter_source_files(repo_root: Path, suffixes: Iterable[str]) -> Iterator[Path
         except (OSError, PermissionError):
             continue
         for entry in entries:
-            name = entry.name
-            if name in EXCLUDED_DIR_NAMES:
+            if entry.name in EXCLUDED_DIR_NAMES:
                 continue
-            if entry.is_dir():
-                stack.append(entry)
-                continue
-            if entry.suffix.lower() in suffix_set:
-                yield entry
+            yield from _handle_entry(entry, suffix_set, root_resolved, stack, visited)
+
+
+def _handle_entry(
+    entry: Path,
+    suffix_set: set[str],
+    root_resolved: Path,
+    stack: list[Path],
+    visited: set[Path],
+) -> Iterator[Path]:
+    """Classify one ``iterdir`` entry: enqueue safe dirs, yield matching files."""
+    try:
+        is_dir = entry.is_dir()
+    except OSError:
+        return
+    if is_dir:
+        _maybe_enqueue_dir(entry, root_resolved, stack, visited)
+        return
+    if entry.suffix.lower() in suffix_set:
+        yield entry
+
+
+def _maybe_enqueue_dir(
+    entry: Path,
+    root_resolved: Path,
+    stack: list[Path],
+    visited: set[Path],
+) -> None:
+    """Push ``entry`` onto ``stack`` when the safety checks pass.
+
+    Containment + hidden-name + cycle guards live here so
+    :func:`iter_source_files` stays under the project's branch-count cap.
+    """
+    if entry.name.startswith("."):
+        return
+    try:
+        resolved = entry.resolve()
+    except OSError:
+        return
+    if not _is_within(resolved, root_resolved):
+        return
+    if resolved in visited:
+        return
+    visited.add(resolved)
+    stack.append(entry)
+
+
+def _is_within(candidate: Path, root: Path) -> bool:
+    """Return True when ``candidate`` is ``root`` itself or a descendant.
+
+    ``Path.is_relative_to`` exists on 3.9+ but raises on Windows mixed-case
+    edge cases; the explicit ``parts`` comparison is portable and cheap.
+    """
+    if candidate == root:
+        return True
+    return root in candidate.parents
 
 
 def scan_with_regex(
