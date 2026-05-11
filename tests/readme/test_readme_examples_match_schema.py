@@ -51,9 +51,18 @@ def _extract_state_blocks(markdown: str) -> list[tuple[int, dict[str, object]]]:
 
 
 def test_readme_state_json_examples_validate_against_schema(repo_root: Path) -> None:
-    """Every state.json example block in README.md must satisfy state.schema.json."""
+    """Every state.json example block in README.md must satisfy state.schema.json.
+
+    Uses the same format checker as ``tools.state._validator_for`` so RFC 3339
+    ``format: date-time`` declarations are enforced — a README example with a
+    malformed timestamp must fail this test, not pass it silently.
+    """
     readme = (repo_root / "README.md").read_text(encoding="utf-8")
     schema = json.loads((repo_root / "schemas" / "state.schema.json").read_text(encoding="utf-8"))
+    validator = jsonschema.Draft202012Validator(
+        schema,
+        format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER,
+    )
     blocks = _extract_state_blocks(readme)
 
     assert blocks, (
@@ -63,9 +72,38 @@ def test_readme_state_json_examples_validate_against_schema(repo_root: Path) -> 
 
     failures: list[str] = []
     for line, payload in blocks:
-        try:
-            jsonschema.validate(payload, schema)
-        except jsonschema.ValidationError as exc:
-            failures.append(f"README.md:{line} — {exc.message}")
+        errors = sorted(validator.iter_errors(payload), key=lambda e: list(e.path))
+        failures.extend(f"README.md:{line} — {err.message}" for err in errors)
 
     assert not failures, "README state.json examples drifted from schema:\n" + "\n".join(failures)
+
+
+def test_format_checker_rejects_malformed_date_time(repo_root: Path) -> None:
+    """Regression guard: a payload with an invalid RFC 3339 timestamp must
+    fail the schema validator. Without ``format_checker`` plumbed in,
+    jsonschema treats ``format: date-time`` as annotation-only and would
+    silently accept ``"yesterday"`` — the very drift the README lint is
+    supposed to catch."""
+    schema = json.loads((repo_root / "schemas" / "state.schema.json").read_text(encoding="utf-8"))
+    validator = jsonschema.Draft202012Validator(
+        schema,
+        format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER,
+    )
+    payload: dict[str, object] = {
+        "feature_id": "2026-05-11-format-checker-guard",
+        "tier": "focused",
+        "current_phase": "execute",
+        "phases": {
+            "spec": {"status": "done", "completed_at": "yesterday"},
+        },
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+
+    errors = list(validator.iter_errors(payload))
+
+    assert any("yesterday" in err.message for err in errors), (
+        "Draft202012Validator must reject a malformed date-time when "
+        "FORMAT_CHECKER is plumbed in; the README lint depends on this guarantee."
+    )
