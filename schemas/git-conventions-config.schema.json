@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge.dev/schemas/git-conventions-config.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_length": {"type": "integer", "minimum": 10, "maximum": 200},
+        "require_conventional_commits": {"type": "boolean"},
+        "allowed_scopes": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+          "uniqueItems": true
+        }
+      }
+    },
+    "trailers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ban_patterns": {
+          "type": "array",
+          "items": {"type": "string"},
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

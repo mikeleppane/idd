@@ -23,6 +23,7 @@ from .constitution import validate_constitution
 from .conventions import validate_conventions
 from .delta import validate_delta
 from .domain_glossary import validate_domain_glossary
+from .git_conventions import validate_git_conventions
 from .health import validate_health
 from .plan import validate_plan_tasks, validate_verified_deps
 from .qa_shape import validate_qa_shape
@@ -49,7 +50,7 @@ _PER_FILE_TARGETS: frozenset[str] = frozenset(
     }
 )
 _PER_FOLDER_TARGETS: frozenset[str] = frozenset(
-    {"deviations", "tdd_evidence", "domain_glossary", "qa_shape"}
+    {"deviations", "tdd_evidence", "domain_glossary", "qa_shape", "git-conventions"}
 )
 _REPO_WIDE_TARGETS: frozenset[str] = frozenset({"health", "ship", "all", "config", "conventions"})
 
@@ -74,6 +75,7 @@ _TARGET_CHOICES: tuple[str, ...] = (
     "constitution",
     "config",
     "conventions",
+    "git-conventions",
     "health",
     "ship",
     "all",
@@ -142,6 +144,13 @@ def _dispatch_domain_glossary(args: argparse.Namespace, repo_root: Path) -> list
 
 def _dispatch_qa_shape(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
     return list(validate_qa_shape(repo_root, args.path.name))
+
+
+def _dispatch_git_conventions(
+    args: argparse.Namespace,
+    repo_root: Path,  # noqa: ARG001
+) -> list[Finding]:
+    return list(validate_git_conventions(args.path))
 
 
 def _dispatch_research(args: argparse.Namespace, repo_root: Path) -> list[Finding]:  # noqa: ARG001
@@ -265,6 +274,7 @@ _TARGET_DISPATCH: dict[str, Callable[[argparse.Namespace, Path], list[Finding]]]
     "tdd_evidence": _dispatch_tdd_evidence,
     "domain_glossary": _dispatch_domain_glossary,
     "qa_shape": _dispatch_qa_shape,
+    "git-conventions": _dispatch_git_conventions,
     "research": _dispatch_research,
     "constitution": _dispatch_constitution,
     "config": _dispatch_config,

@@ -15,6 +15,7 @@ REQUIRED_ALL: frozenset[str] = frozenset(
     {
         "EXIT_NONZERO_SEVERITIES",
         "Finding",
+        "GitConventionsConfig",
         "MAX_FIX_HINT_LEN",
         "Severity",
         "ValidationError",
@@ -29,6 +30,7 @@ REQUIRED_ALL: frozenset[str] = frozenset(
         "validate_deviations",
         "validate_domain_glossary",
         "validate_frontmatter",
+        "validate_git_conventions",
         "validate_health",
         "validate_negative_requirements",
         "validate_plan_tasks",
@@ -60,6 +62,7 @@ EXPECTED_SIGNATURES: dict[str, tuple[str, ...]] = {
     "validate_research": ("research_path",),
     "validate_config": ("config_path",),
     "validate_conventions": ("repo_root", "commit_body", "diff"),
+    "validate_git_conventions": ("feature_folder", "runner"),
 }
 
 
@@ -91,6 +94,7 @@ def test_public_callables_have_pinned_signatures() -> None:
         "tools.validate.conventions",
         "tools.validate.delta",
         "tools.validate.domain_glossary",
+        "tools.validate.git_conventions",
         "tools.validate.plan",
         "tools.validate.qa_shape",
         "tools.validate.spec_semantic",

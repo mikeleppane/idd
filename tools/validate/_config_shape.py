@@ -21,6 +21,7 @@ _TARGET = "config"
 _SUBSCHEMA_BY_KEY: dict[str, str] = {
     "cross_ai": "cross-ai-config.schema.json",
     "research": "research-config.schema.json",
+    "git_conventions": "git-conventions-config.schema.json",
 }
 
 
