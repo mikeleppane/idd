@@ -66,18 +66,23 @@ _TAG_RE = re.compile(r"\[constitution:(A\d+)\]")
 # (and the row falls out of the gate's scope entirely) instead of becoming
 # a bewildering 'unknown lesson id' error from the partitioner downstream.
 _LESSON_TAG_RE = re.compile(r"\[lesson:(L\d{3})\]")
-# Lesson severity vocabulary {CRITICAL, HIGH, MEDIUM, LOW} mapped onto the
-# ship-gate severity vocabulary {BLOCK, HIGH, MEDIUM, LOW}. The reviewer copies
-# the lesson's Severity field into the row's Severity cell after running it
-# through this map, so the ship-gate parser can keep treating the Severity cell
-# as the closed _VALID_SEVERITY_VALUES vocabulary. The partitioner cross-checks
-# the cell against the lesson's source-of-truth Severity at routing time.
-_LESSON_SEVERITY_TO_SHIP: dict[str, str] = {
-    "CRITICAL": "BLOCK",
-    "HIGH": "HIGH",
-    "MEDIUM": "MEDIUM",
-    "LOW": "LOW",
-}
+# Lesson severity vocabulary {CRITICAL, HIGH, MEDIUM, LOW} maps to the ship-
+# gate severity vocabulary {BLOCK, HIGH, MEDIUM, LOW}. Only ``CRITICAL`` needs
+# renaming; the other three pass through unchanged, so the dict carries the
+# rename entry only and ``_lesson_to_ship_severity`` falls back to identity
+# for everything else. The reviewer copies the result into the REVIEW.md
+# Severity cell so the ship-gate parser can keep treating the Severity cell
+# as the closed _VALID_SEVERITY_VALUES vocabulary; the partitioner cross-
+# checks the cell against the lesson's source-of-truth Severity at routing
+# time.
+_LESSON_SEVERITY_RENAME: dict[str, str] = {"CRITICAL": "BLOCK"}
+
+
+def _lesson_to_ship_severity(lesson_severity: str) -> str:
+    """Translate a lesson Severity value into the ship-gate Severity cell."""
+    return _LESSON_SEVERITY_RENAME.get(lesson_severity, lesson_severity)
+
+
 # Header row of the Findings table tells us which column holds Status.
 _HEADER_RE = re.compile(r"^\|\s*ID\s*\|", re.IGNORECASE)
 # Anchor the table search to the `# Findings` heading (case-insensitive) so
@@ -387,6 +392,13 @@ def partition_by_article_level(
             - ``warn``: article level == ``SHOULD``.
             - ``info``: article level == ``MAY``, plus findings whose
               article id is not present in ``articles`` (unknown article).
+
+    Asymmetry vs :func:`partition_by_lesson_severity`: unknown article ids
+    silently route to ``info`` here, but unknown lesson ids ``raise``
+    downstream. Articles are renamed during convergence often enough that a
+    stale tag ref is benign cleanup work; lessons are append-only with
+    permanent ids, so a stale lesson tag is a real authoring fault worth
+    surfacing loudly.
     """
     by_id = {a.id: a for a in articles}
     gate: list[ShipFinding] = []
@@ -424,7 +436,7 @@ def partition_by_lesson_severity(
     - ``LOW``      -> info.
 
     Consistency check: the row's Severity cell SHOULD match
-    ``_LESSON_SEVERITY_TO_SHIP[lesson.severity]``. A mismatch raises
+    ``_lesson_to_ship_severity(lesson.severity)``. A mismatch raises
     :class:`ShipGateError` naming both values; the reviewer subagent is
     expected to keep the cell synchronised with the lesson, and making the
     mismatch loud forces that discipline (silent drift would otherwise let
@@ -468,7 +480,7 @@ def partition_by_lesson_severity(
                 f"(stale tag or retired lesson removed from .forge/intel/lessons.md)"
             )
             continue
-        expected_severity = _LESSON_SEVERITY_TO_SHIP[lesson.severity]
+        expected_severity = _lesson_to_ship_severity(lesson.severity)
         if f.severity != expected_severity:
             routing_errors.append(
                 f"row Severity={f.severity!r} at {f.location} disagrees with lesson "

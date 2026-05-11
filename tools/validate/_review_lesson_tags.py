@@ -53,8 +53,8 @@ def validate_review_md_lesson_tags(feature_root: Path, repo_root: Path) -> list[
     from tools.intel.lessons import LessonError  # noqa: PLC0415
     from tools.intel.lessons import parse as parse_lessons  # noqa: PLC0415
     from tools.ship_gate import (  # noqa: PLC0415
-        _LESSON_SEVERITY_TO_SHIP,
         ShipGateError,
+        _lesson_to_ship_severity,
         parse_review_findings,
     )
 
@@ -92,7 +92,7 @@ def validate_review_md_lesson_tags(feature_root: Path, repo_root: Path) -> list[
                 )
             )
             continue
-        expected = _LESSON_SEVERITY_TO_SHIP[lesson.severity]
+        expected = _lesson_to_ship_severity(lesson.severity)
         if f.severity != expected:
             out.append(
                 Finding(
