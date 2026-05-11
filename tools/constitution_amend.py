@@ -15,9 +15,10 @@ import contextlib
 import json
 import os
 import re
+import secrets
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path, PurePosixPath
 from types import ModuleType
@@ -59,7 +60,11 @@ _LEVEL_RANK = {"CRITICAL": 3, "SHOULD": 2, "MAY": 1}
 _PER_FILE_CAP_BYTES = 16384
 _TOTAL_CAP_BYTES = 81920
 _MAX_SIGNAL_FILES = 8
-_TRUNCATION_MARKER = f"\n--- truncated at {_PER_FILE_CAP_BYTES} bytes ---\n"
+# Truncation marker shape is generated per-collect with a hex nonce so that a
+# user file legitimately containing the literal cannot masquerade as the
+# marker. See ``_generate_truncation_marker``.
+_TRUNCATION_NONCE_HEX_LEN = 16
+_TRUNCATION_NONCE_RE = re.compile(rf"^[0-9a-f]{{{_TRUNCATION_NONCE_HEX_LEN}}}$")
 # Defense-in-depth. The hardcoded _MANIFEST_NAMES / _DOC_NAMES candidate list
 # never contains a name that matches these globs today, so the deny-glob
 # branch in collect_bootstrap_signals is unreachable under default config.
@@ -115,6 +120,11 @@ class BootstrapSignals:
         files: Files that survived all filters, in priority order.
         dropped: Paths skipped or removed by either the deny-glob filter
             or the secret-content scan.
+        dropped_for_escape: Paths refused because a symlink resolved to a
+            location outside ``repo_root``. Kept separate from
+            :attr:`dropped` so the user / skill can distinguish a leaked
+            credential (worth investigating) from a hostile symlink
+            (worth deleting).
         truncated: Paths whose body was capped at the per-file byte limit.
         total_bytes: Total UTF-8 byte count across :attr:`files`.
     """
@@ -123,6 +133,7 @@ class BootstrapSignals:
     dropped: list[PurePosixPath]
     truncated: list[PurePosixPath]
     total_bytes: int
+    dropped_for_escape: list[PurePosixPath] = field(default_factory=list)
 
     @property
     def dropped_for_secrets(self) -> list[PurePosixPath]:
@@ -141,44 +152,141 @@ def _name_matches_deny_glob(name: str) -> bool:
     return any(globstar_match(name, g) for g in _DENY_GLOBS)
 
 
-def _candidate_paths(repo_root: Path, *, names: tuple[str, ...]) -> list[Path]:
-    """Return existing candidate file paths in priority order, first-match per name.
+def _is_within_repo(path: Path, repo_root: Path) -> bool:
+    """Return True iff ``path`` resolves to a location inside ``repo_root``.
+
+    Refuses symlinks that escape the tree by canonicalizing both sides via
+    ``Path.resolve(strict=True)`` and checking containment. Symlink loops
+    and broken symlinks surface as ``OSError``/``FileNotFoundError`` — both
+    map to ``False`` so the caller treats them as "skip".
+    """
+    try:
+        resolved = path.resolve(strict=True)
+        root = repo_root.resolve(strict=True)
+    except (FileNotFoundError, OSError):
+        return False
+    return resolved.is_relative_to(root)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Candidate:
+    """One repo-root candidate ready for the read loop.
+
+    ``escaped`` flags entries that resolved outside ``repo_root`` — those
+    are surfaced in :attr:`BootstrapSignals.dropped_for_escape` instead of
+    being read.
+    """
+
+    path: Path
+    rel: PurePosixPath
+    escaped: bool
+
+
+def _classify_candidate(path: Path, repo_root: Path) -> _Candidate | None:
+    """Return a classified candidate for ``path``, or ``None`` to skip silently.
+
+    ``None`` covers broken symlinks and symlink loops — they should not
+    appear in either ``files`` or ``dropped_for_escape``. Existing in-tree
+    files come back with ``escaped=False``; symlinks resolving outside
+    ``repo_root`` come back with ``escaped=True`` so the caller can record
+    them. The relative path used for both ``files`` and
+    ``dropped_for_escape`` is the on-disk name under ``repo_root``, NOT
+    the symlink target.
+    """
+    try:
+        is_file = path.is_file()
+    except OSError:
+        return None
+    if not is_file:
+        return None
+    rel = PurePosixPath(path.relative_to(repo_root).as_posix())
+    if path.is_symlink() and not _is_within_repo(path, repo_root):
+        return _Candidate(path=path, rel=rel, escaped=True)
+    return _Candidate(path=path, rel=rel, escaped=False)
+
+
+def _candidate_paths(repo_root: Path, *, names: tuple[str, ...]) -> list[_Candidate]:
+    """Return candidate entries in priority order, first-match per name.
 
     ``names`` is the parameterized name list — caller decides whether the
     full bootstrap set (manifests + docs) or the narrower resync set (docs
     only) drives the walk. ``*.csproj`` is included only when at least one
     manifest name is requested (the glob is part of the manifest sweep).
+    Symlink classification (in-tree vs escaping vs broken/loop) is folded
+    into the returned :class:`_Candidate` records; the caller decides
+    whether to read or record each one.
     """
-    candidates: list[Path] = []
+    candidates: list[_Candidate] = []
     seen: set[Path] = set()
+
+    def _push(path: Path) -> None:
+        if path in seen:
+            return
+        classified = _classify_candidate(path, repo_root)
+        if classified is None:
+            return
+        candidates.append(classified)
+        seen.add(path)
+
     for name in names:
         if name not in _MANIFEST_NAMES:
             continue
-        path = repo_root / name
-        if path.is_file() and path not in seen:
-            candidates.append(path)
-            seen.add(path)
+        _push(repo_root / name)
     # ``*.csproj`` is glob-matched (non-recursive, repo root only); first sorted name.
     # Only sweep when manifests are part of the requested name set — the resync
     # signal collector restricts to docs and must skip the csproj glob.
     if any(n in _MANIFEST_NAMES for n in names):
-        csproj_hits = sorted(repo_root.glob("*.csproj"))
-        for path in csproj_hits:
-            if path.is_file() and path not in seen:
-                candidates.append(path)
-                seen.add(path)
+        for path in sorted(repo_root.glob("*.csproj")):
+            before = len(candidates)
+            _push(path)
+            if len(candidates) != before:
                 break  # only the first sorted match
     for name in names:
         if name not in _DOC_NAMES:
             continue
-        path = repo_root / name
-        if path.is_file() and path not in seen:
-            candidates.append(path)
-            seen.add(path)
+        _push(repo_root / name)
     return candidates
 
 
-def _read_and_truncate(path: Path) -> tuple[str, bool]:
+def _generate_truncation_marker(nonce_hex: str) -> str:
+    r"""Render the per-collect truncation marker around ``nonce_hex``.
+
+    The marker shape is ``"\n--- truncated at <cap> bytes [<nonce>] ---\n"``.
+    The bracketed nonce keeps a user file that legitimately contains the
+    legacy literal from being confused with a real marker.
+    """
+    return f"\n--- truncated at {_PER_FILE_CAP_BYTES} bytes [{nonce_hex}] ---\n"
+
+
+def _validate_nonce_hex(nonce_hex: str) -> None:
+    """Raise ``ValueError`` if ``nonce_hex`` is not a lowercase 16-char hex string."""
+    if not _TRUNCATION_NONCE_RE.fullmatch(nonce_hex):
+        raise ValueError(
+            f"nonce_hex must be {_TRUNCATION_NONCE_HEX_LEN} lowercase hex chars; got {nonce_hex!r}",
+        )
+
+
+def _truncate_on_codepoint_boundary(head: bytes) -> bytes:
+    """Return ``head`` shortened to the last complete UTF-8 codepoint boundary.
+
+    ``head`` is the raw ``_PER_FILE_CAP_BYTES`` slice. UTF-8 continuation
+    bytes have the bit pattern ``0b10xxxxxx``; codepoint-start bytes never
+    do. Walk back from the end (at most 3 bytes — UTF-8 codepoints are
+    ≤4 bytes) until ``head[:i]`` decodes cleanly under strict UTF-8. If
+    no clean prefix is found within 4 bytes, fall back to the empty
+    prefix — the input cannot be valid UTF-8 anywhere near the boundary.
+    """
+    for back in range(4):
+        candidate = head[: len(head) - back] if back else head
+        try:
+            candidate.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            continue
+        return candidate
+    return b""
+
+
+def _read_and_truncate(path: Path, *, marker: str) -> tuple[str, bool]:
     """Read ``path`` up to the per-file byte cap, decode UTF-8.
 
     Bounded I/O: opens the file in binary mode and reads at most
@@ -187,14 +295,21 @@ def _read_and_truncate(path: Path) -> tuple[str, bool]:
     marker) from "over cap" (marker appended). A multi-GB README cannot
     inflate memory or stall the bootstrap.
 
-    Returns ``(body, truncated)``. ``body`` ends with the truncation
-    marker when the source exceeded the cap.
+    Truncation backs off to the last UTF-8 codepoint boundary before
+    appending ``marker`` so the decoded body never contains a U+FFFD
+    replacement char produced by a half-decoded multi-byte sequence.
+
+    Returns ``(body, truncated)``. ``body`` ends with ``marker`` when the
+    source exceeded the cap.
+
+    Post-condition (truncated path):
+        ``len(body.encode("utf-8")) <= _PER_FILE_CAP_BYTES + len(marker.encode("utf-8"))``.
     """
     with path.open("rb") as fh:
         head = fh.read(_PER_FILE_CAP_BYTES + 1)
     if len(head) > _PER_FILE_CAP_BYTES:
-        capped = head[:_PER_FILE_CAP_BYTES]
-        return capped.decode("utf-8", errors="replace") + _TRUNCATION_MARKER, True
+        capped = _truncate_on_codepoint_boundary(head[:_PER_FILE_CAP_BYTES])
+        return capped.decode("utf-8", errors="strict") + marker, True
     return head.decode("utf-8", errors="replace"), False
 
 
@@ -214,56 +329,80 @@ def _looks_like_secret(body: str) -> bool:
     return bool(_SECRET_CONTENT_RE.search(body))
 
 
-def _collect_signals(repo_root: Path, *, names: tuple[str, ...]) -> BootstrapSignals:
+def _collect_signals(
+    repo_root: Path,
+    *,
+    names: tuple[str, ...],
+    nonce_hex: str | None,
+) -> BootstrapSignals:
     """Shared engine: walk candidate files under ``names`` with the bootstrap bounds.
 
     Encapsulates the iteration, per-file size cap, truncation marker, total
     payload cap, deny-glob filter, secret-content scan, and the
     ``_MAX_SIGNAL_FILES`` cap. ``names`` is the parameterized candidate-set
     selector — :func:`collect_bootstrap_signals` passes manifests + docs,
-    :func:`collect_resync_signals` passes docs only.
+    :func:`collect_resync_signals` passes docs only. ``nonce_hex`` pins
+    the per-collect truncation-marker nonce so tests / callers can recover
+    byte-equality across calls; ``None`` mints a fresh nonce.
     """
     if not repo_root.is_dir():
         raise AmendError(f"repo_root not found or not a directory: {repo_root}")
 
+    if nonce_hex is None:
+        nonce_hex = secrets.token_hex(_TRUNCATION_NONCE_HEX_LEN // 2)
+    else:
+        _validate_nonce_hex(nonce_hex)
+    marker = _generate_truncation_marker(nonce_hex)
+
     files: list[SignalFile] = []
     dropped: list[PurePosixPath] = []
+    dropped_for_escape: list[PurePosixPath] = []
     truncated_paths: list[PurePosixPath] = []
     total_bytes = 0
 
-    for path in _candidate_paths(repo_root, names=names):
+    for candidate in _candidate_paths(repo_root, names=names):
         if len(files) >= _MAX_SIGNAL_FILES:
             break
-        rel = PurePosixPath(path.relative_to(repo_root).as_posix())
 
-        if _name_matches_deny_glob(rel.name):
-            dropped.append(rel)
+        if candidate.escaped:
+            dropped_for_escape.append(candidate.rel)
             continue
 
-        body, was_truncated = _read_and_truncate(path)
+        if _name_matches_deny_glob(candidate.rel.name):
+            dropped.append(candidate.rel)
+            continue
+
+        body, was_truncated = _read_and_truncate(candidate.path, marker=marker)
 
         if _looks_like_secret(body):
-            dropped.append(rel)
+            dropped.append(candidate.rel)
             continue
 
         body_bytes = len(body.encode("utf-8"))
         if total_bytes + body_bytes > _TOTAL_CAP_BYTES:
             break
 
-        files.append(SignalFile(relative_path=rel, body=body, truncated=was_truncated))
+        files.append(
+            SignalFile(relative_path=candidate.rel, body=body, truncated=was_truncated),
+        )
         if was_truncated:
-            truncated_paths.append(rel)
+            truncated_paths.append(candidate.rel)
         total_bytes += body_bytes
 
     return BootstrapSignals(
         files=files,
         dropped=dropped,
+        dropped_for_escape=dropped_for_escape,
         truncated=truncated_paths,
         total_bytes=total_bytes,
     )
 
 
-def collect_bootstrap_signals(repo_root: Path) -> BootstrapSignals:
+def collect_bootstrap_signals(
+    repo_root: Path,
+    *,
+    nonce_hex: str | None = None,
+) -> BootstrapSignals:
     """Collect bounded project-shape signals for skill-driven Constitution drafting.
 
     Walks a fixed priority list of manifest and documentation files at the
@@ -272,34 +411,57 @@ def collect_bootstrap_signals(repo_root: Path) -> BootstrapSignals:
     Files matching a path-level deny glob are skipped before reading; files
     whose decoded body contains secret-shaped content (per ``tools.redaction``
     or a focused fallback regex) are dropped after read and recorded in
-    ``dropped_for_secrets``. The function performs no LLM calls and no
-    network access.
+    ``dropped_for_secrets``. Symlinks that resolve outside ``repo_root`` are
+    refused outright and surfaced in ``dropped_for_escape`` — the trust
+    boundary "this came from the repo" cannot be bypassed via a
+    symlink-to-/etc/passwd trick. The function performs no LLM calls and
+    no network access.
 
     Args:
         repo_root: Absolute path to the repository root.
+        nonce_hex: Optional 16-char lowercase hex string used as the
+            truncation marker's per-collect nonce. Defaults to a fresh
+            random nonce per call (cryptographically random, via
+            :mod:`secrets`). Pass an explicit value to recover byte-equal
+            results across calls — useful for deterministic test fixtures.
+            Invalid shapes raise ``ValueError``.
 
     Returns:
         A frozen :class:`BootstrapSignals` whose ``files`` list is in
-        priority order. Two invocations on the same tree return equal results.
+        priority order. Two invocations on the same tree with the same
+        ``nonce_hex`` return equal results.
 
     Raises:
         AmendError: If ``repo_root`` does not exist or is not a directory.
+        ValueError: If ``nonce_hex`` is provided but is not 16 lowercase
+            hex characters.
     """
-    return _collect_signals(repo_root, names=_MANIFEST_NAMES + _DOC_NAMES)
+    return _collect_signals(
+        repo_root,
+        names=_MANIFEST_NAMES + _DOC_NAMES,
+        nonce_hex=nonce_hex,
+    )
 
 
-def collect_resync_signals(repo_root: Path) -> BootstrapSignals:
+def collect_resync_signals(
+    repo_root: Path,
+    *,
+    nonce_hex: str | None = None,
+) -> BootstrapSignals:
     """Collect bounded doc-only signals for the conventions resync workflow.
 
     Same bounds as :func:`collect_bootstrap_signals` (16 KiB per file, 80 KiB
-    total payload, 8-file cap, deny-glob filter, secret-content drop) but
-    restricts the candidate set to ``_DOC_NAMES`` — ``AGENTS.md`` /
-    ``CLAUDE.md`` / ``README.md``. Manifests are intentionally excluded:
-    the resync flow inspects prose-authored convention rules, not project
-    structure.
+    total payload, 8-file cap, deny-glob filter, secret-content drop,
+    symlink-escape refusal) but restricts the candidate set to
+    ``_DOC_NAMES`` — ``AGENTS.md`` / ``CLAUDE.md`` / ``README.md``.
+    Manifests are intentionally excluded: the resync flow inspects
+    prose-authored convention rules, not project structure.
 
     Args:
         repo_root: Absolute path to the repository root.
+        nonce_hex: Optional 16-char lowercase hex string used as the
+            truncation marker's per-collect nonce. Same semantics as
+            :func:`collect_bootstrap_signals`.
 
     Returns:
         A frozen :class:`BootstrapSignals` (data shape unchanged so both
@@ -307,8 +469,10 @@ def collect_resync_signals(repo_root: Path) -> BootstrapSignals:
 
     Raises:
         AmendError: If ``repo_root`` does not exist or is not a directory.
+        ValueError: If ``nonce_hex`` is provided but is not 16 lowercase
+            hex characters.
     """
-    return _collect_signals(repo_root, names=_DOC_NAMES)
+    return _collect_signals(repo_root, names=_DOC_NAMES, nonce_hex=nonce_hex)
 
 
 def classify_change(before: str, after: str) -> str:

@@ -97,13 +97,14 @@ def test_collect_resync_signals_truncates_oversized_doc(tmp_path: Path) -> None:
     big_body = "x" * (20 * 1024)  # 20 KiB
     _write(tmp_path, "README.md", big_body)
 
-    result = collect_resync_signals(tmp_path)
+    # Pin the nonce so the truncation marker is reproducible.
+    result = collect_resync_signals(tmp_path, nonce_hex="0123456789abcdef")
 
     assert len(result.files) == 1
     sf = result.files[0]
     assert sf.truncated is True
     assert sf.relative_path in result.truncated
-    marker = "\n--- truncated at 16384 bytes ---\n"
+    marker = "\n--- truncated at 16384 bytes [0123456789abcdef] ---\n"
     assert sf.body.endswith(marker)
 
 
