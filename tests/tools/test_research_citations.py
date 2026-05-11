@@ -135,3 +135,33 @@ def test_validate_skips_fenced_code_blocks() -> None:
 def test_validate_accepts_all_documented_modes(mode: str) -> None:
     # Should never raise for any documented mode value.
     validate("", mode=mode, libraries=("httpx",))
+
+
+def test_validate_degraded_marker_inside_html_comment_does_not_count() -> None:
+    """An unmodified template ships the marker inside an HTML comment.
+
+    The marker check must look at visible body only — a status=done,
+    research_grounding=degraded artifact copied straight from the
+    template would otherwise pass without the subagent ever replacing
+    the External docs section.
+    """
+    body = (
+        "# External docs\n\n"
+        "<!--\n"
+        "_Context7 not available — research ran in **degraded** mode._\n"
+        "-->\n\n"
+        "Some other prose."
+    )
+    result = validate(body, mode="degraded")
+    assert result.degraded_marker_present is False
+
+
+def test_validate_degraded_marker_in_visible_body_counts() -> None:
+    """Marker present in visible body satisfies the degraded rule."""
+    body = (
+        "# External docs\n\n"
+        "_Context7 not available — research ran in **degraded** mode._\n\n"
+        "Discusses `SomeApi` without authoritative cite."
+    )
+    result = validate(body, mode="degraded")
+    assert result.degraded_marker_present is True

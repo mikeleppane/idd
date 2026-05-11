@@ -30,6 +30,10 @@ Heuristics
 * Lines inside fenced ``` blocks are skipped (otherwise the
   detection-table example fragments inside the skill prose would
   trigger false positives).
+* HTML comments (``<!-- ... -->``) are stripped before paragraph and
+  marker analysis so the degraded-mode fragment shipped inside a
+  template comment cannot accidentally satisfy the marker check —
+  the subagent must actually replace the External docs section.
 * The "_Context7 not available_" substring match is case-insensitive.
 """
 
@@ -43,6 +47,7 @@ _CONTEXT7_RE = re.compile(r"\[context7:[^\]]+\]")
 _BYOD_RE = re.compile(r"\[byod:([^:\]]+):[^\]]+\]")
 _WEBSEARCH_RE = re.compile(r"\[websearch:[^\]]+\]")
 _FENCE_RE = re.compile(r"^```")
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _DEGRADED_MARKER = "context7 not available"
 
 
@@ -53,6 +58,19 @@ class CitationResult:
     missing_citations: list[str] = field(default_factory=list)
     degraded_marker_present: bool = False
     byod_partial_uncovered: list[str] = field(default_factory=list)
+
+
+def _strip_html_comments(body: str) -> str:
+    """Remove ``<!-- ... -->`` blocks (including multi-line spans).
+
+    The RESEARCH.md template ships a degraded-mode fragment inside an HTML
+    comment so authors can copy/paste it into the visible body. A naive
+    marker check on the raw body would treat the commented fragment as
+    satisfying the rule and let an unmodified template pass. Stripping
+    comments first forces the subagent to actually replace the
+    ``External docs`` section before the marker counts.
+    """
+    return _HTML_COMMENT_RE.sub("", body)
 
 
 def _strip_fenced_blocks(body: str) -> str:
@@ -137,7 +155,7 @@ def validate(
     raises; unrecognised modes degrade to "no findings" (the higher-level
     validator owns mode-vocabulary enforcement).
     """
-    cleaned = _strip_fenced_blocks(body)
+    cleaned = _strip_fenced_blocks(_strip_html_comments(body))
     marker_present = _DEGRADED_MARKER in cleaned.lower()
 
     if mode == "degraded":
