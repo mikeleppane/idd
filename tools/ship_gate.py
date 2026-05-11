@@ -443,13 +443,51 @@ def partition_by_lesson_severity(
     return gate, warn, info
 
 
-def _lesson_title_fragment(lesson: Lesson) -> str:
-    """Return the first sentence of ``Trap`` (or the whole field) for headings.
+_INLINE_BACKTICK_RUN_RE = re.compile(r"`+")
+_LESSON_TITLE_MAX_CHARS = 80
 
-    Splits on ``". "`` and takes ``[0]`` — short, deterministic, and stays
-    inside one line for the gate-prompt heading.
+
+def _sanitize_for_inline_markdown(text: str, *, max_chars: int = _LESSON_TITLE_MAX_CHARS) -> str:
+    """Sanitize free-form text for use inside markdown bullets or inline contexts.
+
+    The lesson ``Trap`` field is author-controlled and may contain whitespace,
+    backticks, or leading ``#`` characters that would break inline markdown
+    rendering or accidentally create phantom headings inside the ACK body
+    block. This helper:
+
+    * collapses any whitespace run (including embedded newlines / tabs) into a
+      single space, so a multi-line trap cannot bleed across bullet lines;
+    * strips leading ``#`` characters so a title starting with ``## ...``
+      cannot create a phantom heading inside the bullet list (which would in
+      turn confuse ``validate_deviations``' heading-vs-cause cross-ref);
+    * neutralises an odd-count backtick run so the inline code span stays
+      closed;
+    * truncates to ``max_chars`` with a trailing ellipsis when over budget.
     """
-    return lesson.trap.split(". ", 1)[0].rstrip(".")
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    # Strip leading hash characters and any whitespace that follows them.
+    while cleaned.startswith("#"):
+        cleaned = cleaned[1:].lstrip()
+    backticks = _INLINE_BACKTICK_RUN_RE.findall(cleaned)
+    if len(backticks) % 2 == 1:
+        # Drop the trailing unbalanced run so the inline code span closes.
+        idx = cleaned.rfind(backticks[-1])
+        cleaned = (cleaned[:idx] + cleaned[idx + len(backticks[-1]) :]).rstrip()
+    if len(cleaned) > max_chars:
+        cleaned = cleaned[: max_chars - 1].rstrip() + "…"
+    return cleaned
+
+
+def _lesson_title_fragment(lesson: Lesson) -> str:
+    """Return a sanitised first-sentence-of-``Trap`` title for headings + bullets.
+
+    Splits on ``". "`` and takes ``[0]``, then runs the result through
+    :func:`_sanitize_for_inline_markdown` so an author-controlled Trap cannot
+    disfigure decisions.md or the gate prompt with stray ``##`` headings or
+    unbalanced backticks.
+    """
+    raw = lesson.trap.split(". ", 1)[0].rstrip(".")
+    return _sanitize_for_inline_markdown(raw)
 
 
 def render_gate_prompt(
@@ -771,25 +809,30 @@ def make_acknowledgement_hook(
                 if f.kind == "lesson":
                     lesson = lesson_by_id.get(f.lesson_id or "")
                     title = _lesson_title_fragment(lesson) if lesson else "(unknown)"
-                    # Strip a leading [lesson:L<NNN>] from the reviewer
-                    # message so the tag is not echoed twice on the same
-                    # line — the bullet already starts with the tag.
-                    clean_message = _LESSON_TAG_RE.sub("", f.message, count=1).lstrip(" -")
+                    # Strip every [lesson:L<NNN>] from the reviewer message so
+                    # tag echoes do not pile up alongside the bullet's own
+                    # leading tag, even when a row carried duplicate tags.
+                    clean_message = _LESSON_TAG_RE.sub("", f.message).lstrip(" -")
                     body_lines.append(
                         f"- [lesson:{f.lesson_id}] **{title}** — {f.location} — {clean_message}"
                     )
                     continue
                 article = by_id.get(f.article_id or "")
                 title = article.title if article else "(unknown)"
-                # Strip a leading [constitution:A<n>] from the reviewer
-                # message so the tag is not echoed twice on the same line —
-                # the bullet already starts with the tag.
-                clean_message = _TAG_RE.sub("", f.message, count=1).lstrip(" -")
+                # Strip every [constitution:A<n>] from the reviewer message so
+                # duplicate tag mentions do not double-echo onto the bullet.
+                clean_message = _TAG_RE.sub("", f.message).lstrip(" -")
                 body_lines.append(
                     f"- [constitution:{f.article_id}] **{title}** — {f.location} — {clean_message}"
                 )
-            with decisions_path.open("a", encoding="utf-8") as fh:
-                fh.write("\n".join(body_lines) + "\n")
+            # Atomic-replace the whole file instead of streaming the append.
+            # A raw ``open("a") + write`` is not atomic for payloads above
+            # PIPE_BUF (~4 KiB on Linux), so a crash mid-write could leave a
+            # partial heading on disk; the idempotency check would then either
+            # double-append (when the partial fell short of the ``Cause:``
+            # line) or assume the entry landed when only its prefix did.
+            current_text = decisions_path.read_text(encoding="utf-8")
+            atomic_replace(decisions_path, current_text + "\n".join(body_lines) + "\n")
 
         # Step 2: mutate state.json via atomic-replace (tmpfile + rename).
         # Direct `state_path.write_text(...)` could leave a half-written

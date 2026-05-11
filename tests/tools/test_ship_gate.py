@@ -10,6 +10,7 @@ import pytest
 
 from tools import ship_gate as sg
 from tools.constitution import Article
+from tools.constitution_amend import atomic_replace as _real_atomic_replace
 from tools.validate.state_semantic import validate_deviations
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "_constitution"
@@ -1432,3 +1433,194 @@ def test_ack_hook_raises_when_lesson_kind_without_lessons_arg(tmp_path: Path) ->
             articles=_articles(),
             now=datetime(2026, 5, 11, 12, 0, 0, tzinfo=UTC),
         )
+
+
+# --- Lesson title sanitization --------------------------------------------
+#
+# The Trap field is author-controlled markdown. A title with leading ``##`` or
+# an unbalanced backtick run could disfigure decisions.md headings or break
+# the inline code span. ``_sanitize_for_inline_markdown`` collapses these
+# before the title flows into the gate prompt or the ACK body bullets.
+
+
+def test_sanitize_inline_markdown_strips_leading_hashes() -> None:
+    assert sg._sanitize_for_inline_markdown("## leading heading text") == "leading heading text"
+
+
+def test_sanitize_inline_markdown_collapses_internal_whitespace() -> None:
+    assert sg._sanitize_for_inline_markdown("a\n\tb   c") == "a b c"
+
+
+def test_sanitize_inline_markdown_balances_odd_backtick_run() -> None:
+    """An odd-count backtick run must be neutralised so the span stays closed."""
+    cleaned = sg._sanitize_for_inline_markdown("text with `unbalanced inline code")
+    assert "`" not in cleaned
+
+
+def test_sanitize_inline_markdown_truncates_long_titles_with_ellipsis() -> None:
+    long_title = "x" * 200
+    cleaned = sg._sanitize_for_inline_markdown(long_title, max_chars=20)
+    assert len(cleaned) == 20
+    assert cleaned.endswith("…")
+
+
+def test_lesson_title_fragment_sanitises_heading_chars(tmp_path: Path) -> None:
+    """A Trap starting with ``##`` must not create a phantom heading."""
+    lesson = _make_lesson("L007", "HIGH", trap="## sneaky heading. body sentence")
+    title = sg._lesson_title_fragment(lesson)
+    assert not title.startswith("#")
+    assert "sneaky heading" in title
+
+
+def test_render_gate_prompt_uses_sanitised_lesson_title(tmp_path: Path) -> None:
+    """The gate prompt header line must carry the sanitised title verbatim."""
+    lesson = _make_lesson("L007", "HIGH", trap="## adversarial. body")
+    finding = sg.ShipFinding(
+        kind="lesson",
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L007] m",
+    )
+    prompt = sg.render_gate_prompt([finding], _articles(), lessons=[lesson])
+    # Title in the prompt must NOT include the leading ## that would otherwise
+    # be interpreted as a markdown heading by downstream renderers.
+    assert '(lesson: "adversarial")' in prompt
+
+
+# --- decisions.md atomic write --------------------------------------------
+#
+# The ACK hook previously appended the body via ``open("a") + write``, which
+# is not atomic for payloads above PIPE_BUF (~4 KiB). On a crash mid-write
+# the idempotency check could either double-append or assume completion. The
+# fix is to read + concatenate + ``atomic_replace`` so the rename is the
+# single moment the file flips.
+
+
+def test_ack_hook_writes_decisions_via_atomic_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``decisions.md`` mutation must go through ``atomic_replace``.
+
+    Capture every ``atomic_replace`` call and assert the decisions path is
+    among them. The raw append-mode write would not appear in this capture.
+    """
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "feature_id": "2026-05-11-demo",
+                "tier": "full",
+                "current_phase": "ship",
+                "phases": {"ship": {"status": "in_progress", "started_at": "2026-05-11T00:00:00Z"}},
+                "skipped": [],
+                "deviations": [],
+                "commits": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    decisions_path = tmp_path / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+
+    seen_paths: list[Path] = []
+    real_replace = _real_atomic_replace
+
+    def spy_atomic_replace(path: Path, text: str) -> None:
+        seen_paths.append(path)
+        real_replace(path, text)
+
+    monkeypatch.setattr(sg, "atomic_replace", spy_atomic_replace)
+
+    finding = sg.ShipFinding(
+        article_id="A1",
+        severity="BLOCK",
+        location="src/x.py:1",
+        message="[constitution:A1] message",
+    )
+    hook = sg.make_acknowledgement_hook(
+        state_path=state_path,
+        decisions_path=decisions_path,
+        gate_findings=[finding],
+        articles=_articles(),
+        now=datetime(2026, 5, 11, 12, 0, 0, tzinfo=UTC),
+    )
+    hook(tmp_path)
+
+    assert decisions_path in seen_paths, (
+        "decisions.md must be written through atomic_replace so a crash "
+        "mid-write cannot leave a partial heading on disk"
+    )
+    # Smoke: the recorded content survived end-to-end.
+    decisions_body = decisions_path.read_text(encoding="utf-8")
+    assert "Cause: " in decisions_body
+
+
+def test_ack_hook_idempotent_when_decisions_atomic_replace_failed_first_try(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Simulate a crash AFTER decisions.md but BEFORE state.json is rewritten.
+
+    The retry must observe the already-applied decisions heading, skip the
+    re-append, and complete the state.json write without producing a
+    duplicate heading in decisions.md.
+    """
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "feature_id": "2026-05-11-demo",
+                "tier": "full",
+                "current_phase": "ship",
+                "phases": {"ship": {"status": "in_progress", "started_at": "2026-05-11T00:00:00Z"}},
+                "skipped": [],
+                "deviations": [],
+                "commits": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    decisions_path = tmp_path / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+
+    real_replace = _real_atomic_replace
+
+    crash_after_decisions = {"fired": False}
+
+    def crashing_replace(path: Path, text: str) -> None:
+        real_replace(path, text)
+        if path == decisions_path and not crash_after_decisions["fired"]:
+            crash_after_decisions["fired"] = True
+            raise RuntimeError("simulated crash after decisions.md atomic_replace")
+
+    monkeypatch.setattr(sg, "atomic_replace", crashing_replace)
+
+    finding = sg.ShipFinding(
+        article_id="A1",
+        severity="BLOCK",
+        location="src/x.py:1",
+        message="[constitution:A1] message",
+    )
+    hook = sg.make_acknowledgement_hook(
+        state_path=state_path,
+        decisions_path=decisions_path,
+        gate_findings=[finding],
+        articles=_articles(),
+        now=datetime(2026, 5, 11, 12, 0, 0, tzinfo=UTC),
+    )
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        hook(tmp_path)
+
+    # Restore the real atomic_replace for the retry path.
+    monkeypatch.setattr(sg, "atomic_replace", real_replace)
+    hook(tmp_path)
+
+    decisions_body = decisions_path.read_text(encoding="utf-8")
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert decisions_body.count("Cause: ") == 1, (
+        "decisions.md must carry exactly one heading after the retry — the "
+        "idempotency check observed the existing entry on the second pass"
+    )
+    assert len(state_payload["deviations"]) == 1, (
+        "state.json must carry exactly one deviation entry after the retry"
+    )
