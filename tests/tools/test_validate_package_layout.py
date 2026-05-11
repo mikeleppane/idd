@@ -22,6 +22,7 @@ REQUIRED_ALL: frozenset[str] = frozenset(
         "validate_anchors",
         "validate_capability_spec_sections",
         "validate_capability_uniqueness",
+        "validate_config",
         "validate_constitution",
         "validate_delta",
         "validate_deviations",
@@ -31,6 +32,7 @@ REQUIRED_ALL: frozenset[str] = frozenset(
         "validate_negative_requirements",
         "validate_plan_tasks",
         "validate_qa_shape",
+        "validate_research",
         "validate_scenarios",
         "validate_tdd_evidence",
         "validate_verified_deps",
@@ -54,6 +56,8 @@ EXPECTED_SIGNATURES: dict[str, tuple[str, ...]] = {
     "validate_qa_shape": ("repo_root", "feature_id"),
     "validate_tdd_evidence": ("repo_root", "feature_id", "git_show_files"),
     "validate_verified_deps": ("plan_path", "check_registries"),
+    "validate_research": ("research_path",),
+    "validate_config": ("config_path",),
 }
 
 
