@@ -164,3 +164,87 @@ def test_returns_list_of_findings(tmp_path: Path) -> None:
     assert isinstance(findings, list)
     for finding in findings:
         assert isinstance(finding, Finding)
+
+
+def _stage_feature_with_byod(
+    tmp_path: Path,
+    *,
+    covered_libs: tuple[str, ...] = (),
+) -> Path:
+    """Lay down a ``.forge/features/<id>/RESEARCH.md`` plus optional BYOD docs.
+
+    Returns the RESEARCH.md path. The validator walks up from the
+    research file looking for a ``.forge`` ancestor; this fixture
+    creates the canonical layout so coverage resolution exercises the
+    real file-system path.
+    """
+    forge = tmp_path / ".forge"
+    feature = forge / "features" / "2026-05-11-example-feature"
+    feature.mkdir(parents=True)
+    if covered_libs:
+        byod = forge / "external-docs"
+        byod.mkdir(parents=True)
+        for lib in covered_libs:
+            (byod / f"{lib}.md").write_text("doc", encoding="utf-8")
+    return feature / "RESEARCH.md"
+
+
+def test_byod_partial_covered_library_citation_passes(tmp_path: Path) -> None:
+    """A ``[byod:<covered>:...]`` cite satisfies a byod-partial paragraph."""
+    research = _stage_feature_with_byod(tmp_path, covered_libs=("httpx",))
+    body = _body_with_sections("About httpx: call `Client.send` to send. [byod:httpx:client]")
+    research.write_text(_FRONTMATTER_BYOD_PARTIAL + body, encoding="utf-8")
+
+    findings = validate_research(research)
+    citation_warns = [f for f in findings if "missing citation" in f.message.lower()]
+    assert citation_warns == [], findings
+
+
+def test_byod_partial_flags_only_uncovered_paragraphs(tmp_path: Path) -> None:
+    """Covered libs satisfy; uncovered libs surface as uncovered + missing."""
+    research = _stage_feature_with_byod(tmp_path, covered_libs=("httpx",))
+    body = _body_with_sections(
+        "About httpx: call `Client.send`. [byod:httpx:client]\n\n"
+        "About pydantic: use `pydantic.BaseModel` for validation."
+    )
+    research.write_text(_FRONTMATTER_BYOD_PARTIAL + body, encoding="utf-8")
+
+    findings = validate_research(research)
+    uncovered_warns = [f for f in findings if "not covered by staged byod" in f.message.lower()]
+    assert any("pydantic" in f.message.lower() for f in uncovered_warns), findings
+    assert not any("httpx" in f.message.lower() for f in uncovered_warns), findings
+
+
+def test_byod_partial_hyphen_underscore_canonicalization(tmp_path: Path) -> None:
+    """A BYOD file ``my-lib.md`` matches a cite for ``my_lib`` (canonical form)."""
+    research = _stage_feature_with_byod(tmp_path, covered_libs=("my-lib",))
+    body = _body_with_sections("Use `my_lib.connect` for setup. [byod:my_lib:connect]")
+    research.write_text(_FRONTMATTER_BYOD_PARTIAL + body, encoding="utf-8")
+
+    findings = validate_research(research)
+    citation_warns = [f for f in findings if "missing citation" in f.message.lower()]
+    assert citation_warns == [], findings
+
+
+def test_degraded_marker_inside_html_comment_blocks(tmp_path: Path) -> None:
+    """The template ships the marker inside an HTML comment.
+
+    Authors who copy the template verbatim without replacing the
+    External docs section must still BLOCK — the marker only counts
+    when it lives in the visible body.
+    """
+    research = tmp_path / "RESEARCH.md"
+    body = (
+        "# Codebase findings\n\nx\n\n"
+        "# External docs\n\n"
+        "<!--\n"
+        "_Context7 not available — research ran in **degraded** mode._\n"
+        "-->\n\n"
+        "# Domain notes\n\nx\n\n# Risks surfaced\n\nx\n"
+    )
+    research.write_text(_FRONTMATTER_DEGRADED + body, encoding="utf-8")
+
+    findings = validate_research(research)
+    assert any(
+        f.severity == "BLOCK" and "context7 not available" in f.message.lower() for f in findings
+    ), findings

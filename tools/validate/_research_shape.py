@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from tools.research import citations
+from tools.research.library_extract import normalize
 
 from ._finding import Finding
 from ._frontmatter import (
@@ -43,6 +44,40 @@ def _check_sections(body: str, path: Path) -> list[Finding]:
         for header in _REQUIRED_SECTIONS
         if header not in body
     ]
+
+
+def _resolve_repo_root(research_path: Path) -> Path | None:
+    """Walk up from ``research_path`` until a ``.forge`` directory is found.
+
+    Returns the parent of the ``.forge`` directory (the repo root). Returns
+    ``None`` when no ``.forge`` ancestor exists — defensive guard for
+    ad-hoc validator invocations outside a real feature tree.
+    """
+    for ancestor in research_path.resolve().parents:
+        if (ancestor / ".forge").is_dir():
+            return ancestor
+    return None
+
+
+def _byod_covered_libraries(research_path: Path) -> tuple[str, ...]:
+    """Return canonical (normalize'd) BYOD-covered library names.
+
+    The grounding-mode resolver records which libraries are covered at
+    decision time; the validator re-derives the set from
+    ``.forge/external-docs/*.md`` so the audit trail does not depend on
+    fields the schema does not own. Returns ``()`` when the directory
+    is absent or unreadable.
+    """
+    repo_root = _resolve_repo_root(research_path)
+    if repo_root is None:
+        return ()
+    byod_dir = repo_root / ".forge" / "external-docs"
+    if not byod_dir.is_dir():
+        return ()
+    try:
+        return tuple(normalize(p.stem) for p in byod_dir.glob("*.md"))
+    except OSError:
+        return ()
 
 
 def validate_research(research_path: Path) -> list[Finding]:
@@ -110,7 +145,8 @@ def validate_research(research_path: Path) -> list[Finding]:
 
     findings.extend(_check_sections(body, research_path))
 
-    result = citations.validate(body, mode=str(grounding), libraries=())
+    covered_libs = _byod_covered_libraries(research_path) if grounding == "byod-partial" else ()
+    result = citations.validate(body, mode=str(grounding), libraries=covered_libs)
 
     if grounding == "degraded":
         if not result.degraded_marker_present:
