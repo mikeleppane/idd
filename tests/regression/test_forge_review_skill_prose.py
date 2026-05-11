@@ -72,3 +72,40 @@ def test_existing_heavy_subagent_step_not_displaced() -> None:
         "sub-steps were inserted BETWEEN Step 4 and Step 5 rather than "
         "replacing or renumbering existing in-house steps"
     )
+
+
+def test_skill_documents_auto_mode_branch_header() -> None:
+    body = _skill_body()
+    assert "**When auto mode is selected:**" in body, (
+        "Step 4a must include the auto-mode sub-block header so the "
+        "planning agent recognises the auto-dispatch branch"
+    )
+
+
+def test_skill_references_auto_dispatch_helpers_by_name() -> None:
+    body = _skill_body()
+    for helper in (
+        "auto_dispatch",
+        "record_dispatch_approval",
+        "write_response_to_disk",
+    ):
+        assert helper in body, (
+            f"Skill must reference auto-mode helper {helper!r} by name "
+            "so the planning agent calls the correct dispatch API"
+        )
+
+
+def test_skill_documents_skip_cost_warn_flag() -> None:
+    body = _skill_body()
+    assert "--skip-cost-warn" in body, (
+        "Skill must document the --skip-cost-warn flag so the planning "
+        "agent knows when the cost-warn gate can be bypassed"
+    )
+
+
+def test_skill_documents_dispatch_error_fallback() -> None:
+    body = _skill_body()
+    assert "DispatchError" in body, (
+        "Skill must reference DispatchError so the planning agent knows "
+        "to fall back to manual mode when auto dispatch fails"
+    )
