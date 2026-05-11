@@ -125,7 +125,17 @@ Promote a verified feature to a canonical capability and move the feature folder
    - When `gate` is non-empty: print `tools.ship_gate.render_gate_prompt(gate, articles)` and read user input.
      - User types `ACKNOWLEDGE` (literal uppercase): build the ack hook via `ack_hook = tools.ship_gate.make_acknowledgement_hook(state_path=..., decisions_path=..., gate_findings=gate, articles=articles)` and **carry it into step 4** — do NOT call ack_hook here.
      - Anything else: abort ship with the user's choice surfaced; halt without state mutation.
-   - When `gate` is empty: continue to step 4 with `ack_hook = None`.
+   - When `gate` is empty: continue to step 3.55 with `ack_hook = None`.
+3.55 **Ship-time git-conventions gate (WS2).**
+   - Evaluate against the feature's `state.commits[]`:
+     `partition = tools.ship_gate.evaluate_git_conventions_gate(.forge/features/<id>/)`.
+   - When `partition.warn` is non-empty: print `tools.ship_gate.render_git_conventions_warn_summary(partition)` and continue (MEDIUM findings are advisory; ship is not blocked).
+   - When `partition.gate` is non-empty (BLOCK / HIGH findings): print
+     `tools.ship_gate.render_git_conventions_gate_prompt(partition)` and **abort ship**. The operator must either:
+     - amend the offending commits and re-run `/forge:ship`, or
+     - record an explicit ADR in `decisions.md` accepting the deviation, mark the findings as `Status: accepted-risk` in the relevant artifact, then re-run.
+     The git-conventions gate has no `ACKNOWLEDGE` short-circuit — commit-message shape is mechanical, not subject to discretion. Skill exits non-zero with the rendered prompt as the surfaced message.
+   - When `partition.gate` and `partition.warn` are both empty: continue to step 4.
 3.6 **Pre-PR QA gate (optional, prompt-driven).** Before the atomic ship / archive step:
 
    - Compute the prompt default: `Y` when `state.json.tier in {"standard", "full"}`; `N` for `focused`. Surface as: `"Run QA before creating PR? [Y/n]"` (or `"[y/N]"` when default is `N`).

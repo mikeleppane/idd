@@ -34,6 +34,12 @@ import re
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
+from tools._glob import globstar_match as _globstar_match
+
+# Back-compat alias retained so any existing private import (and the lock-down
+# regression suite under tests/tools/test_redaction_globstar.py) keeps working.
+# New consumers should import :func:`tools._glob.globstar_match` directly.
+
 DEFAULT_DENY_GLOBS: tuple[str, ...] = (
     "**/.env*",
     "**/*credentials*",
@@ -130,50 +136,6 @@ class RedactionResult:
         callers handle the refusal path on ``fatal_matches`` separately.
         """
         return bool(self.excluded_files or self.redacted_spans)
-
-
-def _globstar_match(path: str, glob: str) -> bool:
-    """Return True iff ``path`` matches a ``**``-aware ``glob``.
-
-    Translation rules:
-      * ``**/`` (followed by ``/``) → ``(?:.*/)?``  matches zero-or-more
-        leading path segments, so ``**/.env`` matches both ``.env`` (root)
-        and ``project/.env`` (nested) — parity with
-        ``PurePosixPath.full_match`` (Python 3.13+).
-      * remaining ``**``  → ``.*``    (cross path separators)
-      * single ``*``      → ``[^/]*`` (within one path segment)
-      * ``?``             → ``[^/]``
-      * everything else is ``re.escape``-protected.
-
-    Stand-in for ``PurePosixPath.full_match`` (Python 3.13+); we run on 3.12
-    so we ship our own. Fully anchored via ``re.fullmatch``.
-    """
-    out: list[str] = []
-    i = 0
-    while i < len(glob):
-        ch = glob[i]
-        if ch == "*":
-            # Look-ahead: consume a ``**`` group.
-            if i + 1 < len(glob) and glob[i + 1] == "*":
-                # ``**/`` at start or after a separator collapses the slash so
-                # the pattern matches zero leading segments too.
-                if i + 2 < len(glob) and glob[i + 2] == "/":
-                    out.append("(?:.*/)?")
-                    i += 3
-                else:
-                    out.append(".*")
-                    i += 2
-            else:
-                out.append("[^/]*")
-                i += 1
-        elif ch == "?":
-            out.append("[^/]")
-            i += 1
-        else:
-            out.append(re.escape(ch))
-            i += 1
-    pattern = "".join(out)
-    return re.fullmatch(pattern, path) is not None
 
 
 def _matches_any(path: PurePosixPath, globs: tuple[str, ...]) -> bool:

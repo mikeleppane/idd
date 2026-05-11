@@ -44,11 +44,15 @@ either choice aborts with no disk mutation.
 1. **Collect signals.** Call
    `tools.constitution_amend.collect_resync_signals(repo_root)`. The
    helper returns a `BootstrapSignals` dataclass with fields
-   `files: list[SignalFile]`, `dropped_for_secrets: list[PurePosixPath]`,
-   `truncated: list[PurePosixPath]`, and `total_bytes: int`. Surface to
-   the user the collected file count, every dropped path (deny-glob or
-   secret-content), and every truncated path (capped at 16 KiB). Python
-   performs zero LLM calls and zero network access at this step.
+   `files: list[SignalFile]`, `dropped: list[PurePosixPath]` (every path
+   skipped — deny-glob match OR secret-content match — surfaced together
+   because the two causes are operationally equivalent for the resync
+   flow), `truncated: list[PurePosixPath]`, and `total_bytes: int`. The
+   `dropped_for_secrets` attribute is a back-compat alias for `dropped`
+   and may be used by older orchestrators. Surface to the user the
+   collected file count, every dropped path, and every truncated path
+   (capped at 16 KiB). Python performs zero LLM calls and zero network
+   access at this step.
 
 2. **Refuse if no source files.** If `signals.files` is empty, present
    **one** `AskUserQuestion`:
@@ -153,17 +157,14 @@ either choice aborts with no disk mutation.
      loop already exists in `forge-amend-constitution`; the user runs
      the manual flow.
 
-   - **`advisory` entries** → log to `decisions.md` directly:
-
-     ```
-     \n## <today> — Conventions resync: advisory items\n
-     **Context:** The following AGENTS.md / CLAUDE.md prose rules stay
-     honor-system (advisory only):\n
-       - <rule text> (from <source>:<line>)
-       - ...
-     **Change:** No mechanical enforcement added.\n
-     **Alternatives considered:** Promote to reviewer-tag, validator, or hook.\n
-     ```
+   - **`advisory` entries** → call
+     `tools.constitution_amend.log_advisory_entries(repo_root=...,
+     entries=[AdvisoryEntry(rule_text=..., source_file=..., source_line=...), ...])`.
+     The helper auto-creates `decisions.md` when absent and appends a
+     single ADR row in the canonical shape (one bullet per advisory
+     entry). Do NOT hand-write the ADR — keep the path symmetric with
+     the hook / validator dispositions so future schema changes are
+     applied in one place.
 
 7. **`[a]ccept-all` branch.** Apply every inventory entry to its
    proposed mechanism without per-entry confirmation. The four mechanism
@@ -178,11 +179,9 @@ either choice aborts with no disk mutation.
 
 ## Sequential-question contract (locked)
 
-This skill follows the **one-question-per-turn** pattern locked under
-WS1's *User interaction pattern (locked — from SDD workshop L1)* in
-`docs/plans/2026-05-11-conventions-trap-memory-design.md`. The same
-pattern already governs `skills/forge-bootstrap-constitution/SKILL.md`
-step 5, `skills/forge-refine/SKILL.md` step 6a, and
+This skill follows the **one-question-per-turn** pattern that already
+governs `skills/forge-bootstrap-constitution/SKILL.md` step 5,
+`skills/forge-refine/SKILL.md` step 6a, and
 `skills/forge-crucible/SKILL.md` Adversarial Q&A.
 
 Each `AskUserQuestion` in this skill is its own turn:

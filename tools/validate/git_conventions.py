@@ -8,8 +8,12 @@ the configured contract:
 * Subject grammar matches Conventional Commits when
   ``require_conventional_commits`` is true.
 * Subject scope (when present) belongs to ``allowed_scopes`` when that list
-  is non-empty. A subject with NO scope is allowed even when the list is set
-  — some commit types legitimately omit scope.
+  is non-empty. When ``require_scope`` is true (the default), a missing
+  scope is itself a HIGH finding — most FORGE conventions reserve scopes
+  to enforce ownership, so the default-deny posture is safer than the
+  permissive "missing scope ⇒ ok" rule. Set
+  ``git_conventions.subject.require_scope: false`` to opt back into the
+  Conventional Commits relaxed behavior.
 * No trailer line in the message matches any configured ``ban_patterns``
   (compared with :func:`re.fullmatch`).
 
@@ -18,6 +22,14 @@ to a ``WARN`` ``unknown-sha:<sha>`` finding and never raise. Config defaults
 are applied when ``.forge/config.json`` is missing or lacks the
 ``git_conventions`` block; a malformed config falls back to defaults so the
 parse-error surface stays owned by :func:`tools.validate.validate_config`.
+
+SHA hygiene: ``state.commits[].sha`` is constrained to ``^[0-9a-f]{7,40}$``
+by the state schema, but the validator does not require the strict schema
+to have run first. It enforces the same regex itself and rejects malformed
+shas with a BLOCK finding before any subprocess call. Every git invocation
+also threads ``--`` before positional arguments to remove the entire class
+of "future-maintainer chose a git subcommand that mis-parses leading-dash
+positionals" failures.
 """
 
 from __future__ import annotations
@@ -36,6 +48,7 @@ _TARGET: Final[str] = "git-conventions"
 
 _DEFAULT_MAX_LENGTH: Final[int] = 72
 _DEFAULT_REQUIRE_CC: Final[bool] = True
+_DEFAULT_REQUIRE_SCOPE: Final[bool] = True
 _DEFAULT_TIMEOUT: Final[float] = 10.0
 
 # Short SHA prefix length surfaced in finding messages — matches `git log
@@ -49,6 +62,11 @@ _TRAILER_EXCERPT_MAX: Final[int] = 80
 # Distance from `<feature-folder>` up to the repo root: ``<root>/.forge/features/<id>``
 # is three ``parents[]`` entries deep, so the root sits at ``parents[2]``.
 _FEATURE_DEPTH: Final[int] = 3
+
+# Canonical SHA shape per ``schemas/state.schema.json``. Enforced here so the
+# validator stays correct even if upstream shape-validation is skipped or
+# the state file is hand-edited.
+_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 
 # Conventional Commits grammar. Allows optional scope, optional `!` breaking
 # marker, and a non-empty description starting with a non-space character.
@@ -81,17 +99,34 @@ class GitConventionsConfig:
             characters. Defaults to 72.
         require_conventional_commits: When True, subjects must match the
             Conventional Commits grammar (``<type>(<scope>)!: <desc>``).
+        require_scope: When True (default), a Conventional Commits subject
+            with no scope is itself a HIGH finding. Set to false to opt
+            back into the upstream-CC relaxed behavior.
         allowed_scopes: Permitted scope tokens. Empty tuple disables the
             scope-allowlist check entirely. A commit with no scope is
-            always allowed regardless of this list.
+            governed by ``require_scope`` regardless of this list.
         trailer_ban_patterns: Regex patterns matched against each trailer
             line via :func:`re.fullmatch`. A hit emits a ``BLOCK`` finding.
     """
 
     subject_max_length: int
     require_conventional_commits: bool
+    require_scope: bool
     allowed_scopes: tuple[str, ...]
     trailer_ban_patterns: tuple[str, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class _CompiledBans:
+    """Pre-compiled trailer ban patterns plus deferred compile errors.
+
+    A single compile failure produces ONE :class:`Finding` (vs the previous
+    per-commit emission, which inflated the same error to N copies for an
+    N-commit feature).
+    """
+
+    compiled: tuple[re.Pattern[str], ...]
+    compile_errors: tuple[Finding, ...]
 
 
 GitRunner = Callable[..., subprocess.CompletedProcess[str]]
@@ -103,7 +138,15 @@ def _default_runner(
     cwd: Path | None = None,
     timeout: float = _DEFAULT_TIMEOUT,
 ) -> subprocess.CompletedProcess[str]:
-    """Production runner: ``subprocess.run`` with safe, locked-down defaults."""
+    """Production runner: ``subprocess.run`` with safe, locked-down defaults.
+
+    Pinned kwargs (``capture_output=True, text=True, check=False``) are
+    applied here; callers MUST NOT pass them in — the previous version
+    accepted those kwargs at the call site, then the production runner
+    rejected them and crashed the validator the first time it ran against
+    a non-empty ``state.commits[]``. Test runners that implement
+    :data:`GitRunner` are free to accept additional kwargs.
+    """
     return subprocess.run(
         args,
         capture_output=True,
@@ -167,6 +210,11 @@ def load_config(repo_root: Path) -> GitConventionsConfig:
     require_cc_raw = subject.get("require_conventional_commits")
     require_cc = require_cc_raw if isinstance(require_cc_raw, bool) else _DEFAULT_REQUIRE_CC
 
+    require_scope_raw = subject.get("require_scope")
+    require_scope = (
+        require_scope_raw if isinstance(require_scope_raw, bool) else _DEFAULT_REQUIRE_SCOPE
+    )
+
     scopes_raw = subject.get("allowed_scopes")
     if isinstance(scopes_raw, list):
         allowed_scopes = tuple(s for s in scopes_raw if isinstance(s, str))
@@ -182,9 +230,36 @@ def load_config(repo_root: Path) -> GitConventionsConfig:
     return GitConventionsConfig(
         subject_max_length=max_length,
         require_conventional_commits=require_cc,
+        require_scope=require_scope,
         allowed_scopes=allowed_scopes,
         trailer_ban_patterns=ban_patterns,
     )
+
+
+def _compile_bans(patterns: tuple[str, ...], state_path: Path) -> _CompiledBans:
+    """Compile every ban pattern ONCE.
+
+    Returns the successful compilations plus one :class:`Finding` per
+    pattern that fails to compile. A previous version compiled inside the
+    per-commit loop, so a single broken pattern emitted one identical
+    BLOCK finding per commit — extremely noisy and confusing about the
+    actual error attribution.
+    """
+    compiled: list[re.Pattern[str]] = []
+    errors: list[Finding] = []
+    for pattern in patterns:
+        try:
+            compiled.append(re.compile(pattern))
+        except re.error as exc:
+            errors.append(
+                Finding(
+                    "BLOCK",
+                    _TARGET,
+                    state_path,
+                    f"trailer ban_pattern failed to compile: {pattern!r}: {exc}",
+                ),
+            )
+    return _CompiledBans(compiled=tuple(compiled), compile_errors=tuple(errors))
 
 
 def _short(sha: str) -> str:
@@ -192,7 +267,7 @@ def _short(sha: str) -> str:
 
 
 def _split_message(message: str) -> tuple[str, list[str]]:
-    """Return ``(subject, trailer_lines)`` for a git commit message.
+    r"""Return ``(subject, trailer_lines)`` for a git commit message.
 
     The trailer block is the contiguous tail of ``Key: value`` lines that
     follow the last blank line in the message. Single-line values only —
@@ -202,16 +277,20 @@ def _split_message(message: str) -> tuple[str, list[str]]:
 
     Trailing blank lines are ignored. A message with no blank line after the
     subject has no body and no trailers; the result is ``(subject, [])``.
+
+    Line endings: CRLF is normalised to LF before split, so a Windows-authored
+    commit message does not leave a stray ``\\r`` on every line (which would
+    inflate the subject length check and break the Conventional Commits
+    regex match).
     """
     # Normalise line endings and strip trailing blank padding so the
     # "tail after last blank line" calculation stays stable.
-    lines = message.rstrip("\n").split("\n")
+    normalised = message.replace("\r\n", "\n").replace("\r", "\n")
+    lines = normalised.rstrip("\n").split("\n")
     if not lines:
         return "", []
     subject = lines[0]
     rest = lines[1:]
-    # Find the index AFTER the last blank line in `rest`. Everything from
-    # there to the end is the candidate trailer block.
     last_blank = -1
     for idx, line in enumerate(rest):
         if line == "":
@@ -221,8 +300,6 @@ def _split_message(message: str) -> tuple[str, list[str]]:
     candidate = rest[last_blank + 1 :]
     if not candidate:
         return subject, []
-    # All candidate lines must look like trailers; otherwise treat the block
-    # as body (mixed Key:value + free-form text is not a trailer block).
     for line in candidate:
         if not _TRAILER_LINE.match(line):
             return subject, []
@@ -266,7 +343,18 @@ def _check_subject(
         return findings
 
     scope = match.group("scope")
-    if scope is not None and config.allowed_scopes and scope not in config.allowed_scopes:
+    if scope is None:
+        if config.require_scope:
+            findings.append(
+                Finding(
+                    "HIGH",
+                    _TARGET,
+                    state_path,
+                    f"{_short(sha)}: subject is missing required scope",
+                ),
+            )
+        return findings
+    if config.allowed_scopes and scope not in config.allowed_scopes:
         findings.append(
             Finding(
                 "HIGH",
@@ -282,23 +370,11 @@ def _check_trailers(
     *,
     sha: str,
     trailers: list[str],
-    config: GitConventionsConfig,
+    compiled_bans: _CompiledBans,
     state_path: Path,
 ) -> list[Finding]:
     findings: list[Finding] = []
-    for pattern in config.trailer_ban_patterns:
-        try:
-            compiled = re.compile(pattern)
-        except re.error:
-            findings.append(
-                Finding(
-                    "BLOCK",
-                    _TARGET,
-                    state_path,
-                    f"trailer ban_pattern failed to compile: {pattern!r}",
-                ),
-            )
-            continue
+    for compiled in compiled_bans.compiled:
         for trailer in trailers:
             if compiled.fullmatch(trailer):
                 excerpt = (
@@ -313,7 +389,7 @@ def _check_trailers(
                         state_path,
                         (
                             f"{_short(sha)}: forbidden trailer matched pattern "
-                            f"{pattern!r}: {excerpt}"
+                            f"{compiled.pattern!r}: {excerpt}"
                         ),
                     ),
                 )
@@ -326,15 +402,27 @@ def _fetch_message(
     *,
     cwd: Path,
 ) -> str | None:
-    """Return the commit message body, or ``None`` if the SHA is unreachable."""
+    """Return the commit message body, or ``None`` if the SHA is unreachable.
+
+    ``git show`` accepts the ``--`` end-of-options separator; ``git rev-parse
+    --verify`` does NOT (the ``--`` makes rev-parse interpret the argument
+    as a pathspec and fail with ``Needed a single revision``). So rev-parse
+    stays without the separator and relies on two upstream guards:
+
+    1. ``_load_commits`` enforces ``^[0-9a-f]{7,40}$`` against every SHA,
+       so a state.json-borne ``--upload-pack=evil`` shape never reaches the
+       subprocess at all.
+    2. ``rev-parse --verify`` rejects leading-dash positionals natively
+       (it requires a single revision).
+
+    ``git show`` accepts ``--``, so we keep it there as defense-in-depth
+    against any future refactor that swaps the subcommand.
+    """
     try:
         verify = runner(
             ["git", "rev-parse", "--verify", f"{sha}^{{commit}}"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=_DEFAULT_TIMEOUT,
             cwd=cwd,
+            timeout=_DEFAULT_TIMEOUT,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return None
@@ -342,12 +430,9 @@ def _fetch_message(
         return None
     try:
         show = runner(
-            ["git", "show", "-s", "--format=%B", sha],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=_DEFAULT_TIMEOUT,
+            ["git", "show", "-s", "--format=%B", "--", sha],
             cwd=cwd,
+            timeout=_DEFAULT_TIMEOUT,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return None
@@ -360,6 +445,7 @@ def _check_commit(
     *,
     sha: str,
     config: GitConventionsConfig,
+    compiled_bans: _CompiledBans,
     runner: GitRunner,
     state_path: Path,
     cwd: Path,
@@ -371,7 +457,12 @@ def _check_commit(
     findings: list[Finding] = []
     findings.extend(_check_subject(sha=sha, subject=subject, config=config, state_path=state_path))
     findings.extend(
-        _check_trailers(sha=sha, trailers=trailers, config=config, state_path=state_path)
+        _check_trailers(
+            sha=sha,
+            trailers=trailers,
+            compiled_bans=compiled_bans,
+            state_path=state_path,
+        )
     )
     return findings
 
@@ -379,10 +470,11 @@ def _check_commit(
 def _load_commits(state_path: Path) -> list[dict[str, Any]] | Finding:
     """Return ``state.commits[]`` or a single ``BLOCK`` Finding on load failure.
 
-    A missing ``commits`` field, or a value that is not a list, resolves to an
-    empty list — the validator silently passes for features that predate any
-    commits or that store the field shape unexpectedly. The structural shape
-    of ``state.json`` itself is owned by :mod:`tools.validate.health`.
+    A missing ``commits`` field resolves to an empty list — the validator
+    silently passes for features that predate any commits. A present-but-
+    non-list value (e.g. ``"commits": "all"``) is a shape error and BLOCKs
+    — silently passing on it would mask the same class of state.json
+    corruption that the JSON-root check guards against.
     """
     if not state_path.is_file():
         return Finding("BLOCK", _TARGET, state_path, "state.json not found")
@@ -392,10 +484,41 @@ def _load_commits(state_path: Path) -> list[dict[str, Any]] | Finding:
         return Finding("BLOCK", _TARGET, state_path, f"failed to parse state.json: {exc}")
     if not isinstance(payload, dict):
         return Finding("BLOCK", _TARGET, state_path, "state.json root must be an object")
-    commits = payload.get("commits")
-    if not isinstance(commits, list):
+    if "commits" not in payload:
         return []
+    commits = payload["commits"]
+    if not isinstance(commits, list):
+        return Finding(
+            "BLOCK",
+            _TARGET,
+            state_path,
+            f"state.commits must be a JSON array, got {type(commits).__name__}",
+        )
     return [c for c in commits if isinstance(c, dict)]
+
+
+def _looks_like_feature_folder(feature_folder: Path) -> bool:
+    """True iff ``feature_folder`` sits at the ``.forge/features/<id>/`` depth.
+
+    Guard for the ``--target git-conventions`` CLI path: the validator
+    walks ``parents[2]`` to derive the repo root and runs ``git`` against
+    it, so a caller pointing at the wrong folder would otherwise resolve
+    a misleading "state.json not found" or operate against the wrong repo.
+
+    Path layout:
+
+    * ``parents[0]`` → ``.forge/features``  (name == "features")
+    * ``parents[1]`` → ``.forge``           (name == ".forge")
+    * ``parents[2]`` → repo root            (must contain ``.forge``)
+    """
+    parents = list(feature_folder.parents)
+    if len(parents) < _FEATURE_DEPTH:
+        return False
+    return (
+        parents[0].name == "features"
+        and parents[1].name == ".forge"
+        and (parents[2] / ".forge").is_dir()
+    )
 
 
 def _sort_key(commit_index: int, finding: Finding) -> tuple[int, int, str]:
@@ -412,7 +535,9 @@ def validate_git_conventions(
     Args:
         feature_folder: Path to ``.forge/features/<feature-id>/``. Must contain
             ``state.json``; missing or malformed state surfaces a ``BLOCK``
-            finding pointing at the expected file.
+            finding pointing at the expected file. A path that does not
+            match the ``.forge/features/<id>/`` shape returns a pointed
+            ``BLOCK`` instead of operating against the wrong repo root.
         runner: Injection seam for ``subprocess.run``. Defaults to the
             production runner with a 10 s timeout, ``capture_output=True``,
             ``text=True``, and ``check=False``.
@@ -424,26 +549,50 @@ def validate_git_conventions(
     """
     effective_runner: GitRunner = runner if runner is not None else _default_runner
     state_path = feature_folder / "state.json"
+    if not _looks_like_feature_folder(feature_folder):
+        return [
+            Finding(
+                "BLOCK",
+                _TARGET,
+                state_path,
+                "feature_folder does not match expected shape .forge/features/<id>/",
+            ),
+        ]
     loaded = _load_commits(state_path)
     if isinstance(loaded, Finding):
         return [loaded]
 
-    # Repo root sits at .forge/features/<id>/ → ``parents[2]``.
     cwd = (
         feature_folder.parents[_FEATURE_DEPTH - 1]
         if len(feature_folder.parents) >= _FEATURE_DEPTH
         else feature_folder
     )
     config = load_config(cwd)
+    compiled_bans = _compile_bans(config.trailer_ban_patterns, state_path)
+    static_findings = list(compiled_bans.compile_errors)
 
     indexed: list[tuple[int, Finding]] = []
     for idx, commit in enumerate(loaded):
         sha_raw = commit.get("sha")
         if not isinstance(sha_raw, str) or not sha_raw:
             continue
+        if not _SHA_RE.match(sha_raw):
+            indexed.append(
+                (
+                    idx,
+                    Finding(
+                        "BLOCK",
+                        _TARGET,
+                        state_path,
+                        f"state.commits[{idx}].sha does not match required shape: {sha_raw!r}",
+                    ),
+                )
+            )
+            continue
         commit_findings = _check_commit(
             sha=sha_raw,
             config=config,
+            compiled_bans=compiled_bans,
             runner=effective_runner,
             state_path=state_path,
             cwd=cwd,
@@ -451,4 +600,4 @@ def validate_git_conventions(
         indexed.extend((idx, finding) for finding in commit_findings)
 
     indexed.sort(key=lambda pair: _sort_key(pair[0], pair[1]))
-    return [finding for _, finding in indexed]
+    return static_findings + [finding for _, finding in indexed]

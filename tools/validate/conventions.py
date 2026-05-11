@@ -2,9 +2,19 @@
 
 Loads convention rules authored by the WS2 inventory step, validates their
 shape against the JSON Schema, and matches them against commit/diff payloads
-at review time. Rules scoped to ``dispatch_brief`` are intentionally not run
-here — the dispatch hook reuses ``load_conventions`` + ``match_convention``
-to enforce those at PreToolUse time.
+at review time. Rules scoped to ``dispatch_brief`` are intentionally not
+pattern-fired here — the dispatch hook reuses :mod:`tools.conventions_runtime`
+directly so it stays stdlib-only.
+
+Architecture:
+
+* :mod:`tools.conventions_runtime` — stdlib-only types + permissive loader +
+  match engine. The dispatch hook (``hooks/check_budget.py``) imports from
+  there.
+* This module — schema-strict loader plus ``Finding``-shaped validator built
+  on top of the runtime primitives. Schema (``jsonschema``) + ``yaml`` deps
+  are pulled in via :mod:`._frontmatter`, so consumers in environments that
+  lack those deps should not import this module.
 """
 
 from __future__ import annotations
@@ -12,18 +22,31 @@ from __future__ import annotations
 import fnmatch
 import json
 import re
-from collections.abc import Iterable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, Literal, cast
+from typing import Any, Final
 
-from tools.redaction import _globstar_match
+from tools._glob import globstar_match
+from tools.conventions_runtime import (
+    Convention,
+    PatternKind,
+    Scope,
+    _build_one,
+    has_redos_shape,
+    load_conventions_permissive,
+    match_convention,
+)
 
-from ._finding import Finding, Severity
+from ._finding import Finding
 from ._frontmatter import _build_validator, _load_schema
 
-PatternKind = Literal["forbidden_text", "required_text", "filename_glob_forbidden"]
-Scope = Literal["commit_body", "diff", "dispatch_brief"]
+__all__ = [
+    "Convention",
+    "PatternKind",
+    "Scope",
+    "load_conventions",
+    "match_convention",
+    "validate_conventions",
+]
 
 _TARGET: Final[str] = "conventions"
 _CONVENTIONS_FILENAME: Final[str] = "conventions.json"
@@ -31,35 +54,6 @@ _SCHEMA_FILENAME: Final[str] = "conventions.schema.json"
 _MATCH_EXCERPT_MAX: Final[int] = 80
 
 _NEW_PATH_LINE = re.compile(r"^\+\+\+ b/(.+)$", re.MULTILINE)
-
-
-@dataclass(frozen=True, kw_only=True)
-class Convention:
-    """One pattern-based convention rule from ``.forge/conventions.json``.
-
-    Attributes:
-        id: Globally unique rule identifier.
-        source_file: Repo-relative path of the authoring document
-            (e.g. ``AGENTS.md``).
-        source_line: 1-based line number in ``source_file`` where the rule
-            originates; used to point operators at the authoring location.
-        pattern_kind: Match-engine selector. ``forbidden_text`` / ``required_text``
-            interpret ``pattern`` as a Python regex; ``filename_glob_forbidden``
-            interprets ``pattern`` as a POSIX-style glob.
-        pattern: The regex or glob source string.
-        scope: Tuple of scopes this rule applies to. Immutable + hashable so
-            ``Convention`` stays usable as a dict key or set member.
-        severity: Severity emitted on a match; one of
-            ``BLOCK | HIGH | MEDIUM | LOW | WARN``.
-    """
-
-    id: str
-    source_file: str
-    source_line: int
-    pattern_kind: PatternKind
-    pattern: str
-    scope: tuple[Scope, ...]
-    severity: Severity
 
 
 def _conventions_path(repo_root: Path) -> Path:
@@ -87,7 +81,6 @@ def _schema_findings(payload: list[Any], path: Path) -> list[Finding]:
     validator = _build_validator(schema)
     findings: list[Finding] = []
     for err in sorted(validator.iter_errors(payload), key=lambda e: list(e.path)):
-        # Build a human-readable location pointer + name the offending field.
         if err.path:
             location_parts = [str(part) for part in err.path]
             location = ".".join(location_parts)
@@ -148,31 +141,12 @@ def _filename_scope_findings(
     return findings
 
 
-def _build_rules(payload: list[dict[str, Any]]) -> list[Convention]:
-    """Map a schema-validated payload onto the typed ``Convention`` tuple list.
-
-    ``payload`` has already cleared JSON Schema, so each entry's keys carry the
-    documented types. ``cast`` narrows what mypy sees without re-validating.
-    """
-    rules: list[Convention] = []
-    for entry in payload:
-        scope_values = cast("Iterable[str]", entry["scope"])
-        rules.append(
-            Convention(
-                id=cast("str", entry["id"]),
-                source_file=cast("str", entry["source_file"]),
-                source_line=cast("int", entry["source_line"]),
-                pattern_kind=cast("PatternKind", entry["pattern_kind"]),
-                pattern=cast("str", entry["pattern"]),
-                scope=tuple(cast("Scope", s) for s in scope_values),
-                severity=cast("Severity", entry["severity"]),
-            ),
-        )
-    return rules
-
-
 def load_conventions(repo_root: Path) -> list[Convention]:
     """Parse ``.forge/conventions.json`` and return the typed rule list.
+
+    Strict path: runs schema + duplicate-id + regex-compile + ReDoS-shape +
+    scope shape checks. Use :func:`tools.conventions_runtime.load_conventions_permissive`
+    when the stdlib-only path is required (e.g. dispatch hook).
 
     Args:
         repo_root: Repository root containing the ``.forge`` directory.
@@ -183,8 +157,8 @@ def load_conventions(repo_root: Path) -> list[Convention]:
 
     Raises:
         ValueError: When the file is present but fails JSON parse, schema,
-            or duplicate-id checks. Callers that need a finding-shaped
-            response use :func:`validate_conventions` instead.
+            duplicate-id, regex-compile, or ReDoS-shape checks. Callers
+            that need a finding-shaped response use :func:`validate_conventions`.
     """
     path = _conventions_path(repo_root)
     if not path.is_file():
@@ -195,49 +169,30 @@ def load_conventions(repo_root: Path) -> list[Convention]:
     schema_errors = _schema_findings(parsed, path)
     if schema_errors:
         raise ValueError("; ".join(f.message for f in schema_errors))
-    dup_errors = _duplicate_id_findings(parsed, path)
-    if dup_errors:
-        raise ValueError("; ".join(f.message for f in dup_errors))
-    return _build_rules(parsed)
-
-
-def _compile_or_none(pattern: str) -> re.Pattern[str] | None:
-    try:
-        return re.compile(pattern)
-    except re.error:
-        return None
-
-
-def match_convention(rule: Convention, *, text: str, scope: Scope) -> bool:
-    """Return ``True`` iff ``rule`` fires against ``text`` for ``scope``.
-
-    A rule fires when (a) the requested ``scope`` is listed in ``rule.scope``
-    AND (b) the pattern engine for ``rule.pattern_kind`` reports a violation:
-
-    * ``forbidden_text`` — regex matches anywhere → True.
-    * ``required_text``  — regex does NOT match anywhere → True.
-    * ``filename_glob_forbidden`` — ``text`` (treated as a filename) matches
-      the glob → True. Uses ``**``-aware matching for cross-segment globs;
-      falls back to :func:`fnmatch.fnmatch` for plain patterns.
-
-    Returns ``False`` when the scope filter rejects the rule, when the regex
-    fails to compile (validate_conventions surfaces the compile error
-    separately), or when the violation condition above does not hold.
-    """
-    if scope not in rule.scope:
-        return False
-    if rule.pattern_kind == "filename_glob_forbidden":
-        if "**" in rule.pattern:
-            return _globstar_match(text, rule.pattern)
-        return fnmatch.fnmatch(text, rule.pattern)
-    compiled = _compile_or_none(rule.pattern)
-    if compiled is None:
-        return False
-    found = compiled.search(text) is not None
-    if rule.pattern_kind == "forbidden_text":
-        return found
-    # required_text: violation iff NOT found.
-    return not found
+    rules = load_conventions_permissive(repo_root)
+    # Regex compile + ReDoS-shape pre-check so callers (e.g. amend lifecycle)
+    # never have to repeat the work. The permissive loader skips this so the
+    # dispatch hook can still match rules with valid patterns when the file
+    # also carries a broken one — but the strict path treats any compile
+    # failure as a fatal load error.
+    for rule in rules:
+        if rule.pattern_kind == "filename_glob_forbidden":
+            continue
+        try:
+            re.compile(rule.pattern)
+        except re.error as exc:
+            raise ValueError(
+                f"{rule.id}: failed to compile pattern {rule.pattern!r}: {exc}",
+            ) from exc
+        if has_redos_shape(rule.pattern):
+            raise ValueError(
+                f"{rule.id}: pattern carries an obvious catastrophic-backtracking shape; "
+                "rewrite without nested unbounded quantifiers",
+            )
+    scope_errors = _filename_scope_findings(rules, path)
+    if scope_errors:
+        raise ValueError("; ".join(f.message for f in scope_errors))
+    return rules
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -297,8 +252,9 @@ def _check_text_scope(
         return []
     if rule.pattern_kind == "filename_glob_forbidden":
         return _check_filename_scope(rule, diff=text, path=path)
-    compiled = _compile_or_none(rule.pattern)
-    if compiled is None:
+    try:
+        compiled = re.compile(rule.pattern)
+    except re.error:
         return [
             Finding(
                 "BLOCK",
@@ -329,7 +285,7 @@ def _check_filename_scope(
             continue
         seen_paths.add(new_path)
         if "**" in rule.pattern:
-            hit = _globstar_match(new_path, rule.pattern)
+            hit = globstar_match(new_path, rule.pattern)
         else:
             hit = fnmatch.fnmatch(new_path, rule.pattern)
         if hit:
@@ -345,17 +301,42 @@ def _check_filename_scope(
 
 
 def _check_pattern_compile(rule: Convention, path: Path) -> Finding | None:
-    """Surface a regex compile error so the caller does not silently drop the rule."""
+    """Surface a regex compile / ReDoS-shape error so the rule is not silently dropped."""
     if rule.pattern_kind == "filename_glob_forbidden":
         return None
-    if _compile_or_none(rule.pattern) is not None:
-        return None
-    return Finding(
-        "BLOCK",
-        _TARGET,
-        path,
-        f"{rule.id}: failed to compile pattern {rule.pattern!r}",
-    )
+    try:
+        re.compile(rule.pattern)
+    except re.error:
+        return Finding(
+            "BLOCK",
+            _TARGET,
+            path,
+            f"{rule.id}: failed to compile pattern {rule.pattern!r}",
+        )
+    if has_redos_shape(rule.pattern):
+        return Finding(
+            "BLOCK",
+            _TARGET,
+            path,
+            f"{rule.id}: pattern carries an obvious catastrophic-backtracking shape",
+        )
+    return None
+
+
+def _build_rules_from_payload(payload: list[Any]) -> list[Convention]:
+    """Pump the schema-validated payload through the runtime builder.
+
+    Keeps the strict path on the same dataclass surface the permissive
+    runtime emits — no duplicate validation, no re-implementation of the
+    typed conversion. The schema phase has already rejected non-dict
+    entries by the time this runs.
+    """
+    rules: list[Convention] = []
+    for idx, entry in enumerate(payload):
+        if not isinstance(entry, dict):
+            continue
+        rules.append(_build_one(idx, entry))
+    return rules
 
 
 def validate_conventions(
@@ -367,11 +348,11 @@ def validate_conventions(
     """Validate ``.forge/conventions.json`` and run pattern rules against inputs.
 
     Shape validation always runs: schema, duplicate id, regex compile,
-    mis-scoped ``filename_glob_forbidden``. Pattern-firing checks are gated
-    on the corresponding input being non-None — passing ``commit_body=None``
-    (the CLI default) skips ``commit_body``-scope rules entirely; the same
-    rule applies to ``diff``. ``dispatch_brief``-scope rules are never run
-    here (the dispatch hook reuses the helpers above).
+    ReDoS-shape, mis-scoped ``filename_glob_forbidden``. Pattern-firing checks
+    are gated on the corresponding input being non-None — passing
+    ``commit_body=None`` (the CLI default) skips ``commit_body``-scope rules
+    entirely; the same rule applies to ``diff``. ``dispatch_brief``-scope
+    rules are never pattern-fired here; shape validation still runs.
 
     Args:
         repo_root: Repository root containing the ``.forge`` directory.
@@ -399,7 +380,7 @@ def validate_conventions(
     if dup_errors:
         return dup_errors
 
-    rules = sorted(_build_rules(parsed), key=lambda r: r.id)
+    rules = sorted(_build_rules_from_payload(parsed), key=lambda r: r.id)
 
     findings: list[Finding] = []
     findings.extend(_filename_scope_findings(rules, path))

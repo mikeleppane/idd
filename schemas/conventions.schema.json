@@ -21,7 +21,9 @@
       },
       "source_file": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Repo-relative path of the authoring document. No leading slash; no parent-directory segments — the field is display-only today but is constrained here so a future consumer that reads the file cannot be tricked into traversing outside the repo.",
+        "pattern": "^(?!/)(?!.*\\.\\.(?:/|$))[^\\x00]+$"
       },
       "source_line": {
         "type": "integer",
@@ -48,6 +50,25 @@
         "type": "string",
         "enum": ["BLOCK", "HIGH", "MEDIUM", "LOW", "WARN"]
       }
-    }
+    },
+    "allOf": [
+      {
+        "$comment": "filename_glob_forbidden makes sense only against the diff scope. Encode the runtime constraint here so a schema-valid file cannot trip a runtime BLOCK.",
+        "if": {
+          "properties": {"pattern_kind": {"const": "filename_glob_forbidden"}},
+          "required": ["pattern_kind"]
+        },
+        "then": {
+          "properties": {
+            "scope": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {"const": "diff"}
+            }
+          }
+        }
+      }
+    ]
   }
 }

@@ -79,9 +79,13 @@ class _ScriptedRunner:
 
 
 def _script_commit(sha: str, message: str) -> dict[tuple[str, ...], Any]:
+    # ``git show`` accepts the ``--`` end-of-options separator and the
+    # production code threads it through. ``git rev-parse --verify`` rejects
+    # ``--`` (it makes the arg a pathspec), so that invocation stays clean
+    # and relies on the SHA-regex check in ``_load_commits``.
     return {
         ("git", "rev-parse", "--verify", f"{sha}^{{commit}}"): (0, sha + "\n", ""),
-        ("git", "show", "-s", "--format=%B", sha): (0, message, ""),
+        ("git", "show", "-s", "--format=%B", "--", sha): (0, message, ""),
     }
 
 
@@ -194,14 +198,22 @@ def test_empty_commits_list_returns_no_findings(tmp_path: Path) -> None:
     assert findings == []
 
 
-def test_commits_field_not_a_list_returns_no_findings(tmp_path: Path) -> None:
+def test_commits_field_not_a_list_emits_block(tmp_path: Path) -> None:
+    """A non-list ``commits`` value is a state.json shape error and now BLOCKs.
+
+    Previous behavior silently passed (treated as empty list), which masked
+    the same class of corruption the JSON-root check guards against.
+    """
     folder = _feature_layout(tmp_path)
     (folder / "state.json").write_text(
         json.dumps({"feature_id": folder.name, "commits": "oops"}),
         encoding="utf-8",
     )
     findings = validate_git_conventions(folder, runner=_ScriptedRunner({}))
-    assert findings == []
+    assert any(
+        f.severity == "BLOCK" and "state.commits must be a JSON array" in f.message
+        for f in findings
+    ), findings
 
 
 # --- Happy path --------------------------------------------------------------
@@ -289,8 +301,32 @@ def test_subject_without_type_emits_high(tmp_path: Path) -> None:
     )
 
 
-def test_subject_with_no_scope_allowed_when_scope_filter_empty(tmp_path: Path) -> None:
+def test_subject_with_no_scope_emits_high_under_default_require_scope(tmp_path: Path) -> None:
+    """``require_scope`` defaults to True: a Conventional Commits subject with no scope is HIGH.
+
+    Previous behavior allowed scope-less subjects when the allowed_scopes
+    list was empty; FORGE conventions reserve scope as mandatory (commits
+    on this repo follow ``feat(tools): ...``), so the safer default-deny
+    posture replaces the old permissive rule. Set
+    ``git_conventions.subject.require_scope: false`` to opt back into the
+    upstream-CC relaxed behavior — covered by the next test.
+    """
     folder = _feature_layout(tmp_path)
+    sha = "a" * 40
+    _write_state(folder, [{"sha": sha, "phase": "spec", "subject": "feat: add thing"}])
+    scripts = _script_commit(sha, "feat: add thing\n")
+    findings = validate_git_conventions(folder, runner=_ScriptedRunner(scripts))
+    assert any(f.severity == "HIGH" and "missing required scope" in f.message for f in findings), (
+        findings
+    )
+
+
+def test_subject_with_no_scope_allowed_when_require_scope_false(tmp_path: Path) -> None:
+    folder = _feature_layout(tmp_path)
+    _write_config(
+        tmp_path,
+        {"git_conventions": {"subject": {"require_scope": False}}},
+    )
     sha = "a" * 40
     _write_state(folder, [{"sha": sha, "phase": "spec", "subject": "feat: add thing"}])
     scripts = _script_commit(sha, "feat: add thing\n")
@@ -329,8 +365,14 @@ def test_subject_scope_in_allowed_passes(tmp_path: Path) -> None:
     assert findings == []
 
 
-def test_subject_missing_scope_allowed_even_with_scope_filter(tmp_path: Path) -> None:
-    """Missing scope is allowed when allowed_scopes is set — some types omit it."""
+def test_subject_missing_scope_emits_high_even_with_scope_filter(tmp_path: Path) -> None:
+    """allowed_scopes does NOT relax the require_scope default.
+
+    The two knobs are orthogonal: ``require_scope`` decides whether a
+    scope must be present; ``allowed_scopes`` decides which scopes are
+    legal once one is supplied. Default-deny on both keeps the misuse
+    surface narrow.
+    """
     folder = _feature_layout(tmp_path)
     _write_config(
         tmp_path,
@@ -341,7 +383,9 @@ def test_subject_missing_scope_allowed_even_with_scope_filter(tmp_path: Path) ->
     _write_state(folder, [{"sha": sha, "phase": "spec", "subject": subject}])
     scripts = _script_commit(sha, subject + "\n")
     findings = validate_git_conventions(folder, runner=_ScriptedRunner(scripts))
-    assert findings == []
+    assert any(f.severity == "HIGH" and "missing required scope" in f.message for f in findings), (
+        findings
+    )
 
 
 def test_subject_wip_prefix_rejected(tmp_path: Path) -> None:
@@ -511,7 +555,7 @@ def test_show_failure_after_rev_parse_passes_emits_warn(tmp_path: Path) -> None:
     _write_state(folder, [{"sha": sha, "phase": "spec", "subject": "feat(tools): add"}])
     scripts: dict[tuple[str, ...], Any] = {
         ("git", "rev-parse", "--verify", f"{sha}^{{commit}}"): (0, sha + "\n", ""),
-        ("git", "show", "-s", "--format=%B", sha): (128, "", "fatal: bad object\n"),
+        ("git", "show", "-s", "--format=%B", "--", sha): (128, "", "fatal: bad object\n"),
     }
     findings = validate_git_conventions(folder, runner=_ScriptedRunner(scripts))
     assert len(findings) == 1
@@ -665,6 +709,60 @@ def test_default_runner_is_used_when_none_passed(tmp_path: Path) -> None:
     _write_state(folder, [])
     findings = validate_git_conventions(folder)
     assert findings == []
+
+
+def test_default_runner_executes_against_real_git_repo(tmp_path: Path) -> None:
+    """Regression for the kwargs-mismatch BLOCK: production path with commits.
+
+    Builds a tiny ``git init``ed tree under ``tmp_path``, records a real
+    commit, points ``state.commits[]`` at that real SHA, and runs
+    ``validate_git_conventions`` with the production runner (``runner=None``).
+    Previous bug: ``_fetch_message`` passed ``capture_output/text/check`` as
+    kwargs that ``_default_runner`` rejected, raising ``TypeError`` for any
+    feature with one or more commits. This test exercises that exact path.
+    """
+
+    def _run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            args,
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+            env={
+                "GIT_AUTHOR_NAME": "Test",
+                "GIT_AUTHOR_EMAIL": "test@example.com",
+                "GIT_COMMITTER_NAME": "Test",
+                "GIT_COMMITTER_EMAIL": "test@example.com",
+                "HOME": str(tmp_path),
+                "PATH": "/usr/bin:/bin",
+            },
+        )
+
+    try:
+        _run(["git", "init", "-q", "-b", "main"], cwd=tmp_path)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pytest.skip("git binary unavailable in test environment")
+
+    folder = _feature_layout(tmp_path)
+    (tmp_path / "README.md").write_text("seed\n", encoding="utf-8")
+    _run(["git", "add", "README.md"], cwd=tmp_path)
+    _run(["git", "commit", "-q", "-m", "feat(tools): seed"], cwd=tmp_path)
+    sha = _run(["git", "rev-parse", "HEAD"], cwd=tmp_path).stdout.strip()
+
+    _write_state(
+        folder,
+        [{"sha": sha, "phase": "spec", "subject": "feat(tools): seed"}],
+    )
+    # The point of this regression is that ``_default_runner`` no longer
+    # raises ``TypeError`` on the production code path. Subject / scope
+    # findings depend on local git config (signing, trailers, template),
+    # which we cannot fully scrub from a host-test environment; the
+    # assertion below only verifies that no ``unknown-sha`` WARN fires
+    # (i.e. the rev-parse + show subprocesses actually executed and
+    # returned the message body successfully).
+    findings = validate_git_conventions(folder)
+    assert not any("unknown-sha" in f.message for f in findings), findings
 
 
 # --- Result type --------------------------------------------------------------

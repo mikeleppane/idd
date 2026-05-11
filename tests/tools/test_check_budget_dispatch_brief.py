@@ -127,26 +127,33 @@ def test_check_dispatch_brief_conventions_allows_when_no_rules_target_dispatch_b
 # ---------------------------------------------------------------------------
 
 
-def test_check_dispatch_brief_conventions_allows_when_conventions_json_malformed(
+def test_check_dispatch_brief_conventions_denies_when_conventions_json_malformed(
     tmp_path: Path,
 ) -> None:
+    """Fail-closed on broken conventions.json.
+
+    Previous behavior allowed silently — a developer could disable the
+    dispatch_brief gate by introducing a JSON parse error. The hook now
+    denies with an explanatory reason pointing at the validator CLI.
+    """
     _write_conventions(tmp_path, "{not valid json")
     allow, reason = check_budget._check_dispatch_brief_conventions(
         "Co-Authored-By: Claude", repo_root=tmp_path
     )
-    assert allow
-    assert reason == "ok"
+    assert not allow
+    assert "conventions.json present but invalid" in reason
 
 
-def test_check_dispatch_brief_conventions_allows_when_schema_invalid_rule(tmp_path: Path) -> None:
+def test_check_dispatch_brief_conventions_denies_when_schema_invalid_rule(tmp_path: Path) -> None:
+    """Fail-closed on structurally invalid rule shape (e.g. unknown severity)."""
     rule = _build_rule()
     rule["severity"] = "MEGA-BLOCK"  # not in enum
     _write_conventions(tmp_path, [rule])
     allow, reason = check_budget._check_dispatch_brief_conventions(
         "no required text here", repo_root=tmp_path
     )
-    assert allow
-    assert reason == "ok"
+    assert not allow
+    assert "conventions.json present but invalid" in reason
 
 
 # ---------------------------------------------------------------------------

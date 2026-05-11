@@ -217,6 +217,12 @@ def _validate_feature(
         if spec.is_file():
             findings.extend(validate_plan_tasks(plan, spec_path=spec))
         findings.extend(validate_verified_deps(plan, check_registries=check_registries))
+    # WS2: a feature folder with a state.json is the right scope for the
+    # git-conventions structural check. The validator self-gates on the
+    # feature-folder path shape and silently passes for features with no
+    # ``commits[]``, so the wiring is safe to run unconditionally.
+    if (feature / "state.json").is_file():
+        findings.extend(validate_git_conventions(feature))
     return findings
 
 
@@ -232,6 +238,13 @@ def _dispatch_all(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
     findings.extend(validate_health(repo_root))
     findings.extend(validate_capability_uniqueness(repo_root))
     findings.extend(validate_config(repo_root / ".forge" / "config.json"))
+    # WS2 shape pass: catch schema / duplicate-id / regex compile / ReDoS-shape /
+    # mis-scoped filename_glob_forbidden in ``.forge/conventions.json`` before
+    # any feature-level work runs. Pattern-firing checks (commit_body / diff)
+    # remain SKILL-driven — the review workflow gathers commit bodies and diffs
+    # per feature and calls ``validate_conventions(repo_root, commit_body=...,
+    # diff=...)`` directly.
+    findings.extend(validate_conventions(repo_root))
 
     constitution = repo_root / ".forge" / "CONSTITUTION.md"
     if constitution.is_file():

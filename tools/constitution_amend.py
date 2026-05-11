@@ -23,6 +23,7 @@ from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from tools import redaction
+from tools._glob import globstar_match
 from tools.constitution import (
     MAX_INJECTED_WORDS,
     Article,
@@ -88,17 +89,44 @@ class SignalFile:
 
 @dataclass(frozen=True, kw_only=True)
 class BootstrapSignals:
-    """Pure-data result of :func:`collect_bootstrap_signals`."""
+    """Pure-data result of :func:`collect_bootstrap_signals`.
+
+    ``dropped`` carries every path that was rejected before reaching the
+    ``files`` list, regardless of cause — both deny-glob matches (sensitive
+    name shape like ``.env``, ``id_rsa``) and secret-content rejections
+    (the body contained a credential-shaped substring). Callers that need
+    to distinguish the two causes can re-scan paths via the documented
+    deny-glob set, but the public surface treats them uniformly: a dropped
+    path is one that did NOT make it into the bootstrap payload.
+
+    Attributes:
+        files: Files that survived all filters, in priority order.
+        dropped: Paths skipped or removed by either the deny-glob filter
+            or the secret-content scan.
+        truncated: Paths whose body was capped at the per-file byte limit.
+        total_bytes: Total UTF-8 byte count across :attr:`files`.
+    """
 
     files: list[SignalFile]
-    dropped_for_secrets: list[PurePosixPath]
+    dropped: list[PurePosixPath]
     truncated: list[PurePosixPath]
     total_bytes: int
+
+    @property
+    def dropped_for_secrets(self) -> list[PurePosixPath]:
+        """Back-compat alias for :attr:`dropped`.
+
+        Kept so existing tests / skill orchestrators continue to read the
+        old field name. Prefer :attr:`dropped` in new code — the rename
+        reflects that this list also includes deny-glob rejections, not
+        only secret-content rejections.
+        """
+        return self.dropped
 
 
 def _name_matches_deny_glob(name: str) -> bool:
     """True iff ``name`` matches any path-level deny glob."""
-    return any(redaction._globstar_match(name, g) for g in _DENY_GLOBS)
+    return any(globstar_match(name, g) for g in _DENY_GLOBS)
 
 
 def _candidate_paths(repo_root: Path, *, names: tuple[str, ...]) -> list[Path]:
@@ -217,7 +245,7 @@ def _collect_signals(repo_root: Path, *, names: tuple[str, ...]) -> BootstrapSig
 
     return BootstrapSignals(
         files=files,
-        dropped_for_secrets=dropped,
+        dropped=dropped,
         truncated=truncated_paths,
         total_bytes=total_bytes,
     )
@@ -898,23 +926,6 @@ def _read_existing_conventions(
     return existing_rules, previous_body, True
 
 
-def _check_merged_patterns(rules: list[Convention]) -> list[str]:
-    """Return compile/scope errors for ``rules`` (empty list ⇒ all good)."""
-    errors: list[str] = []
-    for rule in rules:
-        if rule.pattern_kind in ("forbidden_text", "required_text"):
-            try:
-                re.compile(rule.pattern)
-            except re.error as exc:
-                errors.append(f"{rule.id}: failed to compile pattern: {exc}")
-        if rule.pattern_kind == "filename_glob_forbidden" and tuple(rule.scope) != ("diff",):
-            errors.append(
-                f"{rule.id}: filename_glob_forbidden requires scope ['diff'], "
-                f"got {list(rule.scope)}",
-            )
-    return errors
-
-
 def _format_conventions_adr(*, today: date, entries: list[Convention]) -> str:
     """Render the ADR row for an ``append_conventions_entries`` call."""
     ids_csv = ", ".join(entry.id for entry in entries)
@@ -990,11 +1001,19 @@ def append_conventions_entries(
 
     merged = [_serialize_convention(rule) for rule in existing_rules]
     merged.extend(_serialize_convention(entry) for entry in entries)
-    serialized = json.dumps(merged, indent=2, sort_keys=True) + "\n"
+    # Preserve the schema's declared field order documented in
+    # ``_serialize_convention`` — ``sort_keys=True`` would alphabetize and
+    # produce large spurious diffs on the first append against any
+    # pre-existing conventions.json. Python dict insertion order is stable
+    # since 3.7, so the in-memory ordering is the on-disk ordering.
+    serialized = json.dumps(merged, indent=2) + "\n"
 
-    # Write merged body, then re-validate via load_conventions to catch
-    # corner cases (bad regex, mis-scoped filename_glob_forbidden) BEFORE
-    # we touch decisions.md.
+    # Write merged body, then re-validate via the strict ``load_conventions``
+    # to catch corner cases (bad regex, mis-scoped filename_glob_forbidden,
+    # ReDoS-shape patterns) BEFORE we touch decisions.md. The strict path
+    # now bundles regex compile + ReDoS-shape + scope-shape checks, so the
+    # earlier ad-hoc ``_check_merged_patterns`` pass became redundant and
+    # was removed.
     conventions_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         atomic_replace(conventions_path, serialized)
@@ -1002,17 +1021,10 @@ def append_conventions_entries(
         raise AmendError(f"atomic write of conventions.json failed: {exc}") from exc
 
     try:
-        merged_rules = load_conventions(repo_root)
+        load_conventions(repo_root)
     except ValueError as exc:
         _restore_conventions(conventions_path, previous_body, file_existed)
         raise AmendError(f"merged conventions.json failed validation: {exc}") from exc
-
-    pattern_errors = _check_merged_patterns(merged_rules)
-    if pattern_errors:
-        _restore_conventions(conventions_path, previous_body, file_existed)
-        raise AmendError(
-            "merged conventions.json failed validation: " + "; ".join(pattern_errors),
-        )
 
     decisions_created = ensure_decisions_file(decisions_path)
     adr = _format_conventions_adr(today=today, entries=entries)
@@ -1028,6 +1040,87 @@ def append_conventions_entries(
         ) from exc
 
     return conventions_path
+
+
+@dataclass(frozen=True, kw_only=True)
+class AdvisoryEntry:
+    """One advisory-only convention row logged to ``decisions.md``.
+
+    Mirrors the surface of :class:`tools.conventions_runtime.Convention`'s
+    ``source_file`` / ``source_line`` fields so the resync skill can hand
+    the same tuple it already authors for ``hook`` / ``validator`` rules.
+    """
+
+    rule_text: str
+    source_file: str
+    source_line: int
+
+
+def _format_advisory_adr(*, today: date, entries: list[AdvisoryEntry]) -> str:
+    """Render the ADR row for an :func:`log_advisory_entries` call."""
+    bullets = "\n".join(
+        f"  - {entry.rule_text} (from {entry.source_file}:{entry.source_line})" for entry in entries
+    )
+    return (
+        f"\n## {today.isoformat()} — Conventions resync: advisory items\n"
+        f"**Context:** The following AGENTS.md / CLAUDE.md / README.md prose rules\n"
+        f"stay honor-system (advisory only):\n{bullets}\n"
+        f"**Change:** No mechanical enforcement added.\n"
+        f"**Alternatives considered:** Promote to reviewer-tag, validator, or hook.\n"
+    )
+
+
+def log_advisory_entries(
+    *,
+    repo_root: Path,
+    entries: list[AdvisoryEntry],
+    decisions_path: Path | None = None,
+    today: date | None = None,
+) -> Path:
+    """Append a single ADR row recording prose rules left as advisory-only.
+
+    The resync skill (:doc:`forge-resync-agents`) routes accepted entries
+    by mechanism: ``hook`` and ``validator`` entries flow through
+    :func:`append_conventions_entries`; ``reviewer-tag`` entries are
+    surfaced as TODOs pointing at ``/forge:amend-constitution``;
+    ``advisory`` entries used to be inlined directly into a raw
+    ``decisions.md`` write inside the skill prose. This helper makes the
+    advisory write a typed, atomic operation symmetric with the other
+    mechanism paths — same ADR shape, same date stamp, same auto-bootstrap
+    of ``decisions.md`` when it does not yet exist.
+
+    Args:
+        repo_root: Repository root containing the ``.forge`` directory.
+            Used only to derive the default ``decisions_path`` when one is
+            not supplied.
+        entries: Non-empty list of :class:`AdvisoryEntry` rows. Each row
+            renders as one bullet in the appended ADR.
+        decisions_path: Target ``decisions.md`` for the ADR row; defaults
+            to ``<repo_root>/decisions.md``.
+        today: Optional override for ``date.today()`` (test seam).
+
+    Returns:
+        Absolute path to ``decisions.md``.
+
+    Raises:
+        AmendError: When ``entries`` is empty or when the file append
+            cannot complete. Auto-creation of ``decisions.md`` failures
+            are unwrapped to ``AmendError`` for consistency.
+    """
+    if not entries:
+        raise AmendError("log_advisory_entries requires at least one entry")
+    today = today or date.today()
+    decisions_path = decisions_path or repo_root / "decisions.md"
+    decisions_created = ensure_decisions_file(decisions_path)
+    adr = _format_advisory_adr(today=today, entries=entries)
+    try:
+        with decisions_path.open("a", encoding="utf-8") as fh:
+            fh.write(adr)
+    except OSError as exc:
+        if decisions_created:
+            decisions_path.unlink(missing_ok=True)
+        raise AmendError(f"decisions.md append failed: {exc}") from exc
+    return decisions_path
 
 
 def _restore_conventions(

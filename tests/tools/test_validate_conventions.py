@@ -174,6 +174,7 @@ def test_bad_regex_in_required_text_blocks(tmp_path: Path) -> None:
 
 
 def test_filename_glob_forbidden_with_commit_body_scope_blocks(tmp_path: Path) -> None:
+    """Schema if/then enforces filename_glob_forbidden ⇒ scope=['diff']."""
     entry = _well_formed(
         id="bad-glob-scope",
         pattern_kind="filename_glob_forbidden",
@@ -182,10 +183,13 @@ def test_filename_glob_forbidden_with_commit_body_scope_blocks(tmp_path: Path) -
     )
     _write_conventions(tmp_path, [entry])
     findings = validate_conventions(tmp_path)
-    assert any(f.severity == "BLOCK" and "bad-glob-scope" in f.message for f in findings), findings
+    # Schema rejection surfaces against the ``scope`` field; the rule id is
+    # not echoed because the schema error is attributed to the JSON path.
+    assert any(f.severity == "BLOCK" and "scope" in f.message.lower() for f in findings), findings
 
 
 def test_filename_glob_forbidden_with_diff_and_dispatch_brief_blocks(tmp_path: Path) -> None:
+    """Schema if/then forbids extra scope entries beyond ``['diff']``."""
     entry = _well_formed(
         id="bad-glob-mix",
         pattern_kind="filename_glob_forbidden",
@@ -194,7 +198,7 @@ def test_filename_glob_forbidden_with_diff_and_dispatch_brief_blocks(tmp_path: P
     )
     _write_conventions(tmp_path, [entry])
     findings = validate_conventions(tmp_path)
-    assert any(f.severity == "BLOCK" and "bad-glob-mix" in f.message for f in findings), findings
+    assert any(f.severity == "BLOCK" and "scope" in f.message.lower() for f in findings), findings
 
 
 def test_filename_glob_forbidden_with_diff_only_loads_clean(tmp_path: Path) -> None:

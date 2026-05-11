@@ -543,9 +543,9 @@ class GitConventionGatePartition:
         gate: Severity in ``{BLOCK, HIGH}``; blocks ship until resolved or
             acknowledged via decisions.md.
         warn: Severity ``MEDIUM``; surface but allow ship.
-        info: Severity in ``{LOW, WARN}`` plus any out-of-vocabulary value
-            (defensive — should not occur for typed callers, but protects
-            against deserialized JSON inputs).
+        info: Severity in ``{LOW, WARN, INFO}`` plus any out-of-vocabulary
+            value (defensive — should not occur for typed callers, but
+            protects against deserialized JSON inputs).
     """
 
     gate: tuple[Finding, ...]
@@ -625,9 +625,9 @@ def render_git_conventions_gate_prompt(partition: GitConventionGatePartition) ->
     """Render the gate bucket as a human-readable prompt for forge-ship.
 
     Empty gate bucket returns the empty string (the caller does not show the
-    prompt). Otherwise one line per finding, the original validator message
-    quoted verbatim with a ``[<severity>]`` suffix, plus a single footer
-    describing the recovery actions.
+    prompt). Otherwise one line per finding of the form
+    ``- <message>  [<severity>]`` (no quoting around the message), plus a
+    single footer describing the recovery actions.
 
     Args:
         partition: A partition produced by :func:`partition_git_conventions`
