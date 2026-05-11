@@ -178,3 +178,41 @@ def test_resolve_mode_never_raises_on_minimal_inputs() -> None:
         byod_dir=None,
     )
     assert mode == "degraded"
+
+
+def test_websearch_fallback_under_research_subblock_root_config_shape() -> None:
+    """The documented ``.forge/config.json`` shape nests under ``research``.
+
+    Skill prose passes the whole config dict; resolver must extract
+    ``config["research"]["websearch_fallback"]`` rather than reading a
+    flat top-level key (which would never fire in practice).
+    """
+    mode = resolve_mode(
+        probe=_probe("no_context7_yes_websearch"),
+        config={"research": {"websearch_fallback": True}},
+        libraries_extracted=("httpx",),
+        byod_dir=None,
+    )
+    assert mode == "websearch"
+
+
+def test_websearch_fallback_research_subblock_false_degrades() -> None:
+    """Nested false explicitly degrades — does not leak into truthy fallback."""
+    mode = resolve_mode(
+        probe=_probe("no_context7_yes_websearch"),
+        config={"research": {"websearch_fallback": False}},
+        libraries_extracted=("httpx",),
+        byod_dir=None,
+    )
+    assert mode == "degraded"
+
+
+def test_websearch_fallback_research_subblock_missing_degrades() -> None:
+    """Empty research sub-block also degrades — no implicit enablement."""
+    mode = resolve_mode(
+        probe=_probe("no_context7_yes_websearch"),
+        config={"research": {}},
+        libraries_extracted=("httpx",),
+        byod_dir=None,
+    )
+    assert mode == "degraded"

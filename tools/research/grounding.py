@@ -46,8 +46,13 @@ def resolve_mode(
        * ≥1 covered + ≥1 missing → ``"byod-partial"``
        * none covered → fall through to step 3.
 
-    3. ``config["websearch_fallback"]`` truthy AND
-       ``probe["websearch_present"]`` truthy → ``"websearch"``.
+    3. ``config["research"]["websearch_fallback"]`` truthy AND
+       ``probe["websearch_present"]`` truthy → ``"websearch"``. The
+       resolver accepts both the root ``.forge/config.json`` shape
+       (``{"research": {"websearch_fallback": true}}``, the documented
+       form) and the flat ``{"websearch_fallback": true}`` shape used by
+       callers that pre-extracted the research sub-block. Root shape is
+       checked first; flat is the legacy fallback.
 
     4. Otherwise → ``"degraded"``.
 
@@ -65,10 +70,24 @@ def resolve_mode(
         if covered > 0:
             return "byod-partial"
 
-    if config.get("websearch_fallback") and probe.get("websearch_present"):
+    if _websearch_enabled(config) and probe.get("websearch_present"):
         return "websearch"
 
     return "degraded"
+
+
+def _websearch_enabled(config: Mapping[str, object]) -> bool:
+    """Return True when the config opts into the WebSearch fallback.
+
+    Checks ``config["research"]["websearch_fallback"]`` first (documented
+    ``.forge/config.json`` shape) and falls back to the flat
+    ``config["websearch_fallback"]`` for callers that already extracted
+    the research sub-block.
+    """
+    research_block = config.get("research")
+    if isinstance(research_block, Mapping) and research_block.get("websearch_fallback"):
+        return True
+    return bool(config.get("websearch_fallback"))
 
 
 def _byod_coverage(byod_dir: Path, libraries: tuple[str, ...]) -> int:
