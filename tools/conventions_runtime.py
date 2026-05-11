@@ -16,7 +16,6 @@ stdlib-only consumer (e.g. a pre-commit hook).
 
 from __future__ import annotations
 
-import fnmatch
 import json
 import re
 import sys
@@ -40,11 +39,18 @@ _CONVENTIONS_FILENAME: Final[str] = "conventions.json"
 # should split the work into bounded chunks rather than raising the cap.
 TEXT_MATCH_CAP_BYTES: Final[int] = 256 * 1024  # 256 KiB
 
-# Rough heuristic catching obvious catastrophic-backtracking shapes at load
-# time: nested unbounded quantifier groups like ``(a+)+``, ``(a*)*``,
-# ``(a|a)*`` etc. Linear time, narrow false-positive surface; rules that need
-# this pattern shape can re-express the intent or use bounded quantifiers.
-_REDOS_HEURISTIC = re.compile(
+# Rough heuristic catching nested-unbounded-quantifier shapes at load time:
+# groups like ``(a+)+``, ``(a*)*``, ``(?:a+)+``. Linear time, narrow false-
+# positive surface; rules that need this shape can re-express the intent or
+# switch to bounded quantifiers.
+#
+# This regex is intentionally narrow. It does NOT detect alternation-overlap
+# patterns like ``(a|a)*``, nor ``(.*)+``-style traps that overlap via
+# wildcards, nor backreference-driven pathologies. Authors writing patterns
+# that compile but match slowly on adversarial input should still profile
+# against the inputs they actually expect — the strict loader is a sanity
+# filter, not a complete ReDoS classifier.
+_NESTED_UNBOUNDED_QUANTIFIER_RE = re.compile(
     r"\([^()]*[+*][^()]*\)[+*]"
     r"|\(\?:[^()]*[+*][^()]*\)[+*]"
 )
@@ -224,12 +230,20 @@ def _bound_text(text: str) -> str:
     return encoded[:TEXT_MATCH_CAP_BYTES].decode("utf-8", errors="replace")
 
 
-def has_redos_shape(pattern: str) -> bool:
-    """Return True when ``pattern`` carries an obvious nested-quantifier shape.
+def has_nested_unbounded_quantifier(pattern: str) -> bool:
+    """Detect nested unbounded quantifier shapes that commonly cause ReDoS.
 
-    Used by the strict loader to reject obvious foot-guns at load time.
+    Catches: ``(a+)+``, ``(a*)*``, ``(?:a+)+``.
+
+    Does NOT catch: ``(a|a)*``, ``(.*)+``, alternation-overlap, or
+    backreference pathologies. The check is a rough sanity filter, not a
+    complete ReDoS classifier. Authors writing patterns that compile but
+    match slowly should still test against adversarial input.
+
+    Used by the strict loader to reject the most obvious foot-guns at load
+    time.
     """
-    return _REDOS_HEURISTIC.search(pattern) is not None
+    return _NESTED_UNBOUNDED_QUANTIFIER_RE.search(pattern) is not None
 
 
 def match_convention(rule: Convention, *, text: str, scope: Scope) -> bool:
@@ -248,9 +262,7 @@ def match_convention(rule: Convention, *, text: str, scope: Scope) -> bool:
         return False
     bounded = _bound_text(text)
     if rule.pattern_kind == "filename_glob_forbidden":
-        if "**" in rule.pattern:
-            return globstar_match(bounded, rule.pattern)
-        return fnmatch.fnmatch(bounded, rule.pattern)
+        return globstar_match(bounded, rule.pattern)
     compiled = _compile_or_none(rule.pattern)
     if compiled is None:
         return False

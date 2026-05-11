@@ -35,7 +35,8 @@
       },
       "pattern": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Match-engine input. For 'forbidden_text' / 'required_text' the value is a Python regex (re.search). For 'filename_glob_forbidden' the value is a globstar pattern: '**' crosses path separators, '*' matches within one segment, '?' matches one non-slash character. A pattern with no '/' is treated as unanchored — '*.env' fires on 'configs/.env' as well as on a root-level '.env'. Patterns containing at least one '/' are interpreted strictly so authors keep an escape hatch when they need path-anchored matching."
       },
       "scope": {
         "type": "array",

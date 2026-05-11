@@ -19,7 +19,6 @@ Architecture:
 
 from __future__ import annotations
 
-import fnmatch
 import json
 import re
 from pathlib import Path
@@ -31,7 +30,7 @@ from tools.conventions_runtime import (
     PatternKind,
     Scope,
     _build_one,
-    has_redos_shape,
+    has_nested_unbounded_quantifier,
     load_conventions_permissive,
     match_convention,
 )
@@ -56,8 +55,44 @@ _MATCH_EXCERPT_MAX: Final[int] = 80
 _NEW_PATH_LINE = re.compile(r"^\+\+\+ b/(.+)$", re.MULTILINE)
 
 
+# Single-process cache for parsed convention rules. Keyed on the resolved
+# ``conventions.json`` path + its mtime in nanoseconds so a real edit
+# invalidates the entry naturally. Within one CLI run, ``--target all``
+# fans out across many validators that each pull the rule list; this cache
+# pays the parse cost once even when the dispatcher runs serially.
+#
+# Multi-process invocations do NOT share this cache — fine for the CLI use
+# case where each invocation is a fresh process, and explicit in the helper
+# docstring below.
+_LOAD_CACHE: dict[tuple[Path, int], list[Convention]] = {}
+
+
 def _conventions_path(repo_root: Path) -> Path:
     return repo_root / ".forge" / _CONVENTIONS_FILENAME
+
+
+def _cached_load_conventions(repo_root: Path) -> list[Convention]:
+    """Return parsed conventions, cached by (resolved path, mtime ns).
+
+    Cache invalidates whenever ``.forge/conventions.json`` changes on disk.
+    Callers within a single process see the strict-load cost exactly once
+    per (file, mtime) pair, which matters when ``--target all`` chains
+    multiple validators that each consume convention rules.
+
+    Returns an empty list when the file is absent. Surfaces
+    :class:`ValueError` from :func:`load_conventions` unchanged when the
+    file is present but malformed.
+    """
+    conventions_path = _conventions_path(repo_root)
+    if not conventions_path.is_file():
+        return []
+    key = (conventions_path.resolve(), conventions_path.stat().st_mtime_ns)
+    cached = _LOAD_CACHE.get(key)
+    if cached is not None:
+        return cached
+    rules = load_conventions(repo_root)
+    _LOAD_CACHE[key] = rules
+    return rules
 
 
 def _parse_payload(path: Path) -> list[Any] | Finding:
@@ -230,7 +265,7 @@ def load_conventions(repo_root: Path) -> list[Convention]:
             raise ValueError(
                 f"{rule.id}: failed to compile pattern {rule.pattern!r}: {exc}",
             ) from exc
-        if has_redos_shape(rule.pattern):
+        if has_nested_unbounded_quantifier(rule.pattern):
             raise ValueError(
                 f"{rule.id}: pattern carries an obvious catastrophic-backtracking shape; "
                 "rewrite without nested unbounded quantifiers",
@@ -333,11 +368,7 @@ def _check_filename_scope(
         if new_path in seen_paths:
             continue
         seen_paths.add(new_path)
-        if "**" in rule.pattern:
-            hit = globstar_match(new_path, rule.pattern)
-        else:
-            hit = fnmatch.fnmatch(new_path, rule.pattern)
-        if hit:
+        if globstar_match(new_path, rule.pattern):
             findings.append(
                 Finding(
                     rule.severity,
@@ -362,7 +393,7 @@ def _check_pattern_compile(rule: Convention, path: Path) -> Finding | None:
             path,
             f"{rule.id}: failed to compile pattern {rule.pattern!r}",
         )
-    if has_redos_shape(rule.pattern):
+    if has_nested_unbounded_quantifier(rule.pattern):
         return Finding(
             "BLOCK",
             _TARGET,
@@ -417,17 +448,43 @@ def validate_conventions(
     path = _conventions_path(repo_root)
     if not path.is_file():
         return []
+
+    # Fast path: if a previous call already strict-loaded this exact file
+    # (same mtime), reuse the parsed Convention rules and skip the shape
+    # phase. Strict-load raises on shape errors, so a cache hit is proof
+    # the shape phase would re-pass. Misses re-run the full pipeline so the
+    # caller still sees the precise per-finding diagnostics on bad files.
+    key = (path.resolve(), path.stat().st_mtime_ns)
+    cached_rules = _LOAD_CACHE.get(key)
+    if cached_rules is None:
+        shape_findings, parsed_rules = _run_shape_phase(path)
+        if shape_findings or parsed_rules is None:
+            return shape_findings
+        _LOAD_CACHE[key] = parsed_rules
+        cached_rules = parsed_rules
+
+    return _run_pattern_phase(cached_rules, path, commit_body=commit_body, diff=diff)
+
+
+def _run_shape_phase(path: Path) -> tuple[list[Finding], list[Convention] | None]:
+    """Run schema + duplicate-id + scope + compile checks on the file at ``path``.
+
+    Returns ``(findings, None)`` when any shape-level issue is detected — the
+    caller surfaces those findings and does not attempt pattern-firing.
+    Returns ``([], rules)`` on a clean shape pass; the caller caches ``rules``
+    and proceeds to pattern matching.
+    """
     parsed = _parse_payload(path)
     if isinstance(parsed, Finding):
-        return [parsed]
+        return [parsed], None
 
     schema_errors = _schema_findings(parsed, path)
     if schema_errors:
-        return schema_errors
+        return schema_errors, None
 
     dup_errors = _duplicate_id_findings(parsed, path)
     if dup_errors:
-        return dup_errors
+        return dup_errors, None
 
     rules = sorted(_build_rules_from_payload(parsed), key=lambda r: r.id)
 
@@ -439,8 +496,23 @@ def validate_conventions(
         if compile_err is not None:
             findings.append(compile_err)
     if findings:
-        return findings
+        return findings, None
+    return [], rules
 
+
+def _run_pattern_phase(
+    rules: list[Convention],
+    path: Path,
+    *,
+    commit_body: str | None,
+    diff: str | None,
+) -> list[Finding]:
+    """Apply pattern-firing checks against ``commit_body`` / ``diff`` inputs.
+
+    Rules are assumed to have already cleared shape validation. ``None``
+    inputs skip the matching scope entirely; ``""`` is treated as a real
+    empty input that participates in matching.
+    """
     runtime: list[Finding] = []
     for rule in rules:
         if commit_body is not None:

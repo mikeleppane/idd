@@ -12,7 +12,11 @@
         "require_conventional_commits": {"type": "boolean"},
         "allowed_scopes": {
           "type": "array",
-          "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "description": "Allowed scope token. Must start with a lowercase letter and contain only lowercase letters, digits, and hyphens. Underscores are NOT allowed — use hyphens (e.g. 'phase-1' not 'phase_1') for consistency with the Conventional Commits canonical examples."
+          },
           "uniqueItems": true
         }
       }
