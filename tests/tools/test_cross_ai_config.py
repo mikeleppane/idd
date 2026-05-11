@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from tools import redaction
 from tools.cross_ai.config import (
     REDACTION_REGEX_MAX_LEN,
     CrossAiConfig,
@@ -21,6 +22,7 @@ from tools.cross_ai.config import (
     RedactionRules,
     RetryPolicy,
     load_config,
+    to_redaction_config,
 )
 
 
@@ -186,3 +188,69 @@ def test_malformed_config_json_rejected(tmp_path: Path) -> None:
     (forge_dir / "config.json").write_text("{not valid json", encoding="utf-8")
     with pytest.raises(CrossAiConfigError, match="malformed"):
         load_config(tmp_path)
+
+
+# --- to_redaction_config adapter ------------------------------------------
+
+
+def test_to_redaction_config_returns_redactor_dataclass() -> None:
+    """Adapter returns ``redaction.RedactionConfig`` (not ``RedactionRules``).
+
+    The skill prose calls ``to_redaction_config`` rather than
+    constructing the redactor's config by hand; the dataclass identity
+    matters because ``redaction.filter`` reads ``cfg.gitignore_patterns``
+    which the cross-AI config block does not surface.
+    """
+    rules = RedactionRules()
+    adapted = to_redaction_config(rules)
+    assert isinstance(adapted, redaction.RedactionConfig)
+
+
+def test_to_redaction_config_preserves_user_overrides() -> None:
+    """User-supplied regex / glob lists are forwarded verbatim."""
+    rules = RedactionRules(
+        deny_globs=("**/secrets/**",),
+        deny_regex=(r"sk-[A-Za-z0-9]{16,}",),
+        fatal_regex=(r"-----BEGIN PRIVATE KEY-----",),
+        allow_globs=("config/example.env",),
+    )
+    adapted = to_redaction_config(rules)
+    assert adapted.deny_regex == (r"sk-[A-Za-z0-9]{16,}",)
+    assert adapted.fatal_regex == (r"-----BEGIN PRIVATE KEY-----",)
+    assert adapted.allow_globs == ("config/example.env",)
+
+
+def test_to_redaction_config_unions_user_deny_globs_with_defaults() -> None:
+    """User deny_globs extend, never replace, the secret-shaped defaults.
+
+    An operator who genuinely needs to forward a default-denied path
+    must whitelist it via ``allow_globs``; the adapter must never let
+    an empty user deny_globs silently strip the safety net.
+    """
+    rules = RedactionRules(deny_globs=("**/secrets/**",))
+    adapted = to_redaction_config(rules)
+    for default_glob in redaction.DEFAULT_DENY_GLOBS:
+        assert default_glob in adapted.deny_globs
+    assert "**/secrets/**" in adapted.deny_globs
+
+
+def test_to_redaction_config_default_rules_keep_default_deny_globs() -> None:
+    """``RedactionRules()`` (empty) yields the redactor's default deny set."""
+    adapted = to_redaction_config(RedactionRules())
+    assert adapted.deny_globs == redaction.DEFAULT_DENY_GLOBS
+
+
+def test_to_redaction_config_dedupes_when_user_repeats_default_glob() -> None:
+    """Duplicate entries collapse — order from the defaults is preserved first."""
+    rules = RedactionRules(deny_globs=("**/.env", "**/custom/**"))
+    adapted = to_redaction_config(rules)
+    assert adapted.deny_globs.count("**/.env") == 1
+    # Custom entry lands after the defaults (union order).
+    assert adapted.deny_globs[-1] == "**/custom/**"
+
+
+def test_to_redaction_config_accepts_gitignore_overlay() -> None:
+    """Optional ``gitignore_patterns`` parameter forwards verbatim."""
+    rules = RedactionRules()
+    adapted = to_redaction_config(rules, gitignore_patterns=(".tmp/**",))
+    assert adapted.gitignore_patterns == (".tmp/**",)

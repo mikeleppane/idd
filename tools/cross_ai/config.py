@@ -28,6 +28,8 @@ from typing import Any
 
 import jsonschema
 
+from tools import redaction
+
 # Schema resolved from the package install location, not the caller-supplied
 # ``repo_root`` (tests pass ``tmp_path`` with no schemas/ subdirectory).
 # Pattern mirrors ``tools/check_schemas.py``: ``parents[1]`` for tools/, plus
@@ -123,6 +125,60 @@ def _build_retry_policy(block: dict[str, Any]) -> RetryPolicy:
     return RetryPolicy(
         max=int(block.get("max", 1)),
         backoff_seconds=int(block.get("backoff_seconds", 30)),
+    )
+
+
+def to_redaction_config(
+    rules: RedactionRules,
+    *,
+    gitignore_patterns: tuple[str, ...] = (),
+) -> redaction.RedactionConfig:
+    """Adapt a config-side :class:`RedactionRules` into a redactor-side config.
+
+    The two dataclasses overlap on four fields (``deny_globs``,
+    ``deny_regex``, ``fatal_regex``, ``allow_globs``) but
+    :class:`tools.redaction.RedactionConfig` carries an additional
+    ``gitignore_patterns`` field that the cross-AI config block does not
+    surface (gitignore lifting is out of scope for the manual-mode
+    contract). The adapter widens the rules into the redactor shape so
+    the skill never has to construct ``RedactionConfig(...)`` by hand
+    and cannot accidentally pass the wrong dataclass.
+
+    Deny-glob merge contract: the user-configured ``deny_globs`` are
+    UNIONED with :data:`tools.redaction.DEFAULT_DENY_GLOBS` so the
+    secret-shaped defaults (``**/.env``, ``**/.aws/**``, ``**/.ssh/**``)
+    cannot be silently disabled by an empty ``deny_globs: []`` block.
+    Operators who genuinely want to forward one of the default-denied
+    paths must use ``allow_globs`` to whitelist it explicitly — that
+    keeps the override audit-trail visible at the config layer.
+
+    Args:
+        rules: Resolved ``cross_ai.redaction`` block from
+            :func:`load_config` (or a default ``RedactionRules()``).
+        gitignore_patterns: Optional gitignore overlay. Defaults to the
+            empty tuple — the manual-mode skill does not lift
+            ``.gitignore`` rules today; the parameter exists so a future
+            caller can opt in without changing this signature.
+
+    Returns:
+        A :class:`tools.redaction.RedactionConfig` ready to pass to
+        :func:`tools.redaction.filter`.
+    """
+    # Union (preserve order, dedupe) so a user's custom deny patterns
+    # extend the defaults rather than replace them.
+    seen: set[str] = set()
+    merged_deny: list[str] = []
+    for glob in (*redaction.DEFAULT_DENY_GLOBS, *rules.deny_globs):
+        if glob in seen:
+            continue
+        seen.add(glob)
+        merged_deny.append(glob)
+    return redaction.RedactionConfig(
+        deny_globs=tuple(merged_deny),
+        deny_regex=rules.deny_regex,
+        fatal_regex=rules.fatal_regex,
+        allow_globs=rules.allow_globs,
+        gitignore_patterns=gitignore_patterns,
     )
 
 
