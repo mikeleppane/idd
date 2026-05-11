@@ -37,7 +37,7 @@ list, confirms with the user, seeds the feature folder under
 | focused | `--focused` (or LLM picks) | 3 | `spec → execute → verify` |
 | standard | `--standard` (or LLM picks) | 8 | `spec → scenarios → plan → crucible → review → execute → verify → ship` |
 | standard + research | `--standard --research` | 9 | `research → spec → scenarios → plan → crucible → review → execute → verify → ship` |
-| full | `--full` (or LLM picks) | 11 (12 with `flow_version: 3`) | `refine → research → spec → domain → scenarios → plan → crucible → review → execute → verify → ship` (`+ qa` on v3) |
+| full | `--full` (or LLM picks) | 11 | `refine → research → spec → domain → scenarios → plan → crucible → review → execute → verify → ship` |
 
 Focused + `--research` is rejected at parse time; the operator must
 re-invoke with `--standard --research`. The `review` phase fires twice

@@ -119,7 +119,7 @@ A formal `claude plugins install …` path is on the roadmap.
 
 ## What it is
 
-A small set of slash commands, skills, hooks, and JSON-schema-validated artifacts (see [`schemas/`](schemas/)) that walk an AI coding agent through a phased lifecycle — focused tier runs three phases (`spec → execute → verify`), standard runs ten (adds scenarios, plan, crucible, two reviews, ship, qa), full runs twelve (adds refine + domain). State is persisted on disk per feature, so any session can be paused, resumed, or handed off without losing context.
+A small set of slash commands, skills, hooks, and JSON-schema-validated artifacts (see [`schemas/`](schemas/)) that walk an AI coding agent through a phased lifecycle — focused tier runs three phases (`spec → execute → verify`), standard runs eight (adds scenarios, plan, crucible, two reviews, ship), full runs eleven (adds refine + research + domain). State is persisted on disk per feature, so any session can be paused, resumed, or handed off without losing context. (A post-ship `qa` phase is on the roadmap; it will activate via `flow_version: 3` once `/forge:do` seeds it.)
 
 ## Why use it
 

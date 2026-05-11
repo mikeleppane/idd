@@ -139,7 +139,7 @@ and dispatches to `/forge:spec`. Standard without `--research` seeds
    `tools.state.record_routing_decision` (both with `schema_path` set to
    `<repo_root>/schemas/state.schema.json` so an invalid payload refuses
    before disk mutation). On full tier the helper writes the 11-entry
-   `routing.phase_list` (12 with qa under `flow_version: 3`); on
+   `routing.phase_list`; on
    standard with `--research` the helper writes the 9-entry list with
    `research` at index 0; on focused or standard-without-flag the
    helper omits the field and consumers fall back to the per-tier

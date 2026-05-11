@@ -699,9 +699,11 @@ def test_command_documents_tier_phase_counts() -> None:
 
     The tier table is the operator-facing summary of the lifecycle. It
     must enumerate focused (3), standard (8), standard with research
-    (9), and full (11 or 12 with v3) so a reader can decide which tier
-    + flag combination matches their feature without grepping skill
-    prose.
+    (9), and full (11) so a reader can decide which tier + flag
+    combination matches their feature without grepping skill prose. The
+    post-ship ``qa`` phase ships only when ``/forge:do`` seeds
+    ``flow_version: 3``; the template does not seed it today, so the
+    user-facing count stays at 11.
     """
     text = _read(COMMAND_PATH)
     # Phase-count anchors — each tier must be locatable via its number
@@ -713,8 +715,7 @@ def test_command_documents_tier_phase_counts() -> None:
     assert "standard + research" in text
     assert "| 9 |" in text
     assert "| full |" in text
-    # Full tier carries a parenthetical note about v3 + qa.
-    assert "11 (12 with `flow_version: 3`)" in text
+    assert "| 11 |" in text
 
 
 def test_command_dispatch_summary_includes_research_branch() -> None:
