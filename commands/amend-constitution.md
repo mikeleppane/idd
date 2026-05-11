@@ -1,6 +1,6 @@
 ---
 name: amend-constitution
-description: Open `.forge/CONSTITUTION.md` in $EDITOR for atomic edit, bump version per the scope of the change, and append an ADR entry to decisions.md. Use when the user asks to amend or extend the project Constitution. Pass `--bootstrap` to seed an initial Constitution via the `forge-bootstrap-constitution` skill (bounded signal collection, in-session drafting, sequential `accept / refine / edit-in-editor / skip / cancel` selector).
+description: Open `.forge/CONSTITUTION.md` in $EDITOR for atomic edit, bump version per the scope of the change, and append an ADR entry to decisions.md. Use when the user asks to amend or extend the project Constitution. Pass `--bootstrap` to seed an initial Constitution via the `forge-bootstrap-constitution` skill (bounded signal collection, in-session drafting, sequential `accept / refine / edit-in-editor / skip / cancel` selector). Pass `--resync-agents` to extract prose conventions from AGENTS.md / CLAUDE.md / README.md and route each to the right enforcement mechanism via the `forge-resync-agents` skill.
 ---
 
 # /forge:amend-constitution
@@ -41,6 +41,17 @@ description: Open `.forge/CONSTITUTION.md` in $EDITOR for atomic edit, bump vers
        semantics so the caller can continue without a Constitution.
      - `[c]ancel` — abort cleanly, no disk mutation, propagate to the
        caller.
+
+3. **With `--resync-agents`** — defer to `forge-resync-agents`. The skill
+   collects bounded signals from AGENTS.md / CLAUDE.md / README.md,
+   drafts a convention inventory paired with proposed enforcement
+   mechanisms, and routes each accepted entry to its mechanism:
+   - `hook` / `validator` → append a `Convention` row to
+     `.forge/conventions.json` via
+     `tools.constitution_amend.append_conventions_entries`.
+   - `reviewer-tag` → surface a TODO to run `/forge:amend-constitution`
+     and add an article manually.
+   - `advisory` → log a decisions.md row only.
 
 ## Failure modes
 

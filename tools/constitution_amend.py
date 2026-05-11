@@ -12,6 +12,7 @@ bump (major > minor > patch).
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import tempfile
@@ -30,6 +31,7 @@ from tools.constitution import (
 )
 from tools.validate._finding import EXIT_NONZERO_SEVERITIES
 from tools.validate.constitution import validate_constitution
+from tools.validate.conventions import Convention, load_conventions
 
 
 class AmendError(RuntimeError):
@@ -99,23 +101,36 @@ def _name_matches_deny_glob(name: str) -> bool:
     return any(redaction._globstar_match(name, g) for g in _DENY_GLOBS)
 
 
-def _candidate_paths(repo_root: Path) -> list[Path]:
-    """Return existing candidate file paths in priority order, first-match per name."""
+def _candidate_paths(repo_root: Path, *, names: tuple[str, ...]) -> list[Path]:
+    """Return existing candidate file paths in priority order, first-match per name.
+
+    ``names`` is the parameterized name list — caller decides whether the
+    full bootstrap set (manifests + docs) or the narrower resync set (docs
+    only) drives the walk. ``*.csproj`` is included only when at least one
+    manifest name is requested (the glob is part of the manifest sweep).
+    """
     candidates: list[Path] = []
     seen: set[Path] = set()
-    for name in _MANIFEST_NAMES:
+    for name in names:
+        if name not in _MANIFEST_NAMES:
+            continue
         path = repo_root / name
         if path.is_file() and path not in seen:
             candidates.append(path)
             seen.add(path)
     # ``*.csproj`` is glob-matched (non-recursive, repo root only); first sorted name.
-    csproj_hits = sorted(repo_root.glob("*.csproj"))
-    for path in csproj_hits:
-        if path.is_file() and path not in seen:
-            candidates.append(path)
-            seen.add(path)
-            break  # only the first sorted match
-    for name in _DOC_NAMES:
+    # Only sweep when manifests are part of the requested name set — the resync
+    # signal collector restricts to docs and must skip the csproj glob.
+    if any(n in _MANIFEST_NAMES for n in names):
+        csproj_hits = sorted(repo_root.glob("*.csproj"))
+        for path in csproj_hits:
+            if path.is_file() and path not in seen:
+                candidates.append(path)
+                seen.add(path)
+                break  # only the first sorted match
+    for name in names:
+        if name not in _DOC_NAMES:
+            continue
         path = repo_root / name
         if path.is_file() and path not in seen:
             candidates.append(path)
@@ -159,27 +174,14 @@ def _looks_like_secret(body: str) -> bool:
     return bool(_SECRET_CONTENT_RE.search(body))
 
 
-def collect_bootstrap_signals(repo_root: Path) -> BootstrapSignals:
-    """Collect bounded project-shape signals for skill-driven Constitution drafting.
+def _collect_signals(repo_root: Path, *, names: tuple[str, ...]) -> BootstrapSignals:
+    """Shared engine: walk candidate files under ``names`` with the bootstrap bounds.
 
-    Walks a fixed priority list of manifest and documentation files at the
-    repo root, reads each up to ``_PER_FILE_CAP_BYTES``, and stops once the
-    payload reaches ``_MAX_SIGNAL_FILES`` files or ``_TOTAL_CAP_BYTES`` bytes.
-    Files matching a path-level deny glob are skipped before reading; files
-    whose decoded body contains secret-shaped content (per ``tools.redaction``
-    or a focused fallback regex) are dropped after read and recorded in
-    ``dropped_for_secrets``. The function performs no LLM calls and no
-    network access.
-
-    Args:
-        repo_root: Absolute path to the repository root.
-
-    Returns:
-        A frozen :class:`BootstrapSignals` whose ``files`` list is in
-        priority order. Two invocations on the same tree return equal results.
-
-    Raises:
-        AmendError: If ``repo_root`` does not exist or is not a directory.
+    Encapsulates the iteration, per-file size cap, truncation marker, total
+    payload cap, deny-glob filter, secret-content scan, and the
+    ``_MAX_SIGNAL_FILES`` cap. ``names`` is the parameterized candidate-set
+    selector — :func:`collect_bootstrap_signals` passes manifests + docs,
+    :func:`collect_resync_signals` passes docs only.
     """
     if not repo_root.is_dir():
         raise AmendError(f"repo_root not found or not a directory: {repo_root}")
@@ -189,7 +191,7 @@ def collect_bootstrap_signals(repo_root: Path) -> BootstrapSignals:
     truncated_paths: list[PurePosixPath] = []
     total_bytes = 0
 
-    for path in _candidate_paths(repo_root):
+    for path in _candidate_paths(repo_root, names=names):
         if len(files) >= _MAX_SIGNAL_FILES:
             break
         rel = PurePosixPath(path.relative_to(repo_root).as_posix())
@@ -219,6 +221,54 @@ def collect_bootstrap_signals(repo_root: Path) -> BootstrapSignals:
         truncated=truncated_paths,
         total_bytes=total_bytes,
     )
+
+
+def collect_bootstrap_signals(repo_root: Path) -> BootstrapSignals:
+    """Collect bounded project-shape signals for skill-driven Constitution drafting.
+
+    Walks a fixed priority list of manifest and documentation files at the
+    repo root, reads each up to ``_PER_FILE_CAP_BYTES``, and stops once the
+    payload reaches ``_MAX_SIGNAL_FILES`` files or ``_TOTAL_CAP_BYTES`` bytes.
+    Files matching a path-level deny glob are skipped before reading; files
+    whose decoded body contains secret-shaped content (per ``tools.redaction``
+    or a focused fallback regex) are dropped after read and recorded in
+    ``dropped_for_secrets``. The function performs no LLM calls and no
+    network access.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+
+    Returns:
+        A frozen :class:`BootstrapSignals` whose ``files`` list is in
+        priority order. Two invocations on the same tree return equal results.
+
+    Raises:
+        AmendError: If ``repo_root`` does not exist or is not a directory.
+    """
+    return _collect_signals(repo_root, names=_MANIFEST_NAMES + _DOC_NAMES)
+
+
+def collect_resync_signals(repo_root: Path) -> BootstrapSignals:
+    """Collect bounded doc-only signals for the conventions resync workflow.
+
+    Same bounds as :func:`collect_bootstrap_signals` (16 KiB per file, 80 KiB
+    total payload, 8-file cap, deny-glob filter, secret-content drop) but
+    restricts the candidate set to ``_DOC_NAMES`` — ``AGENTS.md`` /
+    ``CLAUDE.md`` / ``README.md``. Manifests are intentionally excluded:
+    the resync flow inspects prose-authored convention rules, not project
+    structure.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+
+    Returns:
+        A frozen :class:`BootstrapSignals` (data shape unchanged so both
+        entry points share the same surface).
+
+    Raises:
+        AmendError: If ``repo_root`` does not exist or is not a directory.
+    """
+    return _collect_signals(repo_root, names=_DOC_NAMES)
 
 
 def classify_change(before: str, after: str) -> str:
@@ -798,3 +848,203 @@ def persist_drafted_constitution(
             decisions_path.unlink(missing_ok=True)
         raise AmendError(f"decisions.md append failed: {exc}") from exc
     return constitution
+
+
+def _serialize_convention(rule: Convention) -> dict[str, object]:
+    """Render a :class:`Convention` into its on-disk JSON dict shape.
+
+    Matches the keys and order in ``schemas/conventions.schema.json``; the
+    list-typed ``scope`` field is materialized from the tuple so the JSON
+    output round-trips through :func:`load_conventions`.
+    """
+    return {
+        "id": rule.id,
+        "source_file": rule.source_file,
+        "source_line": rule.source_line,
+        "pattern_kind": rule.pattern_kind,
+        "pattern": rule.pattern,
+        "scope": list(rule.scope),
+        "severity": rule.severity,
+    }
+
+
+def _detect_inner_duplicates(entries: list[Convention]) -> list[str]:
+    """Return the list of ids that appear more than once within ``entries``."""
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for entry in entries:
+        if entry.id in seen and entry.id not in duplicates:
+            duplicates.append(entry.id)
+        seen.add(entry.id)
+    return duplicates
+
+
+def _read_existing_conventions(
+    repo_root: Path,
+    conventions_path: Path,
+) -> tuple[list[Convention], str | None, bool]:
+    """Return ``(existing_rules, previous_body, file_existed)`` for rollback bookkeeping."""
+    file_existed = conventions_path.is_file()
+    if not file_existed:
+        return [], None, False
+    try:
+        previous_body = conventions_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise AmendError(f"failed to read existing conventions.json: {exc}") from exc
+    try:
+        existing_rules = load_conventions(repo_root)
+    except ValueError as exc:
+        raise AmendError(f"existing conventions.json invalid: {exc}") from exc
+    return existing_rules, previous_body, True
+
+
+def _check_merged_patterns(rules: list[Convention]) -> list[str]:
+    """Return compile/scope errors for ``rules`` (empty list ⇒ all good)."""
+    errors: list[str] = []
+    for rule in rules:
+        if rule.pattern_kind in ("forbidden_text", "required_text"):
+            try:
+                re.compile(rule.pattern)
+            except re.error as exc:
+                errors.append(f"{rule.id}: failed to compile pattern: {exc}")
+        if rule.pattern_kind == "filename_glob_forbidden" and tuple(rule.scope) != ("diff",):
+            errors.append(
+                f"{rule.id}: filename_glob_forbidden requires scope ['diff'], "
+                f"got {list(rule.scope)}",
+            )
+    return errors
+
+
+def _format_conventions_adr(*, today: date, entries: list[Convention]) -> str:
+    """Render the ADR row for an ``append_conventions_entries`` call."""
+    ids_csv = ", ".join(entry.id for entry in entries)
+    n = len(entries)
+    plural = "entry" if n == 1 else "entries"
+    return (
+        f"\n## {today.isoformat()} — Conventions resync (--resync-agents)\n"
+        f"**Context:** Added {n} convention {plural}: {ids_csv}.\n"
+        f"**Change:** .forge/conventions.json updated.\n"
+        f"**Alternatives considered:** Manual conventions.json edit, "
+        f"skipped to preserve schema validation.\n"
+    )
+
+
+def append_conventions_entries(
+    repo_root: Path,
+    entries: list[Convention],
+    *,
+    decisions_path: Path | None = None,
+    today: date | None = None,
+) -> Path:
+    """Append ``entries`` to ``.forge/conventions.json`` and log a decisions ADR row.
+
+    Reads any pre-existing ``.forge/conventions.json`` (parsed via
+    :func:`tools.validate.conventions.load_conventions`), refuses on id
+    collision (existing or duplicate inside ``entries``), writes the merged
+    array atomically via :func:`atomic_replace`, then appends a single ADR
+    row to ``decisions.md`` describing the added ids. On decisions-append
+    failure the conventions file is restored to its pre-call state so the
+    pair ends at pre-call shape (file removed if it was absent before;
+    body restored otherwise).
+
+    Args:
+        repo_root: Repository root containing the ``.forge`` directory.
+        entries: New :class:`Convention` records to append. Must be
+            non-empty; ids must be unique across ``entries`` and against
+            any pre-existing rules.
+        decisions_path: Target ``decisions.md`` for the ADR row; defaults
+            to ``<repo_root>/decisions.md``.
+        today: Optional override for ``date.today()``; used by tests for
+            stable ADR timestamps.
+
+    Returns:
+        Absolute path to ``.forge/conventions.json``.
+
+    Raises:
+        AmendError: When ``entries`` is empty, when any new id collides
+            with an existing entry or with another new entry, when the
+            merged file fails ``load_conventions`` (schema, duplicate, or
+            shape rejection), or when the atomic-pair write cannot
+            complete (conventions.json is restored before the error
+            surfaces).
+    """
+    if not entries:
+        raise AmendError("append_conventions_entries requires at least one new entry")
+
+    today = today or date.today()
+    decisions_path = decisions_path or repo_root / "decisions.md"
+    conventions_path = repo_root / ".forge" / "conventions.json"
+
+    inner_dupes = _detect_inner_duplicates(entries)
+    if inner_dupes:
+        raise AmendError(f"duplicate id(s) within new entries: {sorted(inner_dupes)}")
+
+    existing_rules, previous_body, file_existed = _read_existing_conventions(
+        repo_root, conventions_path
+    )
+
+    new_ids = [entry.id for entry in entries]
+    collisions = sorted(set(new_ids) & {rule.id for rule in existing_rules})
+    if collisions:
+        raise AmendError(f"id collision with existing entries: {collisions}")
+
+    merged = [_serialize_convention(rule) for rule in existing_rules]
+    merged.extend(_serialize_convention(entry) for entry in entries)
+    serialized = json.dumps(merged, indent=2, sort_keys=True) + "\n"
+
+    # Write merged body, then re-validate via load_conventions to catch
+    # corner cases (bad regex, mis-scoped filename_glob_forbidden) BEFORE
+    # we touch decisions.md.
+    conventions_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        atomic_replace(conventions_path, serialized)
+    except OSError as exc:
+        raise AmendError(f"atomic write of conventions.json failed: {exc}") from exc
+
+    try:
+        merged_rules = load_conventions(repo_root)
+    except ValueError as exc:
+        _restore_conventions(conventions_path, previous_body, file_existed)
+        raise AmendError(f"merged conventions.json failed validation: {exc}") from exc
+
+    pattern_errors = _check_merged_patterns(merged_rules)
+    if pattern_errors:
+        _restore_conventions(conventions_path, previous_body, file_existed)
+        raise AmendError(
+            "merged conventions.json failed validation: " + "; ".join(pattern_errors),
+        )
+
+    decisions_created = ensure_decisions_file(decisions_path)
+    adr = _format_conventions_adr(today=today, entries=entries)
+    try:
+        with decisions_path.open("a", encoding="utf-8") as fh:
+            fh.write(adr)
+    except OSError as exc:
+        _restore_conventions(conventions_path, previous_body, file_existed)
+        if decisions_created:
+            decisions_path.unlink(missing_ok=True)
+        raise AmendError(
+            f"decisions.md append failed; conventions.json restored: {exc}",
+        ) from exc
+
+    return conventions_path
+
+
+def _restore_conventions(
+    conventions_path: Path,
+    previous_body: str | None,
+    file_existed: bool,
+) -> None:
+    """Roll ``conventions.json`` back to its pre-call shape.
+
+    File absent before the call ⇒ delete the new file. File present
+    before ⇒ atomically replace with the captured body so the file's
+    inode flip is the only mutation. Best-effort: the caller is already
+    in an error path, so OS failures during rollback are swallowed.
+    """
+    if not file_existed:
+        conventions_path.unlink(missing_ok=True)
+        return
+    if previous_body is not None:
+        with contextlib.suppress(OSError):
+            atomic_replace(conventions_path, previous_body)

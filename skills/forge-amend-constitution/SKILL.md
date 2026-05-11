@@ -1,6 +1,6 @@
 ---
 name: forge-amend-constitution
-description: Atomic edit of `.forge/CONSTITUTION.md` with $EDITOR, semver bump, and a decisions.md ADR entry. Use when the user asks to amend or extend the project Constitution. Use --bootstrap to seed an initial Constitution (defers to forge-bootstrap-constitution).
+description: Atomic edit of `.forge/CONSTITUTION.md` with $EDITOR, semver bump, and a decisions.md ADR entry. Use when the user asks to amend or extend the project Constitution. Use --bootstrap to seed an initial Constitution (defers to forge-bootstrap-constitution). Use --resync-agents to extract prose conventions from AGENTS.md / CLAUDE.md / README.md and route them to the right enforcement mechanism (defers to forge-resync-agents).
 disable-model-invocation: true
 ---
 
@@ -37,6 +37,14 @@ User invoked `/forge:amend-constitution` (with or without `--bootstrap`).
    skill-driven drafting workflow, interactive review loop, and atomic
    write via `tools.constitution_amend.persist_drafted_constitution`.
    Return to this skill's caller on completion.
+
+## Steps (`--resync-agents` mode)
+
+1. Dispatch the `forge-resync-agents` skill, which walks the user
+   through extracting prose conventions from AGENTS.md / CLAUDE.md /
+   README.md and routing each to the right enforcement mechanism
+   (hook / validator / reviewer-tag / advisory). Return to this skill's
+   caller on completion.
 
 ## Done
 
