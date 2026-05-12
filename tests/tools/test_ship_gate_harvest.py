@@ -153,6 +153,22 @@ def test_parse_review_findings_for_harvest_missing_file_returns_empty(
     assert sg.parse_review_findings_for_harvest(tmp_path / "does_not_exist.md") == []
 
 
+def test_parse_review_findings_for_harvest_coerces_string_path(
+    tmp_path: Path,
+) -> None:
+    """Boundary coercion: a string path must not trip ``AttributeError``.
+
+    Mirrors the pattern locked into ``tools.bdd_detect.detect`` and the
+    sibling fix in :func:`parse_review_findings`. The forge-review
+    skill prose pastes literal filesystem paths into the harvest call
+    — an agent reproducing that shape and passing a ``str`` must reach
+    the documented missing-file empty-list branch, not crash on
+    ``str.exists``.
+    """
+    target = tmp_path / "does_not_exist.md"
+    assert sg.parse_review_findings_for_harvest(str(target)) == []
+
+
 # --------------------------------------------------------------------------- #
 # Resolved-by case normalization (slice 5 carryover)                          #
 # --------------------------------------------------------------------------- #

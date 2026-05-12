@@ -324,7 +324,7 @@ def parse_review_findings(path: Path | str) -> list[ShipFinding]:
     return out
 
 
-def parse_review_findings_for_harvest(path: Path) -> list[HarvestCandidate]:
+def parse_review_findings_for_harvest(path: Path | str) -> list[HarvestCandidate]:
     """Emit harvest candidates from REVIEW.code.md for the forge-review skill.
 
     A row qualifies as a candidate iff:
@@ -354,7 +354,11 @@ def parse_review_findings_for_harvest(path: Path) -> list[HarvestCandidate]:
     :func:`parse_review_findings`.
 
     Args:
-        path: Path to ``REVIEW.code.md``.
+        path: Path to ``REVIEW.code.md``. A ``str`` is accepted at the
+            entry boundary and coerced to ``Path`` so agent callers
+            that improvise on the call shape do not trip a cryptic
+            ``AttributeError`` on ``str.exists`` inside
+            ``_iter_review_rows``.
 
     Returns:
         List of :class:`HarvestCandidate` records, one per qualifying
@@ -364,6 +368,7 @@ def parse_review_findings_for_harvest(path: Path) -> list[HarvestCandidate]:
         ShipGateError: When any row's Status, Severity, or Resolved by
             cell holds an unrecognized closed-vocabulary value.
     """
+    path = Path(path)
     out: list[HarvestCandidate] = []
     for row in _iter_review_rows(path):
         if row.status != "resolved":
