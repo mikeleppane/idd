@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -25,8 +26,10 @@ from .delta import validate_delta
 from .domain_glossary import validate_domain_glossary
 from .git_conventions import validate_git_conventions
 from .health import validate_health
+from .lessons import validate_lessons
 from .plan import validate_plan_tasks, validate_verified_deps
 from .qa_shape import validate_qa_shape
+from .review_lesson_tags import validate_review_lesson_tags
 from .spec_semantic import validate_anchors, validate_scenarios
 from .spec_structural import (
     validate_capability_uniqueness,
@@ -50,9 +53,18 @@ _PER_FILE_TARGETS: frozenset[str] = frozenset(
     }
 )
 _PER_FOLDER_TARGETS: frozenset[str] = frozenset(
-    {"deviations", "tdd_evidence", "domain_glossary", "qa_shape", "git-conventions"}
+    {
+        "deviations",
+        "tdd_evidence",
+        "domain_glossary",
+        "qa_shape",
+        "git-conventions",
+        "review-lesson-tags",
+    }
 )
-_REPO_WIDE_TARGETS: frozenset[str] = frozenset({"health", "ship", "all", "config", "conventions"})
+_REPO_WIDE_TARGETS: frozenset[str] = frozenset(
+    {"health", "ship", "all", "config", "conventions", "lessons"}
+)
 
 # Reserved sub-folder names under ``.forge/features/`` and ``.forge/changes/``
 # that the ``--target all`` dispatcher must skip — they are not live artifacts.
@@ -72,11 +84,13 @@ _TARGET_CHOICES: tuple[str, ...] = (
     "domain_glossary",
     "qa_shape",
     "research",
+    "review-lesson-tags",
     "constitution",
     "config",
     "conventions",
     "git-conventions",
     "health",
+    "lessons",
     "ship",
     "all",
 )
@@ -157,6 +171,13 @@ def _dispatch_research(args: argparse.Namespace, repo_root: Path) -> list[Findin
     return list(validate_research(args.path))
 
 
+def _dispatch_review_lesson_tags(
+    args: argparse.Namespace,
+    repo_root: Path,
+) -> list[Finding]:
+    return list(validate_review_lesson_tags(args.path, repo_root))
+
+
 def _dispatch_config(
     args: argparse.Namespace,  # noqa: ARG001
     repo_root: Path,
@@ -169,11 +190,131 @@ def _dispatch_constitution(args: argparse.Namespace, repo_root: Path) -> list[Fi
     return list(validate_constitution(resolved))
 
 
+# Subprocess defaults mirror :mod:`tools.validate.git_conventions` — pinned
+# timeout, captured streams, non-raising exit handling so a missing SHA does
+# not crash the validator on the user.
+_GIT_TIMEOUT_SECONDS: float = 10.0
+
+
+def _read_commit_body(sha: str, repo_root: Path) -> tuple[str | None, Finding | None]:
+    """Resolve a commit SHA to its message body via ``git show -s --format=%B``.
+
+    Returns ``(body, None)`` on success, ``(None, WARN-finding)`` on failure.
+    Failure modes covered: no ``git`` binary on PATH, missing SHA, subprocess
+    timeout, non-zero exit. The CLI must keep validating other rules even
+    when the commit lookup fails.
+
+    Implementation: verify the SHA via ``git rev-parse --verify`` first,
+    then fetch the body via ``git show -s --format=%B``. Both invocations
+    deliberately omit the ``--`` end-of-options separator — for ``git
+    rev-parse`` the separator turns the argument into a pathspec and
+    triggers ``Needed a single revision``; for ``git show`` it forces the
+    SHA to be interpreted as a path so the message body comes back empty.
+    Safety against leading-dash positionals comes from the upstream caller
+    (CI / scripts) and from ``rev-parse --verify`` rejecting unknown shapes
+    natively before we ever reach ``git show``.
+    """
+    try:
+        verify = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--verify", f"{sha}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        return None, Finding(
+            "WARN",
+            "conventions",
+            repo_root,
+            f"commit lookup failed for {sha!r}: {exc}",
+        )
+    if verify.returncode != 0:
+        err = (verify.stderr or "").strip().splitlines()
+        detail = err[0] if err else f"exit {verify.returncode}"
+        return None, Finding(
+            "WARN",
+            "conventions",
+            repo_root,
+            f"commit lookup failed for {sha!r}: {detail}",
+        )
+    try:
+        show = subprocess.run(
+            ["git", "-C", str(repo_root), "show", "-s", "--format=%B", sha],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        return None, Finding(
+            "WARN",
+            "conventions",
+            repo_root,
+            f"commit lookup failed for {sha!r}: {exc}",
+        )
+    if show.returncode != 0:
+        err = (show.stderr or "").strip().splitlines()
+        detail = err[0] if err else f"exit {show.returncode}"
+        return None, Finding(
+            "WARN",
+            "conventions",
+            repo_root,
+            f"commit lookup failed for {sha!r}: {detail}",
+        )
+    return show.stdout, None
+
+
+def _read_diff_file(diff_path: Path) -> tuple[str | None, Finding | None]:
+    """Read a unified-diff text file. Missing file is a CLI-misuse BLOCK."""
+    if not diff_path.is_file():
+        return None, Finding(
+            "BLOCK",
+            "conventions",
+            diff_path,
+            f"--diff-file path does not exist: {diff_path}",
+        )
+    try:
+        return diff_path.read_text(encoding="utf-8"), None
+    except OSError as exc:
+        return None, Finding(
+            "BLOCK",
+            "conventions",
+            diff_path,
+            f"--diff-file read failed: {exc}",
+        )
+
+
 def _dispatch_conventions(
-    args: argparse.Namespace,  # noqa: ARG001
+    args: argparse.Namespace,
     repo_root: Path,
 ) -> list[Finding]:
-    return list(validate_conventions(repo_root))
+    """Run convention shape + pattern checks.
+
+    Without ``--commit`` / ``--diff-file``: shape validation only — the same
+    backward-compatible behavior shipped before pattern-firing was wired in.
+    With either or both flags, the matching scope is pattern-fired against
+    the supplied input so ``commit_body`` and ``diff`` rules actually trip
+    the gate instead of being silently skipped.
+
+    Subprocess / IO failures degrade to ``WARN`` findings (commit lookup) or
+    ``BLOCK`` findings (missing diff file) and never raise — the validator
+    must keep running the rest of the rule set even when an input is
+    unavailable.
+    """
+    commit_body: str | None = None
+    diff_text: str | None = None
+    extras: list[Finding] = []
+    if args.commit is not None:
+        commit_body, warn = _read_commit_body(args.commit, repo_root)
+        if warn is not None:
+            extras.append(warn)
+    if args.diff_file is not None:
+        diff_text, block = _read_diff_file(args.diff_file)
+        if block is not None:
+            extras.append(block)
+    findings = list(validate_conventions(repo_root, commit_body=commit_body, diff=diff_text))
+    return extras + findings
 
 
 def _dispatch_health(
@@ -181,6 +322,13 @@ def _dispatch_health(
     repo_root: Path,
 ) -> list[Finding]:
     return list(validate_health(repo_root))
+
+
+def _dispatch_lessons(
+    args: argparse.Namespace,  # noqa: ARG001
+    repo_root: Path,
+) -> list[Finding]:
+    return list(validate_lessons(repo_root))
 
 
 def _dispatch_ship(
@@ -217,12 +365,16 @@ def _validate_feature(
         if spec.is_file():
             findings.extend(validate_plan_tasks(plan, spec_path=spec))
         findings.extend(validate_verified_deps(plan, check_registries=check_registries))
-    # WS2: a feature folder with a state.json is the right scope for the
+    # A feature folder with a state.json is the right scope for the
     # git-conventions structural check. The validator self-gates on the
     # feature-folder path shape and silently passes for features with no
     # ``commits[]``, so the wiring is safe to run unconditionally.
     if (feature / "state.json").is_file():
         findings.extend(validate_git_conventions(feature))
+    # Cross-check REVIEW.code.md lesson tags against ``.forge/intel/lessons.md``
+    # at validate time so a row Severity / lesson Severity mismatch surfaces in
+    # CI instead of waiting until /forge:ship. No-op when either file is absent.
+    findings.extend(validate_review_lesson_tags(feature, repo_root))
     return findings
 
 
@@ -249,6 +401,12 @@ def _dispatch_all(args: argparse.Namespace, repo_root: Path) -> list[Finding]:
     constitution = repo_root / ".forge" / "CONSTITUTION.md"
     if constitution.is_file():
         findings.extend(validate_constitution(constitution))
+
+    # ``.forge/intel/lessons.md`` is optional; the validator short-circuits to
+    # an empty list when the file is absent, so calling unconditionally is
+    # cheap and keeps the all-target dispatcher symmetric with the per-target
+    # ``--target lessons`` path.
+    findings.extend(validate_lessons(repo_root))
 
     changes_root = repo_root / ".forge" / "changes"
     if changes_root.is_dir():
@@ -289,10 +447,12 @@ _TARGET_DISPATCH: dict[str, Callable[[argparse.Namespace, Path], list[Finding]]]
     "qa_shape": _dispatch_qa_shape,
     "git-conventions": _dispatch_git_conventions,
     "research": _dispatch_research,
+    "review-lesson-tags": _dispatch_review_lesson_tags,
     "constitution": _dispatch_constitution,
     "config": _dispatch_config,
     "conventions": _dispatch_conventions,
     "health": _dispatch_health,
+    "lessons": _dispatch_lessons,
     "ship": _dispatch_ship,
     "all": _dispatch_all,
 }
@@ -410,6 +570,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=(
             "For verified-deps / all: probe registries (npm, pip) for declared "
             "dependencies. Off by default (offline / shape-only)."
+        ),
+    )
+    parser.add_argument(
+        "--commit",
+        type=str,
+        default=None,
+        help=(
+            "For --target conventions: SHA to feed as commit_body via "
+            "'git show -s --format=%%B'. Other targets accept the flag for "
+            "argparse uniformity but ignore it."
+        ),
+    )
+    parser.add_argument(
+        "--diff-file",
+        type=Path,
+        default=None,
+        help=(
+            "For --target conventions: path to a unified-diff text file to "
+            "feed as the diff scope. Other targets accept the flag for "
+            "argparse uniformity but ignore it."
         ),
     )
     parser.add_argument(

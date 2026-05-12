@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from tools.conventions_runtime import load_conventions_permissive
+
 if TYPE_CHECKING:
     from types import ModuleType
 
@@ -468,3 +470,267 @@ def test_locate_repo_root_returns_none_when_no_forge_ancestor(tmp_path: Path) ->
     nested.mkdir(parents=True)
     located = check_budget._locate_repo_root(start=nested)
     assert located is None
+
+
+# ---------------------------------------------------------------------------
+# Carve-out: context_budget block is excluded from dispatch_brief scanning
+# ---------------------------------------------------------------------------
+
+
+def _prompt_with_budget_trap(trap_text: str, *, tail: str = "") -> str:
+    """Build a prompt with a budget block containing a single trap entry."""
+    budget = {
+        "files_in_scope": ["tools/state.py"],
+        "forbidden": ["read entire repo"],
+        "traps": [{"id": "ws2-001", "trap": trap_text}],
+    }
+    return "context_budget:\n" + json.dumps(budget, indent=2) + "\n" + tail
+
+
+def test_check_dispatch_brief_conventions_allows_when_forbidden_text_only_inside_budget_block(
+    tmp_path: Path,
+) -> None:
+    """Trap body carrying the forbidden phrase must NOT trip the dispatch gate.
+
+    Regression: a CRITICAL lesson with ``trap: "do not paste Co-Authored-By: Claude"``
+    injected via the per-task budget would previously fire the canonical
+    ``forbidden_text`` rule banning that phrase — denying the very dispatch
+    that was supposed to surface the lesson.
+    """
+    rules = [
+        _build_rule(
+            rule_id="no-claude-coauthor",
+            pattern_kind="forbidden_text",
+            pattern="Co-Authored-By: Claude.*",
+            scope=["dispatch_brief"],
+            severity="HIGH",
+        ),
+    ]
+    _write_conventions(tmp_path, rules)
+    prompt = _prompt_with_budget_trap(
+        "do not paste Co-Authored-By: Claude <noreply@anthropic.com>",
+    )
+    allow, reason = check_budget._check_dispatch_brief_conventions(prompt, repo_root=tmp_path)
+    assert allow, reason
+    assert reason == "ok"
+
+
+def test_check_dispatch_brief_conventions_denies_when_forbidden_text_outside_budget_block(
+    tmp_path: Path,
+) -> None:
+    """Same rule, same prompt shape, but the forbidden phrase appears in the
+    human-author tail — outside the carved-out budget block. Must deny."""
+    rules = [
+        _build_rule(
+            rule_id="no-claude-coauthor",
+            pattern_kind="forbidden_text",
+            pattern="Co-Authored-By: Claude.*",
+            scope=["dispatch_brief"],
+            severity="HIGH",
+        ),
+    ]
+    _write_conventions(tmp_path, rules)
+    prompt = _prompt_with_budget_trap(
+        "this trap is unrelated",
+        tail="please add Co-Authored-By: Claude <noreply@anthropic.com>",
+    )
+    allow, reason = check_budget._check_dispatch_brief_conventions(prompt, repo_root=tmp_path)
+    assert not allow
+    assert "no-claude-coauthor" in reason
+
+
+def test_check_dispatch_brief_conventions_required_text_must_appear_outside_budget_block(
+    tmp_path: Path,
+) -> None:
+    """A required_text rule still has to find its citation in the carved-down
+    prompt. Citations belong in the human-author section, not in the machine-
+    injected articles[]/traps[]."""
+    rules = [
+        _build_rule(
+            rule_id="must-cite-coding-guidance",
+            pattern_kind="required_text",
+            pattern="coding-guidance-python",
+            scope=["dispatch_brief"],
+            severity="HIGH",
+        ),
+    ]
+    _write_conventions(tmp_path, rules)
+    # Citation appears only inside the budget block — the carve-out should
+    # strip it before scanning, so the required_text rule still fires deny.
+    budget = {
+        "files_in_scope": ["tools/state.py"],
+        "forbidden": ["read entire repo"],
+        "articles": [{"id": "art-1", "rule": "cite coding-guidance-python"}],
+    }
+    prompt = "context_budget:\n" + json.dumps(budget, indent=2) + "\n"
+    allow, reason = check_budget._check_dispatch_brief_conventions(prompt, repo_root=tmp_path)
+    assert not allow
+    assert "must-cite-coding-guidance" in reason
+
+
+def test_strip_budget_block_returns_prompt_unchanged_when_no_marker() -> None:
+    prompt = "no marker line here\njust prose\n"
+    assert check_budget._strip_budget_block(prompt) == prompt
+
+
+def test_strip_budget_block_returns_prompt_unchanged_on_malformed_json() -> None:
+    """Unbalanced braces inside the budget block → carve-out falls back."""
+    prompt = 'context_budget:\n{\n  "files_in_scope": [\n  // unclosed\n'
+    # No balanced object → strip returns the prompt unchanged. The hook's
+    # own _validate_budget will deny on this shape elsewhere; we just need
+    # the strip helper to be defensive.
+    assert check_budget._strip_budget_block(prompt) == prompt
+
+
+def test_strip_budget_block_excises_marker_and_balanced_json() -> None:
+    prompt = (
+        "preface line\n"
+        "context_budget:\n"
+        '{\n  "files_in_scope": ["tools/state.py"],\n'
+        '  "forbidden": ["read repo"]\n}\n'
+        "tail after block\n"
+    )
+    stripped = check_budget._strip_budget_block(prompt)
+    assert "context_budget" not in stripped
+    assert "files_in_scope" not in stripped
+    assert "preface line" in stripped
+    assert "tail after block" in stripped
+
+
+# ---------------------------------------------------------------------------
+# FORGE_REPO_ROOT env override
+# ---------------------------------------------------------------------------
+
+
+def test_locate_repo_root_uses_forge_repo_root_env_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    other_repo = tmp_path / "other-forge-repo"
+    other_repo.mkdir()
+    (other_repo / ".forge").mkdir()
+
+    # Walk-up would find a different repo at tmp_path if .forge existed there;
+    # env override must win regardless.
+    nested = tmp_path / "deep" / "nested"
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(nested)
+    monkeypatch.setenv("FORGE_REPO_ROOT", str(other_repo))
+
+    located = check_budget._locate_repo_root()
+    assert located == other_repo.resolve()
+
+
+def test_locate_repo_root_env_override_invalid_path_falls_back_with_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / ".forge").mkdir()
+    nested = tmp_path / "a"
+    nested.mkdir()
+    monkeypatch.chdir(nested)
+    monkeypatch.setenv("FORGE_REPO_ROOT", str(tmp_path / "does-not-exist"))
+
+    located = check_budget._locate_repo_root()
+    captured = capsys.readouterr()
+    assert located == tmp_path.resolve()
+    assert "FORGE_REPO_ROOT" in captured.err
+    assert "falling back" in captured.err
+
+
+def test_locate_repo_root_env_override_path_without_forge_dir_falls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / ".forge").mkdir()
+    bare = tmp_path / "bare-dir-no-forge"
+    bare.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FORGE_REPO_ROOT", str(bare))
+
+    located = check_budget._locate_repo_root()
+    captured = capsys.readouterr()
+    assert located == tmp_path.resolve()
+    assert "FORGE_REPO_ROOT" in captured.err
+
+
+def test_locate_repo_root_unset_env_silent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / ".forge").mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FORGE_REPO_ROOT", raising=False)
+
+    located = check_budget._locate_repo_root()
+    captured = capsys.readouterr()
+    assert located == tmp_path.resolve()
+    assert captured.err == ""
+
+
+# ---------------------------------------------------------------------------
+# Resolved repo root surfaces in deny reason
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_brief_deny_reason_includes_resolved_repo_root(tmp_path: Path) -> None:
+    rules = [
+        _build_rule(
+            rule_id="no-claude-coauthor",
+            pattern_kind="forbidden_text",
+            pattern="Co-Authored-By: Claude.*",
+            scope=["dispatch_brief"],
+            severity="HIGH",
+        ),
+    ]
+    _write_conventions(tmp_path, rules)
+    allow, reason = check_budget._check_dispatch_brief_conventions(
+        "please add Co-Authored-By: Claude <noreply@anthropic.com>",
+        repo_root=tmp_path,
+    )
+    assert not allow
+    assert f"(repo: {tmp_path})" in reason
+
+
+def test_dispatch_brief_deny_reason_for_malformed_conventions_includes_repo(
+    tmp_path: Path,
+) -> None:
+    _write_conventions(tmp_path, "{not valid json")
+    allow, reason = check_budget._check_dispatch_brief_conventions("anything", repo_root=tmp_path)
+    assert not allow
+    assert f"(repo: {tmp_path})" in reason
+    assert "conventions.json present but invalid" in reason
+
+
+# ---------------------------------------------------------------------------
+# Permissive loader drops dead-letter dispatch_brief rules (with warning)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("severity", ["MEDIUM", "LOW", "WARN"])
+def test_permissive_loader_skips_dead_letter_dispatch_brief_rule_with_warning(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    severity: str,
+) -> None:
+    """Dispatch_brief-scope rules with MEDIUM/LOW/WARN must not influence
+    hook behavior. The permissive loader drops them and emits a stderr
+    warning so a misconfigured rule cannot silently pretend to enforce."""
+    rules = [
+        _build_rule(
+            rule_id="dead-letter-rule",
+            pattern_kind="forbidden_text",
+            pattern="Co-Authored-By: Claude.*",
+            scope=["dispatch_brief"],
+            severity=severity,
+        ),
+    ]
+    _write_conventions(tmp_path, rules)
+    loaded = load_conventions_permissive(tmp_path)
+    captured = capsys.readouterr()
+    assert loaded == []
+    assert "dead-letter-rule" in captured.err
+    assert "dispatch_brief" in captured.err

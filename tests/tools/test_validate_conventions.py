@@ -479,6 +479,77 @@ def test_load_conventions_missing_file_returns_empty(tmp_path: Path) -> None:
     assert load_conventions(tmp_path) == []
 
 
+# --- Dispatch_brief severity gate -------------------------------------------
+
+
+@pytest.mark.parametrize("severity", ["MEDIUM", "LOW", "WARN"])
+def test_load_conventions_raises_on_dispatch_brief_with_low_severity(
+    tmp_path: Path,
+    severity: str,
+) -> None:
+    """Strict loader refuses dispatch_brief rules the hook would ignore.
+
+    The dispatch hook only fires deny on BLOCK / HIGH for dispatch_brief
+    scope. A rule with MEDIUM / LOW / WARN is dead-letter — load-time
+    rejection prevents silent misconfiguration.
+    """
+    entry = _well_formed(
+        id="dead-letter-dispatch",
+        scope=["dispatch_brief"],
+        severity=severity,
+    )
+    _write_conventions(tmp_path, [entry])
+    with pytest.raises(ValueError, match=r"dead-letter-dispatch.*dispatch_brief"):
+        load_conventions(tmp_path)
+
+
+def test_load_conventions_raises_on_multi_scope_rule_with_dispatch_brief_low_severity(
+    tmp_path: Path,
+) -> None:
+    """Even when dispatch_brief shares scope with commit_body, low severity is
+    rejected — the rule's dispatch_brief enforcement would be silent dead
+    letter and the author should either tighten or drop dispatch_brief."""
+    entry = _well_formed(
+        id="multi-scope-rule",
+        scope=["commit_body", "dispatch_brief"],
+        severity="MEDIUM",
+    )
+    _write_conventions(tmp_path, [entry])
+    with pytest.raises(ValueError, match=r"multi-scope-rule.*dispatch_brief"):
+        load_conventions(tmp_path)
+
+
+@pytest.mark.parametrize("severity", ["BLOCK", "HIGH"])
+def test_load_conventions_accepts_dispatch_brief_with_enforced_severity(
+    tmp_path: Path,
+    severity: str,
+) -> None:
+    entry = _well_formed(
+        id="enforced-dispatch-rule",
+        scope=["dispatch_brief"],
+        severity=severity,
+    )
+    _write_conventions(tmp_path, [entry])
+    rules = load_conventions(tmp_path)
+    assert len(rules) == 1
+    assert rules[0].id == "enforced-dispatch-rule"
+
+
+def test_validate_conventions_reports_finding_for_dead_letter_dispatch_brief_rule(
+    tmp_path: Path,
+) -> None:
+    entry = _well_formed(
+        id="dead-letter-via-validator",
+        scope=["dispatch_brief"],
+        severity="MEDIUM",
+    )
+    _write_conventions(tmp_path, [entry])
+    findings = validate_conventions(tmp_path)
+    assert any(
+        f.severity == "BLOCK" and "dead-letter-via-validator" in f.message for f in findings
+    ), findings
+
+
 # --- CLI integration ---------------------------------------------------------
 
 

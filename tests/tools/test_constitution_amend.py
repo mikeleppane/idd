@@ -190,22 +190,14 @@ def test_amend_constitution_rolls_back_constitution_on_decisions_append_failure(
     )
     inputs = StubInputs(editor_writes=after_text, decisions_entry="text edit only")
 
-    # Plan literal used `decisions_path.open` (a bound method) which would
-    # incorrectly reopen decisions.md for any Path. This deviation guards only
-    # the failing case (append-mode open against decisions_path) and lets
-    # everything else fall through to the original Path.open implementation.
-    original_open = Path.open
+    # The decisions append routes through ``append_decisions_atomic``; patch
+    # it to raise so the rollback path is exercised end-to-end. The earlier
+    # ``Path.open`` patch became dead weight when raw ``open("a")`` was
+    # replaced with the atomic read-modify-write helper.
+    def _raise(_path: Path, _entry: str) -> None:
+        raise OSError("simulated decisions append failure")
 
-    def patched(  # type: ignore[no-untyped-def]
-        self,
-        *a,
-        **kw,
-    ):
-        if self == decisions_path and a and a[0] == "a":
-            raise OSError("simulated decisions append failure")
-        return original_open(self, *a, **kw)
-
-    monkeypatch.setattr(Path, "open", patched)
+    monkeypatch.setattr(am, "append_decisions_atomic", _raise)
 
     with pytest.raises(am.AmendError, match=r"decisions\.md append failed"):
         am.amend_constitution(
@@ -304,14 +296,10 @@ def test_amend_rollback_removes_decisions_file_when_we_created_it(
     )
     inputs = StubInputs(editor_writes=after_text, decisions_entry="text edit only")
 
-    original_open = Path.open
+    def _raise(_path: Path, _entry: str) -> None:
+        raise OSError("simulated decisions append failure")
 
-    def patched(self, *a, **kw):  # type: ignore[no-untyped-def]
-        if self == decisions_path and a and a[0] == "a":
-            raise OSError("simulated decisions append failure")
-        return original_open(self, *a, **kw)
-
-    monkeypatch.setattr(Path, "open", patched)
+    monkeypatch.setattr(am, "append_decisions_atomic", _raise)
 
     with pytest.raises(am.AmendError, match=r"decisions\.md append failed"):
         am.amend_constitution(
@@ -324,7 +312,7 @@ def test_amend_rollback_removes_decisions_file_when_we_created_it(
 
     assert constitution.read_text(encoding="utf-8") == original
     assert not decisions_path.exists(), (
-        "decisions.md was created by _ensure_decisions_file but never written; "
+        "decisions.md was created by ensure_decisions_file but never written; "
         "rollback must remove it to keep the atomic-pair contract"
     )
 

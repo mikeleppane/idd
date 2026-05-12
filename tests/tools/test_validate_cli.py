@@ -355,3 +355,40 @@ def test_cli_renders_fix_hint_when_present(
     assert block["fix_hint"] == "Run `forge fix synthetic`."
     advisory = next(f for f in payload["findings"] if f["severity"] == "WARN")
     assert "fix_hint" not in advisory
+
+
+def test_cli_target_all_surfaces_malformed_lessons_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A malformed ``.forge/intel/lessons.md`` must BLOCK under ``--target all``.
+
+    Earlier revisions of the all-target dispatcher walked the Constitution and
+    conventions but skipped ``validate_lessons``, leaving a broken trap-memory
+    artifact invisible to repo-wide validation while the per-target
+    ``--target lessons`` path correctly reported it.
+    """
+    lessons = tmp_path / ".forge" / "intel" / "lessons.md"
+    lessons.parent.mkdir(parents=True)
+    # Missing required Captured field — parser raises LessonError, which the
+    # validator surfaces as a single BLOCK finding.
+    lessons.write_text(
+        "## L001 — broken\n"
+        "**Resolved by:** manual\n"
+        "**Trap:** t\n"
+        "**Avoidance:** a\n"
+        "**Tags:** dispatch\n"
+        "**Severity:** LOW\n"
+        "**Status:** active\n",
+        encoding="utf-8",
+    )
+
+    rc = validate.main(["--target", "all", "--repo-root", str(tmp_path)])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert rc == 1
+    block = next(
+        (f for f in payload["findings"] if f["severity"] == "BLOCK" and f["target"] == "lessons"),
+        None,
+    )
+    assert block is not None, payload

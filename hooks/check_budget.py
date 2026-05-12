@@ -8,6 +8,21 @@ non-empty ``files_in_scope`` list of bounded globs, and a non-empty
 ``forbidden`` list. Otherwise the hook returns a PreToolUse deny decision;
 otherwise it returns an empty object (allow).
 
+Optional budget fields recognized elsewhere in the FORGE stack:
+
+* ``tests_in_scope`` (required for ``phase == "execute"`` unless
+  ``tdd_exception_ref`` is set; shape-checked here).
+* ``articles`` (optional): list of filtered Constitution articles
+  serialized via ``tools.constitution.Article.to_budget_dict``. Hook is
+  permissive on this field — shape is not validated here; the producing
+  skill (``forge-spec`` / ``forge-plan`` / ``forge-execute`` /
+  ``forge-review``) owns shape.
+* ``traps`` (optional): list of filtered cross-feature trap lessons,
+  serialized via ``tools.intel.lessons.Lesson.to_budget_dict``. Hook is
+  permissive on this field — shape is not validated here; the producing
+  skill (``forge-spec`` / ``forge-plan`` / ``forge-execute``) owns
+  shape.
+
 Stdlib-only. The hook may run as ``python3 ${CLAUDE_PLUGIN_ROOT}/hooks/check_budget.py``
 from a target repo where third-party deps (``jsonschema``, ``yaml``) are
 not on ``sys.path``. To stay independent of the dev install we:
@@ -33,6 +48,7 @@ Hook input shape (per Claude Code docs):
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -194,6 +210,44 @@ def _extract_budget_block(prompt: str) -> str | None:
     return _balanced_json_object(rest[open_idx:])
 
 
+def _strip_budget_block(prompt: str) -> str:
+    """Return ``prompt`` with the first ``context_budget:`` block removed.
+
+    The marker line and the balanced JSON object that follows it are excised
+    from the prompt body before convention scanning. Rules scoped to
+    ``dispatch_brief`` target the human-author-controlled sections of the
+    dispatch; the machine-injected ``articles[]`` and ``traps[]`` arrays
+    inside the budget block should not match those rules even when their
+    bodies coincidentally contain forbidden patterns.
+
+    Returns the original prompt unchanged when no budget block is locatable
+    (no marker line, no following ``{``, or unbalanced braces).
+    """
+    lines = prompt.splitlines(keepends=True)
+    marker_line_idx = _find_marker_line(lines)
+    if marker_line_idx < 0:
+        return prompt
+
+    # Absolute offset of the marker line within ``prompt``.
+    marker_offset = sum(len(line) for line in lines[:marker_line_idx])
+
+    rest = "".join(lines[marker_line_idx:])[len(_MARKER) :]
+    open_idx = rest.find("{")
+    if open_idx < 0:
+        return prompt
+    if rest[:open_idx].strip() != "":
+        return prompt
+
+    body = _balanced_json_object(rest[open_idx:])
+    if body is None:
+        return prompt
+
+    # End of the JSON object within ``prompt``: marker offset + marker text
+    # length + characters skipped up to the opening brace + JSON body length.
+    json_end = marker_offset + len(_MARKER) + open_idx + len(body)
+    return prompt[:marker_offset] + prompt[json_end:]
+
+
 def _validate_files_in_scope(files: Any) -> str | None:
     """Return a deny reason for an invalid files_in_scope, or None when valid."""
     if files is None:
@@ -328,21 +382,60 @@ def _git_toplevel(start: Path) -> Path | None:
     return candidate
 
 
+def _env_repo_root_override() -> Path | None:
+    """Return ``$FORGE_REPO_ROOT`` when it points to a FORGE repo, else ``None``.
+
+    Emits a one-line stderr warning when the env var is set but does not point
+    at a directory containing ``.forge/``. Returns ``None`` in that case so the
+    walk-up fallback can run. Returning ``None`` for unset is silent — only
+    misconfigurations are noisy.
+    """
+    raw = os.environ.get("FORGE_REPO_ROOT")
+    if raw is None or raw.strip() == "":
+        return None
+    candidate = Path(raw)
+    try:
+        resolved = candidate.resolve()
+    except OSError:
+        print(
+            f"[forge-check-budget] FORGE_REPO_ROOT={raw!r} could not be resolved; "
+            "falling back to walk-up",
+            file=sys.stderr,
+        )
+        return None
+    if not (resolved / ".forge").is_dir():
+        print(
+            f"[forge-check-budget] FORGE_REPO_ROOT={raw!r} does not contain a "
+            ".forge/ directory; falling back to walk-up",
+            file=sys.stderr,
+        )
+        return None
+    return resolved
+
+
 def _locate_repo_root(*, start: Path | None = None) -> Path | None:
     """Locate the FORGE repo root for ``start``.
 
     Resolution order:
 
-    1. Ask git: ``git -C <start> rev-parse --show-toplevel``. Accept the
+    1. ``$FORGE_REPO_ROOT`` env override — when set and pointing at a
+       directory containing ``.forge/``, use it. Invalid override (missing
+       directory or absent ``.forge/``) emits a one-line stderr warning and
+       falls through to the walk-up.
+    2. Ask git: ``git -C <start> rev-parse --show-toplevel``. Accept the
        result only when it also contains a ``.forge`` directory — this
        distinguishes a FORGE repo from a generic git checkout that happens
        to sit anywhere on disk.
-    2. Walk up to :data:`_REPO_ROOT_WALK_LIMIT` ancestors looking for the
+    3. Walk up to :data:`_REPO_ROOT_WALK_LIMIT` ancestors looking for the
        first one with a ``.forge`` directory. The walk is bounded so the
        hook cannot stall on malformed environments.
 
-    Returns ``None`` when neither path locates a ``.forge`` directory.
+    Returns ``None`` when no path locates a ``.forge`` directory.
     """
+    override = _env_repo_root_override()
+    if override is not None:
+        return override
+
     current = start if start is not None else Path.cwd()
     try:
         current = current.resolve()
@@ -470,13 +563,22 @@ def _check_dispatch_brief_conventions(
         return True, "ok"
     rules, load_error = _load_conventions_or_error(root)
     if load_error is not None:
-        return False, load_error
+        return False, f"{load_error} (repo: {root})"
     if rules is None or not rules:
         return True, "ok"
-    reason = _first_fired_deny_reason(rules, prompt)
+    # Carve the machine-injected ``context_budget:`` JSON out of the prompt
+    # before scanning. ``articles[]`` and ``traps[]`` arrive verbatim from
+    # ``tools.constitution`` / ``tools.intel.lessons``; ``dispatch_brief``
+    # rules target the human-author-controlled sections of the brief, not
+    # those repo-owned payloads. Without the carve-out, a CRITICAL lesson
+    # whose ``trap`` text quotes a forbidden phrase (e.g. the canonical
+    # ``Co-Authored-By: Claude`` ban) would itself trip the gate that was
+    # authored to keep that phrase out of human-authored briefs.
+    scan_text = _strip_budget_block(prompt)
+    reason = _first_fired_deny_reason(rules, scan_text)
     if reason is None:
         return True, "ok"
-    return False, reason
+    return False, f"{reason} (repo: {root})"
 
 
 def evaluate(prompt: str) -> tuple[bool, str]:

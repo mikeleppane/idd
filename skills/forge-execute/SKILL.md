@@ -39,6 +39,16 @@ text verbatim into the dispatch prompt.
 1. **Validate tier and state.** Read `state.json`. For `tier in ("standard", "full")`, require PLAN.md with `status: ready`, `REVIEW.plan.md` with `target: plan` and `status: resolved`, and `"plan"` recorded in `phases.review.targets_done` (the gate's audit trail). The review phase will be `status: in_progress` at this point — that is expected; do not abort.
 2. **Transition state.** Call `tools.state.start_phase(path, "execute")` (idempotent if already in_progress). For standard/full, this changes `current_phase` from `review` to `execute` while leaving `phases.review` untouched so the plan-pass audit (`targets_done`, `current_target`) survives until the second review pass completes.
 2a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<plan_files_union>)`. The resulting `articles[]` (serialized via `Article.to_budget_dict()`) is included in EVERY per-task subagent dispatch budget under the `articles` field.
+2b. **Lessons preflight.** Call
+    `tools.intel.lessons.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<plan_files_union>)`.
+    The resulting `lessons[]` (serialized via
+    `Lesson.to_budget_dict()`) is included in EVERY per-task subagent
+    dispatch budget under the `traps` field — parallel to the
+    `articles` field documented in 2a. The PreToolUse hook
+    (`hooks/check_budget.py`) is permissive on the `traps` field; this
+    skill owns shape. Missing `.forge/intel/lessons.md` is a no-op (the
+    loader returns `([], [])`); pass the empty list through to every
+    per-task budget unchanged.
 3. **Branch on tier.**
 
 ### Focused branch (M1 behavior, unchanged)
@@ -63,6 +73,8 @@ text verbatim into the dispatch prompt.
      - `read_only_files`: files the task reads but does not modify.
      - `prior_summaries`: slice summaries from prior slices (always); prior task summaries from THIS slice (only when needed).
      - `articles`: filtered Constitution articles (empty list when `.forge/CONSTITUTION.md` is absent).
+     - `traps`: filtered cross-feature trap lessons (empty list when
+       `.forge/intel/lessons.md` is absent or no lessons match scope).
      - `tests_in_scope`: the test files this task creates or modifies — drives the validator's pairing check. The dispatched subagent's `# Steps` MUST embed the [forge-tdd](../forge-tdd/SKILL.md) `<!-- scaffold:begin -->` / `<!-- scaffold:end -->` block verbatim against these test files.
      - `tdd_exception_ref` (optional): an ADR id from `decisions.md` recorded as a `## TDD Exception: <AC-id>` heading with `Rationale`, `Reviewer`, and `Date` keys. Only with this set may `tests_in_scope` be empty; the rationale lives in the ADR.
    - Receive subagent summary (≤500 words). Record each commit via `tools.state.record_commit(path, sha=<sha>, phase="execute", subject=<subject>)` — the helper stamps `logged_at`, schema-validates the entry, and writes through the hook-protected path. **Do NOT** add a `slice` key (or any other extra) — the helper passes the payload through the schema, which enforces `additionalProperties: false` on `commits[]` items. Record slice membership in `slice-<N>.summary` instead. Direct `Write`/`Edit`/`MultiEdit` on `state.json` is refused by the PreToolUse hook.

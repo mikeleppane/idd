@@ -22,14 +22,22 @@ build/
 *.swp
 *:Zone.Identifier
 
-# FORGE runtime artifacts (per-project, never committed in plugin repo)
-.forge/
+# FORGE runtime artifacts (per-project, never committed in plugin repo).
+# Ignore contents of the repo-root .forge/ tree but keep the directory itself
+# unignored so the explicit !-rules below can match individual files.
+/.forge/*
 # Test fixtures intentionally ship a synthetic .forge/ tree under target_repo/.
 !tests/fixtures/**/target_repo/.forge/
 # Smoke fixtures intentionally ship a synthetic .forge/ tree per feature.
 !tests/smoke/**/.forge/
 # Research-mode fixtures intentionally ship a synthetic .forge/ tree per mode.
 !tests/fixtures/_research/**/.forge/
+# FORGE dogfoods its own enforcement: ship the conventions + git-conventions
+# config so the dispatch hook and trailer-ban gate fire on this repo too.
+# Feature state / phase artifacts stay ignored — only these two static config
+# files are tracked.
+!/.forge/conventions.json
+!/.forge/config.json
 
 # Local config
 .env

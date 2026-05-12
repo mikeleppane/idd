@@ -15,11 +15,13 @@ import contextlib
 import json
 import os
 import re
+import secrets
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path, PurePosixPath
+from types import ModuleType
 from typing import Literal
 
 from tools import redaction
@@ -34,6 +36,17 @@ from tools.validate._finding import EXIT_NONZERO_SEVERITIES
 from tools.validate.constitution import validate_constitution
 from tools.validate.conventions import Convention, load_conventions
 
+# fcntl is POSIX-only; keep tools.constitution_amend importable on Windows.
+# When fcntl is unavailable, ``append_decisions_atomic`` falls back to plain
+# read-modify-write via ``atomic_replace`` — single-machine non-concurrent
+# flows stay correct, and tools.archive uses the same guard for its own
+# advisory-lock seam.
+fcntl: ModuleType | None
+try:
+    import fcntl
+except ModuleNotFoundError:  # pragma: no cover - non-POSIX (Windows)
+    fcntl = None
+
 
 class AmendError(RuntimeError):
     """Raised when the amend lifecycle cannot complete."""
@@ -47,7 +60,11 @@ _LEVEL_RANK = {"CRITICAL": 3, "SHOULD": 2, "MAY": 1}
 _PER_FILE_CAP_BYTES = 16384
 _TOTAL_CAP_BYTES = 81920
 _MAX_SIGNAL_FILES = 8
-_TRUNCATION_MARKER = f"\n--- truncated at {_PER_FILE_CAP_BYTES} bytes ---\n"
+# Truncation marker shape is generated per-collect with a hex nonce so that a
+# user file legitimately containing the literal cannot masquerade as the
+# marker. See ``_generate_truncation_marker``.
+_TRUNCATION_NONCE_HEX_LEN = 16
+_TRUNCATION_NONCE_RE = re.compile(rf"^[0-9a-f]{{{_TRUNCATION_NONCE_HEX_LEN}}}$")
 # Defense-in-depth. The hardcoded _MANIFEST_NAMES / _DOC_NAMES candidate list
 # never contains a name that matches these globs today, so the deny-glob
 # branch in collect_bootstrap_signals is unreachable under default config.
@@ -55,7 +72,40 @@ _TRUNCATION_MARKER = f"\n--- truncated at {_PER_FILE_CAP_BYTES} bytes ---\n"
 # sensitive-named candidate (e.g. ".env.example", "deploy.pem") gets the
 # filter for free — the regression test forces the branch via monkeypatch so
 # nobody prunes it for "dead code".
-_DENY_GLOBS: tuple[str, ...] = (".env*", "*.pem", "*.key", "id_rsa*")
+#
+# The expanded set spans three credential-file families: dotfiles
+# (``.env*``, ``.npmrc``, ``.netrc``, ``.git-credentials``), private-key /
+# cert shapes (``*.pem``, ``*.key``, ``id_rsa*``, ``*.ppk``, ``*.p12``,
+# ``*.pfx``, ``*.kdbx``, ``*.crt``, ``*.cer``, ``*.jks``, ``*.keystore``),
+# and credential JSON / config bundles (``credentials.json``,
+# ``service-account-*.json``, ``kubeconfig``). The list is intentionally
+# defense-in-depth: a body-level secret-pattern scanner runs after this
+# filter, so a borderline file (e.g. ``client.crt`` containing only a
+# public certificate) is still rejected at the name layer rather than
+# trusted to the body scan.
+_DENY_GLOBS: tuple[str, ...] = (
+    # dotfiles / config
+    ".env*",
+    ".npmrc",
+    ".netrc",
+    ".git-credentials",
+    # private-key / cert shapes
+    "*.pem",
+    "*.key",
+    "id_rsa*",
+    "*.ppk",
+    "*.p12",
+    "*.pfx",
+    "*.kdbx",
+    "*.crt",
+    "*.cer",
+    "*.jks",
+    "*.keystore",
+    # credential JSON / config bundles
+    "credentials.json",
+    "service-account-*.json",
+    "kubeconfig",
+)
 _MANIFEST_NAMES: tuple[str, ...] = (
     "pyproject.toml",
     "package.json",
@@ -69,13 +119,97 @@ _MANIFEST_NAMES: tuple[str, ...] = (
 )
 _DOC_NAMES: tuple[str, ...] = ("AGENTS.md", "CLAUDE.md", "README.md")
 
-# Content-level secret regex: triggered when a key-shaped label sits next to a
-# value-shaped token long enough to look like a credential. Used as a fallback
-# alongside ``tools.redaction.filter`` so unconfigured deny_regex still catches
-# obvious leaks in bootstrap signals.
-_SECRET_CONTENT_RE = re.compile(
-    r"(?i)(api[_-]?key|secret|password|token)\s*[:=]\s*['\"]?[A-Za-z0-9+/=_-]{12,}",
+
+@dataclass(frozen=True, kw_only=True)
+class _SecretPattern:
+    """One named credential-shape regex used by :func:`_detect_secret`.
+
+    Pairing the regex with a stable ``label`` lets the scanner tell callers
+    WHICH shape fired the drop (e.g. ``"aws_access_key"`` vs ``"jwt"``)
+    instead of the legacy "secret-shaped content" generic — useful for the
+    user-facing drop log and for tests that assert on the matched class.
+    """
+
+    label: str
+    regex: re.Pattern[str]
+
+
+# Content-level credential scanner. Each entry targets a single, explicit
+# token shape so the false-positive surface stays tight. The original
+# single regex (``(api[_-]?key|secret|password|token)\s*[:=]\s*['\"]?...``)
+# both missed every modern token format (JWT, AWS, GitHub PAT, Stripe,
+# Slack, GCP service-account, PEM private-key markers) and flagged
+# legitimate prose like ``secret = compute_hash(...)`` or English copy
+# (``password: NewPassword123Required``). The new design:
+#
+#   * Enumerates well-known token shapes first — those don't depend on
+#     label prefixes at all.
+#   * Falls back to a generic-assignment shape that REQUIRES quote
+#     delimiters around a 20+ char value, plus a narrow allow-list of
+#     credential-shaped labels. The quote requirement drops the unquoted
+#     prose false-positive class.
+#
+# Order matters: more-specific shapes run before the generic fallback so
+# the surfaced label is the most informative one (an AWS key embedded as
+# ``access_key = "AKIA..."`` reports ``aws_access_key``, not the broader
+# ``generic_assignment``).
+_SECRET_PATTERNS: tuple[_SecretPattern, ...] = (
+    _SecretPattern(
+        label="aws_access_key",
+        regex=re.compile(r"AKIA[0-9A-Z]{16}"),
+    ),
+    _SecretPattern(
+        label="github_pat",
+        regex=re.compile(r"gh[psour]_[A-Za-z0-9]{36,}"),
+    ),
+    _SecretPattern(
+        label="stripe_live_key",
+        regex=re.compile(r"sk_live_[0-9a-zA-Z]{24,}"),
+    ),
+    _SecretPattern(
+        label="slack_token",
+        regex=re.compile(r"xox[abprs]-[A-Za-z0-9-]{10,}"),
+    ),
+    _SecretPattern(
+        label="jwt",
+        regex=re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+"),
+    ),
+    _SecretPattern(
+        label="pem_private_key",
+        regex=re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"),
+    ),
+    _SecretPattern(
+        label="gcp_service_account",
+        regex=re.compile(r'"type"\s*:\s*"service_account"'),
+    ),
+    _SecretPattern(
+        label="generic_assignment",
+        regex=re.compile(
+            r"""(?ix)                               # case-insensitive, verbose
+            (?:^|[\s;,{])                           # boundary: SOL or separator
+            (?:
+                api[_-]?key
+              | secret[_-]?key
+              | access[_-]?key
+              | auth[_-]?token
+              | bearer[_-]?token
+              | client[_-]?secret
+              | private[_-]?key
+            )
+            \s*[:=]\s*
+            ['"`]                                   # opening quote (required)
+            [A-Za-z0-9+/=_-]{20,}                   # 20+ char base64-ish value
+            ['"`]                                   # closing quote (required)
+            """,
+        ),
+    ),
 )
+
+
+# Drop-reason vocabulary for :class:`DroppedFile`. Pinned as a module-level
+# alias so mypy strict treats the literal as a structural type — the
+# value passed in ``_collect_signals`` must be one of the two strings.
+_DropReason = Literal["deny_glob", "secret_content"]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -88,6 +222,29 @@ class SignalFile:
 
 
 @dataclass(frozen=True, kw_only=True)
+class DroppedFile:
+    """One file refused during signal collection, with structured reason.
+
+    Carries the path that was dropped, the reason category (``"deny_glob"``
+    for path-name filter hits, ``"secret_content"`` for body-scan hits),
+    and a detail string identifying the specific glob or pattern label
+    that triggered the drop. Surfacing the label lets the user see "GCP
+    service-account JSON detected in README.md" rather than the legacy
+    generic "secret-shaped content" message.
+
+    Symlink-escape drops are surfaced through
+    :attr:`BootstrapSignals.dropped_for_escape` instead — that channel
+    distinguishes a leaked credential (worth investigating) from a
+    hostile symlink (worth deleting) and is owned by the candidate-
+    classification pass before the read loop runs.
+    """
+
+    relative_path: PurePosixPath
+    reason: _DropReason
+    detail: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class BootstrapSignals:
     """Pure-data result of :func:`collect_bootstrap_signals`.
 
@@ -95,14 +252,25 @@ class BootstrapSignals:
     ``files`` list, regardless of cause — both deny-glob matches (sensitive
     name shape like ``.env``, ``id_rsa``) and secret-content rejections
     (the body contained a credential-shaped substring). Callers that need
-    to distinguish the two causes can re-scan paths via the documented
-    deny-glob set, but the public surface treats them uniformly: a dropped
-    path is one that did NOT make it into the bootstrap payload.
+    to distinguish the two causes inspect :attr:`dropped_records`, which
+    carries the structured reason + detail per entry.
 
     Attributes:
         files: Files that survived all filters, in priority order.
         dropped: Paths skipped or removed by either the deny-glob filter
-            or the secret-content scan.
+            or the secret-content scan. Kept as the legacy union for
+            back-compat with existing call sites; new code should consume
+            :attr:`dropped_records` instead.
+        dropped_records: Structured per-drop records carrying the reason
+            (``"deny_glob"`` vs ``"secret_content"``) and a detail string
+            naming the matched glob or secret-pattern label. Parallel to
+            :attr:`dropped` — every entry in ``dropped`` has exactly one
+            matching record here (and vice versa).
+        dropped_for_escape: Paths refused because a symlink resolved to a
+            location outside ``repo_root``. Kept separate from
+            :attr:`dropped` so the user / skill can distinguish a leaked
+            credential (worth investigating) from a hostile symlink
+            (worth deleting).
         truncated: Paths whose body was capped at the per-file byte limit.
         total_bytes: Total UTF-8 byte count across :attr:`files`.
     """
@@ -111,62 +279,174 @@ class BootstrapSignals:
     dropped: list[PurePosixPath]
     truncated: list[PurePosixPath]
     total_bytes: int
+    dropped_for_escape: list[PurePosixPath] = field(default_factory=list)
+    dropped_records: list[DroppedFile] = field(default_factory=list)
 
     @property
     def dropped_for_secrets(self) -> list[PurePosixPath]:
         """Back-compat alias for :attr:`dropped`.
 
         Kept so existing tests / skill orchestrators continue to read the
-        old field name. Prefer :attr:`dropped` in new code — the rename
-        reflects that this list also includes deny-glob rejections, not
-        only secret-content rejections.
+        old field name. Prefer :attr:`dropped_records` in new code — the
+        structured records carry the drop reason and detail label that
+        this flat list cannot express.
         """
         return self.dropped
 
 
 def _name_matches_deny_glob(name: str) -> bool:
     """True iff ``name`` matches any path-level deny glob."""
-    return any(globstar_match(name, g) for g in _DENY_GLOBS)
+    return _matching_deny_glob(name) is not None
 
 
-def _candidate_paths(repo_root: Path, *, names: tuple[str, ...]) -> list[Path]:
-    """Return existing candidate file paths in priority order, first-match per name.
+def _matching_deny_glob(name: str) -> str | None:
+    """Return the first deny-glob that ``name`` matches, or ``None``.
+
+    Surfacing the matching glob lets the caller record the structured
+    :class:`DroppedFile` detail so the user sees *which* shape the
+    filename hit — useful when several globs could plausibly match.
+    """
+    for glob in _DENY_GLOBS:
+        if globstar_match(name, glob):
+            return glob
+    return None
+
+
+def _is_within_repo(path: Path, repo_root: Path) -> bool:
+    """Return True iff ``path`` resolves to a location inside ``repo_root``.
+
+    Refuses symlinks that escape the tree by canonicalizing both sides via
+    ``Path.resolve(strict=True)`` and checking containment. Symlink loops
+    and broken symlinks surface as ``OSError``/``FileNotFoundError`` — both
+    map to ``False`` so the caller treats them as "skip".
+    """
+    try:
+        resolved = path.resolve(strict=True)
+        root = repo_root.resolve(strict=True)
+    except (FileNotFoundError, OSError):
+        return False
+    return resolved.is_relative_to(root)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Candidate:
+    """One repo-root candidate ready for the read loop.
+
+    ``escaped`` flags entries that resolved outside ``repo_root`` — those
+    are surfaced in :attr:`BootstrapSignals.dropped_for_escape` instead of
+    being read.
+    """
+
+    path: Path
+    rel: PurePosixPath
+    escaped: bool
+
+
+def _classify_candidate(path: Path, repo_root: Path) -> _Candidate | None:
+    """Return a classified candidate for ``path``, or ``None`` to skip silently.
+
+    ``None`` covers broken symlinks and symlink loops — they should not
+    appear in either ``files`` or ``dropped_for_escape``. Existing in-tree
+    files come back with ``escaped=False``; symlinks resolving outside
+    ``repo_root`` come back with ``escaped=True`` so the caller can record
+    them. The relative path used for both ``files`` and
+    ``dropped_for_escape`` is the on-disk name under ``repo_root``, NOT
+    the symlink target.
+    """
+    try:
+        is_file = path.is_file()
+    except OSError:
+        return None
+    if not is_file:
+        return None
+    rel = PurePosixPath(path.relative_to(repo_root).as_posix())
+    if path.is_symlink() and not _is_within_repo(path, repo_root):
+        return _Candidate(path=path, rel=rel, escaped=True)
+    return _Candidate(path=path, rel=rel, escaped=False)
+
+
+def _candidate_paths(repo_root: Path, *, names: tuple[str, ...]) -> list[_Candidate]:
+    """Return candidate entries in priority order, first-match per name.
 
     ``names`` is the parameterized name list — caller decides whether the
     full bootstrap set (manifests + docs) or the narrower resync set (docs
     only) drives the walk. ``*.csproj`` is included only when at least one
     manifest name is requested (the glob is part of the manifest sweep).
+    Symlink classification (in-tree vs escaping vs broken/loop) is folded
+    into the returned :class:`_Candidate` records; the caller decides
+    whether to read or record each one.
     """
-    candidates: list[Path] = []
+    candidates: list[_Candidate] = []
     seen: set[Path] = set()
+
+    def _push(path: Path) -> None:
+        if path in seen:
+            return
+        classified = _classify_candidate(path, repo_root)
+        if classified is None:
+            return
+        candidates.append(classified)
+        seen.add(path)
+
     for name in names:
         if name not in _MANIFEST_NAMES:
             continue
-        path = repo_root / name
-        if path.is_file() and path not in seen:
-            candidates.append(path)
-            seen.add(path)
+        _push(repo_root / name)
     # ``*.csproj`` is glob-matched (non-recursive, repo root only); first sorted name.
     # Only sweep when manifests are part of the requested name set — the resync
     # signal collector restricts to docs and must skip the csproj glob.
     if any(n in _MANIFEST_NAMES for n in names):
-        csproj_hits = sorted(repo_root.glob("*.csproj"))
-        for path in csproj_hits:
-            if path.is_file() and path not in seen:
-                candidates.append(path)
-                seen.add(path)
+        for path in sorted(repo_root.glob("*.csproj")):
+            before = len(candidates)
+            _push(path)
+            if len(candidates) != before:
                 break  # only the first sorted match
     for name in names:
         if name not in _DOC_NAMES:
             continue
-        path = repo_root / name
-        if path.is_file() and path not in seen:
-            candidates.append(path)
-            seen.add(path)
+        _push(repo_root / name)
     return candidates
 
 
-def _read_and_truncate(path: Path) -> tuple[str, bool]:
+def _generate_truncation_marker(nonce_hex: str) -> str:
+    r"""Render the per-collect truncation marker around ``nonce_hex``.
+
+    The marker shape is ``"\n--- truncated at <cap> bytes [<nonce>] ---\n"``.
+    The bracketed nonce keeps a user file that legitimately contains the
+    legacy literal from being confused with a real marker.
+    """
+    return f"\n--- truncated at {_PER_FILE_CAP_BYTES} bytes [{nonce_hex}] ---\n"
+
+
+def _validate_nonce_hex(nonce_hex: str) -> None:
+    """Raise ``ValueError`` if ``nonce_hex`` is not a lowercase 16-char hex string."""
+    if not _TRUNCATION_NONCE_RE.fullmatch(nonce_hex):
+        raise ValueError(
+            f"nonce_hex must be {_TRUNCATION_NONCE_HEX_LEN} lowercase hex chars; got {nonce_hex!r}",
+        )
+
+
+def _truncate_on_codepoint_boundary(head: bytes) -> bytes:
+    """Return ``head`` shortened to the last complete UTF-8 codepoint boundary.
+
+    ``head`` is the raw ``_PER_FILE_CAP_BYTES`` slice. UTF-8 continuation
+    bytes have the bit pattern ``0b10xxxxxx``; codepoint-start bytes never
+    do. Walk back from the end (at most 3 bytes — UTF-8 codepoints are
+    ≤4 bytes) until ``head[:i]`` decodes cleanly under strict UTF-8. If
+    no clean prefix is found within 4 bytes, fall back to the empty
+    prefix — the input cannot be valid UTF-8 anywhere near the boundary.
+    """
+    for back in range(4):
+        candidate = head[: len(head) - back] if back else head
+        try:
+            candidate.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            continue
+        return candidate
+    return b""
+
+
+def _read_and_truncate(path: Path, *, marker: str) -> tuple[str, bool]:
     """Read ``path`` up to the per-file byte cap, decode UTF-8.
 
     Bounded I/O: opens the file in binary mode and reads at most
@@ -175,83 +455,145 @@ def _read_and_truncate(path: Path) -> tuple[str, bool]:
     marker) from "over cap" (marker appended). A multi-GB README cannot
     inflate memory or stall the bootstrap.
 
-    Returns ``(body, truncated)``. ``body`` ends with the truncation
-    marker when the source exceeded the cap.
+    Truncation backs off to the last UTF-8 codepoint boundary before
+    appending ``marker`` so the decoded body never contains a U+FFFD
+    replacement char produced by a half-decoded multi-byte sequence.
+
+    Returns ``(body, truncated)``. ``body`` ends with ``marker`` when the
+    source exceeded the cap.
+
+    Post-condition (truncated path):
+        ``len(body.encode("utf-8")) <= _PER_FILE_CAP_BYTES + len(marker.encode("utf-8"))``.
     """
     with path.open("rb") as fh:
         head = fh.read(_PER_FILE_CAP_BYTES + 1)
     if len(head) > _PER_FILE_CAP_BYTES:
-        capped = head[:_PER_FILE_CAP_BYTES]
-        return capped.decode("utf-8", errors="replace") + _TRUNCATION_MARKER, True
+        capped = _truncate_on_codepoint_boundary(head[:_PER_FILE_CAP_BYTES])
+        return capped.decode("utf-8", errors="strict") + marker, True
     return head.decode("utf-8", errors="replace"), False
 
 
-def _looks_like_secret(body: str) -> bool:
-    """Run body through ``tools.redaction.filter`` then a focused regex fallback.
+def _detect_secret(body: str) -> str | None:
+    """Return the matched secret-pattern label, or ``None`` when nothing fires.
 
-    ``redaction.filter`` honors any caller-configured ``deny_regex`` /
-    ``fatal_regex``; the default config carries empty regex lists, so the
-    fallback below is what fires when no project config has been threaded in.
+    Runs ``body`` through :func:`tools.redaction.filter` first so any
+    project-supplied ``deny_regex`` / ``fatal_regex`` takes precedence
+    (the redaction surface owns user-configurable patterns), then through
+    the curated :data:`_SECRET_PATTERNS` list. Surfacing the matched
+    label lets callers tell users WHICH credential shape triggered the
+    drop (e.g. ``"github_pat detected"``) rather than the legacy generic
+    "secret-shaped content detected" message.
+
+    Returns ``"redaction_deny"`` / ``"redaction_fatal"`` when the
+    redaction surface fired the rejection — those branches honor user
+    configuration and the curated label list does not own them.
     """
     result = redaction.filter(
         redaction.PromptPayload(text=body, files=()),
         redaction.RedactionConfig(),
     )
-    if result.had_denials or result.fatal_matches:
-        return True
-    return bool(_SECRET_CONTENT_RE.search(body))
+    if result.fatal_matches:
+        return "redaction_fatal"
+    if result.had_denials:
+        return "redaction_deny"
+    for pattern in _SECRET_PATTERNS:
+        if pattern.regex.search(body):
+            return pattern.label
+    return None
 
 
-def _collect_signals(repo_root: Path, *, names: tuple[str, ...]) -> BootstrapSignals:
+def _collect_signals(
+    repo_root: Path,
+    *,
+    names: tuple[str, ...],
+    nonce_hex: str | None,
+) -> BootstrapSignals:
     """Shared engine: walk candidate files under ``names`` with the bootstrap bounds.
 
     Encapsulates the iteration, per-file size cap, truncation marker, total
     payload cap, deny-glob filter, secret-content scan, and the
     ``_MAX_SIGNAL_FILES`` cap. ``names`` is the parameterized candidate-set
     selector — :func:`collect_bootstrap_signals` passes manifests + docs,
-    :func:`collect_resync_signals` passes docs only.
+    :func:`collect_resync_signals` passes docs only. ``nonce_hex`` pins
+    the per-collect truncation-marker nonce so tests / callers can recover
+    byte-equality across calls; ``None`` mints a fresh nonce.
     """
     if not repo_root.is_dir():
         raise AmendError(f"repo_root not found or not a directory: {repo_root}")
 
+    if nonce_hex is None:
+        nonce_hex = secrets.token_hex(_TRUNCATION_NONCE_HEX_LEN // 2)
+    else:
+        _validate_nonce_hex(nonce_hex)
+    marker = _generate_truncation_marker(nonce_hex)
+
     files: list[SignalFile] = []
     dropped: list[PurePosixPath] = []
+    dropped_records: list[DroppedFile] = []
+    dropped_for_escape: list[PurePosixPath] = []
     truncated_paths: list[PurePosixPath] = []
     total_bytes = 0
 
-    for path in _candidate_paths(repo_root, names=names):
+    for candidate in _candidate_paths(repo_root, names=names):
         if len(files) >= _MAX_SIGNAL_FILES:
             break
-        rel = PurePosixPath(path.relative_to(repo_root).as_posix())
 
-        if _name_matches_deny_glob(rel.name):
-            dropped.append(rel)
+        if candidate.escaped:
+            dropped_for_escape.append(candidate.rel)
             continue
 
-        body, was_truncated = _read_and_truncate(path)
+        matched_glob = _matching_deny_glob(candidate.rel.name)
+        if matched_glob is not None:
+            dropped.append(candidate.rel)
+            dropped_records.append(
+                DroppedFile(
+                    relative_path=candidate.rel,
+                    reason="deny_glob",
+                    detail=matched_glob,
+                ),
+            )
+            continue
 
-        if _looks_like_secret(body):
-            dropped.append(rel)
+        body, was_truncated = _read_and_truncate(candidate.path, marker=marker)
+
+        secret_label = _detect_secret(body)
+        if secret_label is not None:
+            dropped.append(candidate.rel)
+            dropped_records.append(
+                DroppedFile(
+                    relative_path=candidate.rel,
+                    reason="secret_content",
+                    detail=secret_label,
+                ),
+            )
             continue
 
         body_bytes = len(body.encode("utf-8"))
         if total_bytes + body_bytes > _TOTAL_CAP_BYTES:
             break
 
-        files.append(SignalFile(relative_path=rel, body=body, truncated=was_truncated))
+        files.append(
+            SignalFile(relative_path=candidate.rel, body=body, truncated=was_truncated),
+        )
         if was_truncated:
-            truncated_paths.append(rel)
+            truncated_paths.append(candidate.rel)
         total_bytes += body_bytes
 
     return BootstrapSignals(
         files=files,
         dropped=dropped,
+        dropped_records=dropped_records,
+        dropped_for_escape=dropped_for_escape,
         truncated=truncated_paths,
         total_bytes=total_bytes,
     )
 
 
-def collect_bootstrap_signals(repo_root: Path) -> BootstrapSignals:
+def collect_bootstrap_signals(
+    repo_root: Path,
+    *,
+    nonce_hex: str | None = None,
+) -> BootstrapSignals:
     """Collect bounded project-shape signals for skill-driven Constitution drafting.
 
     Walks a fixed priority list of manifest and documentation files at the
@@ -260,34 +602,57 @@ def collect_bootstrap_signals(repo_root: Path) -> BootstrapSignals:
     Files matching a path-level deny glob are skipped before reading; files
     whose decoded body contains secret-shaped content (per ``tools.redaction``
     or a focused fallback regex) are dropped after read and recorded in
-    ``dropped_for_secrets``. The function performs no LLM calls and no
-    network access.
+    ``dropped_for_secrets``. Symlinks that resolve outside ``repo_root`` are
+    refused outright and surfaced in ``dropped_for_escape`` — the trust
+    boundary "this came from the repo" cannot be bypassed via a
+    symlink-to-/etc/passwd trick. The function performs no LLM calls and
+    no network access.
 
     Args:
         repo_root: Absolute path to the repository root.
+        nonce_hex: Optional 16-char lowercase hex string used as the
+            truncation marker's per-collect nonce. Defaults to a fresh
+            random nonce per call (cryptographically random, via
+            :mod:`secrets`). Pass an explicit value to recover byte-equal
+            results across calls — useful for deterministic test fixtures.
+            Invalid shapes raise ``ValueError``.
 
     Returns:
         A frozen :class:`BootstrapSignals` whose ``files`` list is in
-        priority order. Two invocations on the same tree return equal results.
+        priority order. Two invocations on the same tree with the same
+        ``nonce_hex`` return equal results.
 
     Raises:
         AmendError: If ``repo_root`` does not exist or is not a directory.
+        ValueError: If ``nonce_hex`` is provided but is not 16 lowercase
+            hex characters.
     """
-    return _collect_signals(repo_root, names=_MANIFEST_NAMES + _DOC_NAMES)
+    return _collect_signals(
+        repo_root,
+        names=_MANIFEST_NAMES + _DOC_NAMES,
+        nonce_hex=nonce_hex,
+    )
 
 
-def collect_resync_signals(repo_root: Path) -> BootstrapSignals:
+def collect_resync_signals(
+    repo_root: Path,
+    *,
+    nonce_hex: str | None = None,
+) -> BootstrapSignals:
     """Collect bounded doc-only signals for the conventions resync workflow.
 
     Same bounds as :func:`collect_bootstrap_signals` (16 KiB per file, 80 KiB
-    total payload, 8-file cap, deny-glob filter, secret-content drop) but
-    restricts the candidate set to ``_DOC_NAMES`` — ``AGENTS.md`` /
-    ``CLAUDE.md`` / ``README.md``. Manifests are intentionally excluded:
-    the resync flow inspects prose-authored convention rules, not project
-    structure.
+    total payload, 8-file cap, deny-glob filter, secret-content drop,
+    symlink-escape refusal) but restricts the candidate set to
+    ``_DOC_NAMES`` — ``AGENTS.md`` / ``CLAUDE.md`` / ``README.md``.
+    Manifests are intentionally excluded: the resync flow inspects
+    prose-authored convention rules, not project structure.
 
     Args:
         repo_root: Absolute path to the repository root.
+        nonce_hex: Optional 16-char lowercase hex string used as the
+            truncation marker's per-collect nonce. Same semantics as
+            :func:`collect_bootstrap_signals`.
 
     Returns:
         A frozen :class:`BootstrapSignals` (data shape unchanged so both
@@ -295,8 +660,10 @@ def collect_resync_signals(repo_root: Path) -> BootstrapSignals:
 
     Raises:
         AmendError: If ``repo_root`` does not exist or is not a directory.
+        ValueError: If ``nonce_hex`` is provided but is not 16 lowercase
+            hex characters.
     """
-    return _collect_signals(repo_root, names=_DOC_NAMES)
+    return _collect_signals(repo_root, names=_DOC_NAMES, nonce_hex=nonce_hex)
 
 
 def classify_change(before: str, after: str) -> str:
@@ -488,15 +855,27 @@ def ensure_decisions_file(decisions_path: Path) -> bool:
     Both the amend lifecycle and the ship-time ACK hook share this helper so
     a freshly-bootstrapped decisions.md always starts with the same header.
 
+    Race-free: claims the path via ``os.O_CREAT | os.O_EXCL | os.O_WRONLY``
+    so two concurrent callers cannot both think they created the file. The
+    losing caller sees ``FileExistsError`` and returns ``False``. Mirrors
+    the ``O_EXCL`` claim used by :func:`persist_drafted_constitution` for
+    the Constitution path so the bootstrap surfaces share one race model.
+
     Returns:
-        True when the file was created in this call (rollback callers must
-        remove it on append failure to keep the atomic-pair contract). False
-        when the file already existed.
+        True when this call created the file (rollback callers must remove
+        it on append failure to keep the atomic-pair contract). False when
+        the file already existed — either before this call or because a
+        concurrent caller won the claim.
     """
-    if decisions_path.exists():
-        return False
     decisions_path.parent.mkdir(parents=True, exist_ok=True)
-    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+    try:
+        fd = os.open(decisions_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return False
+    try:
+        os.write(fd, b"# Decisions\n\n")
+    finally:
+        os.close(fd)
     return True
 
 
@@ -557,6 +936,65 @@ def atomic_replace(target: Path, body: str) -> None:
             os.fsync(dir_fd)
     finally:
         os.close(dir_fd)
+
+
+def append_decisions_atomic(decisions_path: Path, entry: str) -> None:
+    r"""Atomically append ``entry`` to ``decisions_path``.
+
+    Read-modify-write via :func:`atomic_replace` so a process crash cannot
+    leave a partial row on disk: the temp-file rename is the single moment
+    the canonical name flips. Under POSIX, an advisory ``fcntl.flock``
+    serializes concurrent writers so two callers cannot both read the
+    pre-state and have the second writer's replace silently overwrite the
+    first writer's entry. The lock is held across the entire read,
+    concatenate, and replace.
+
+    Caller must have already bootstrapped the file via
+    :func:`ensure_decisions_file` if the canonical ``# Decisions\n\n``
+    header is required — this helper does not synthesize it. When the file
+    is missing, the helper treats the current body as empty and writes the
+    entry verbatim; ``ensure_decisions_file`` owns the bootstrap shape,
+    this helper owns the write primitive.
+
+    The entry string is appended verbatim. Callers are responsible for the
+    leading ``\n`` separator between the existing body and the new entry,
+    matching the shape used by every existing call site (see
+    :func:`tools.ship_gate.make_acknowledgement_hook` for the reference).
+
+    Platform note:
+        On non-POSIX platforms ``fcntl`` is unavailable; the helper falls
+        back to plain read-modify-write via :func:`atomic_replace`. Single
+        writer paths stay correct, but two concurrent writers can lose one
+        of the two entries (last writer wins). FORGE's CI runs on POSIX
+        so the advisory lock is the production path.
+
+    Raises:
+        OSError: When the parent directory is gone, the disk is full, or
+            the temp-file rename fails for another reason. Callers that
+            need rollback must catch and restore prior on-disk state
+            themselves; this helper is the write primitive, not the
+            lifecycle owner.
+    """
+    if fcntl is None:  # pragma: no cover - non-POSIX (Windows)
+        current = decisions_path.read_text(encoding="utf-8") if decisions_path.exists() else ""
+        atomic_replace(decisions_path, current + entry)
+        return
+
+    # Sibling lockfile keeps the lock inode disjoint from the file the
+    # atomic-replace flips, so the rename cannot orphan the lock. The
+    # lockfile is created on first append and left in place — re-creating
+    # it on every call would itself need synchronization.
+    decisions_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = decisions_path.with_suffix(decisions_path.suffix + ".lock")
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        current = decisions_path.read_text(encoding="utf-8") if decisions_path.exists() else ""
+        atomic_replace(decisions_path, current + entry)
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
 
 
 # Backwards-compatible private aliases for in-module call sites.
@@ -654,8 +1092,7 @@ def amend_constitution(
         kind="amendment",
     )
     try:
-        with decisions_path.open("a", encoding="utf-8") as fh:
-            fh.write(entry)
+        append_decisions_atomic(decisions_path, entry)
     except OSError as exc:
         _atomic_replace(constitution, before)
         if decisions_created:
@@ -677,7 +1114,14 @@ _DUPLICATE_TRIGGER_COUNT = 2
 
 
 def _check_draft_frontmatter(text: str) -> None:
-    """Raise ``AmendError`` if frontmatter lacks a valid ``version:`` or ``created:``."""
+    """Raise ``AmendError`` if frontmatter lacks a valid ``version:`` or ``created:``.
+
+    The ``created:`` check goes beyond a shape match — the captured date string
+    is parsed via :meth:`datetime.date.fromisoformat` so calendar-invalid values
+    (``2026-13-99``, ``2026-02-30``, ``2025-02-29`` on a non-leap year) are
+    rejected here instead of leaking into a bootstrap Constitution whose
+    frontmatter schema would still nominally pass a regex-only check.
+    """
     try:
         fm, _ = _split_frontmatter(text)
     except AmendError as exc:
@@ -686,10 +1130,49 @@ def _check_draft_frontmatter(text: str) -> None:
         raise AmendError(
             "draft frontmatter missing or malformed `version:` (expected semver MAJOR.MINOR.PATCH)"
         )
-    if not _FRONTMATTER_CREATED_RE.search(fm):
+    created_match = _FRONTMATTER_CREATED_RE.search(fm)
+    if not created_match:
         raise AmendError(
             'draft frontmatter missing or malformed `created:` (expected "YYYY-MM-DD")'
         )
+    try:
+        date.fromisoformat(created_match.group(1))
+    except ValueError as exc:
+        raise AmendError(
+            f"draft frontmatter `created:` is not a real calendar date: "
+            f"{created_match.group(1)!r} ({exc})"
+        ) from exc
+
+
+def _check_article_numbering(articles: list[Article]) -> None:
+    """Raise ``AmendError`` when article numbering is non-monotonic or has gaps.
+
+    Articles must be numbered ``1, 2, 3, ...`` with no duplicates and no gaps.
+    A draft authored by hand with renumbered articles (after a deletion or
+    insertion) commonly violates this; catching it at draft validation surfaces
+    one message instead of bouncing through the structural validator inside
+    :func:`persist_drafted_constitution`.
+
+    Mirrors the wording of
+    :func:`tools.validate.constitution._check_article_numbering` so the
+    user-facing experience is identical whether the failure surfaces at
+    draft-time or structural-time. Duplicate detection lives in
+    :func:`_check_draft_articles` directly; this helper assumes the caller
+    has already rejected duplicates so the gap/monotonic check only has to
+    reason about strictly-increasing-or-not sequences.
+    """
+    expected = 1
+    for article in articles:
+        actual = int(article.id[1:])  # "A5" -> 5
+        if actual < expected:
+            raise AmendError(
+                f"draft article numbers not monotonic: expected {expected}, found {actual}"
+            )
+        if actual > expected:
+            raise AmendError(
+                f"draft article numbering gap: expected A{expected}, got {article.id!r}"
+            )
+        expected = actual + 1
 
 
 def _check_draft_articles(articles: list[Article]) -> None:
@@ -715,6 +1198,11 @@ def _check_draft_articles(articles: list[Article]) -> None:
             duplicates.append(article.id)
     if duplicates:
         raise AmendError(f"draft has duplicate article numbers: {sorted(duplicates)}")
+
+    # Monotonic + gap check runs after duplicate detection so a duplicate
+    # surfaces with its own message; non-duplicate ordering issues
+    # (`A5` before `A2`, or a gap at `A2`) reach this branch.
+    _check_article_numbering(articles)
 
     over_cap = [(a.id, a.body_words) for a in articles if a.body_words > MAX_INJECTED_WORDS]
     if over_cap:
@@ -868,8 +1356,7 @@ def persist_drafted_constitution(
         alternatives="Decline bootstrap and continue without a Constitution.",
     )
     try:
-        with decisions_path.open("a", encoding="utf-8") as fh:
-            fh.write(entry)
+        append_decisions_atomic(decisions_path, entry)
     except OSError as exc:
         constitution.unlink(missing_ok=True)
         if decisions_created:
@@ -1029,8 +1516,7 @@ def append_conventions_entries(
     decisions_created = ensure_decisions_file(decisions_path)
     adr = _format_conventions_adr(today=today, entries=entries)
     try:
-        with decisions_path.open("a", encoding="utf-8") as fh:
-            fh.write(adr)
+        append_decisions_atomic(decisions_path, adr)
     except OSError as exc:
         _restore_conventions(conventions_path, previous_body, file_existed)
         if decisions_created:
@@ -1114,8 +1600,7 @@ def log_advisory_entries(
     decisions_created = ensure_decisions_file(decisions_path)
     adr = _format_advisory_adr(today=today, entries=entries)
     try:
-        with decisions_path.open("a", encoding="utf-8") as fh:
-            fh.write(adr)
+        append_decisions_atomic(decisions_path, adr)
     except OSError as exc:
         if decisions_created:
             decisions_path.unlink(missing_ok=True)

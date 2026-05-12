@@ -34,14 +34,16 @@ Run `python -m tools.validate` and report findings. Read-only.
 ### Repo-wide (no positional path; uses `--repo-root`)
 
 - `constitution` — Constitution structural check (defaults to `<repo-root>/.forge/CONSTITUTION.md` if no path supplied).
-- `ship` — P2a slice: capability-uniqueness only. Full ship-gate (Constitution acknowledge gate) lands in **P5**.
+- `lessons` — `.forge/intel/lessons.md` parse check (cross-feature trap memory). Optional artifact; absent file passes silently.
+- `ship` — capability-uniqueness check + Constitution ship-gate parser smoke (full gate runs in `/forge:ship`).
 - `health` — D-HEALTH layout scan over `.forge/`.
 - `all` — fan-out across the entire `.forge/` tree:
   1. `validate_health(repo_root)` — single layout pass.
   2. `validate_capability_uniqueness(repo_root)` — same call as `--target ship`.
   3. `validate_constitution` over `.forge/CONSTITUTION.md` if present.
-  4. For each `.forge/changes/<change>/proposal.md`: `validate_delta`.
-  5. For each `.forge/features/<feature>/`: `validate_deviations` + (if SPEC.md) `validate_negative_requirements`, `validate_frontmatter(kind=spec)`, `validate_scenarios`, `validate_anchors` + (if PLAN.md) `validate_frontmatter(kind=plan)`, `validate_plan_tasks` (when SPEC.md is also present), `validate_verified_deps`.
+  4. `validate_lessons(repo_root)` — same call as `--target lessons`; no-op when the file is absent.
+  5. For each `.forge/changes/<change>/proposal.md`: `validate_delta`.
+  6. For each `.forge/features/<feature>/`: `validate_deviations` + (if SPEC.md) `validate_negative_requirements`, `validate_frontmatter(kind=spec)`, `validate_scenarios`, `validate_anchors` + (if PLAN.md) `validate_frontmatter(kind=plan)`, `validate_plan_tasks` (when SPEC.md is also present), `validate_verified_deps`.
 
 > `ship` is preserved for back-compat; `all` is the recommended entry point in M3+.
 

@@ -16,6 +16,20 @@ assert _spec is not None and _spec.loader is not None
 check_budget = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(check_budget)
 
+# Trailing text appended to every prompt that the hook is expected to ALLOW.
+# FORGE's own ``.forge/conventions.json`` ships four ``required_text`` rules
+# scoped to ``dispatch_brief`` — one per engineering-practice skill cited on
+# AGENTS.md line 82. The hook walks up from cwd to locate ``.forge``; pytest
+# runs from within the FORGE repo, so the rules WILL fire here unless every
+# allow-path fixture cites the four skill slugs. The shape mirrors the actual
+# dispatch contract: real subagent briefs include these citations, and the
+# tests do the same.
+_SKILL_CITATIONS_TAIL = (
+    "\n"
+    "Cite: test-driven-development, coding-guidance-python, "
+    "git-conventions, code-review-and-quality.\n"
+)
+
 
 def test_evaluate_blocks_when_budget_block_missing() -> None:
     allow, reason = check_budget.evaluate("just a free-form prompt without a budget block")
@@ -71,7 +85,7 @@ def test_evaluate_allows_well_formed_block() -> None:
         '  "files_in_scope": ["src/import/csv.py"],\n'
         '  "forbidden": ["read entire repo", "load all specs"]\n'
         "}\n"
-    )
+    ) + _SKILL_CITATIONS_TAIL
     allow, reason = check_budget.evaluate(prompt)
     assert allow
     assert reason == "ok"
@@ -123,7 +137,7 @@ def test_evaluate_allows_directory_glob() -> None:
         '  "files_in_scope": ["src/**/*.py"],\n'
         '  "forbidden": ["read entire repo"]\n'
         "}\n"
-    )
+    ) + _SKILL_CITATIONS_TAIL
     allow, reason = check_budget.evaluate(prompt)
     assert allow, reason
     assert reason == "ok"
@@ -147,7 +161,7 @@ def test_evaluate_allows_inline_brace_form() -> None:
     """JSON object on the same line as the marker is also accepted."""
     prompt = (
         'context_budget: {"files_in_scope": ["src/foo.py"], "forbidden": ["read entire repo"]}\n'
-    )
+    ) + _SKILL_CITATIONS_TAIL
     allow, reason = check_budget.evaluate(prompt)
     assert allow, reason
     assert reason == "ok"
@@ -188,7 +202,7 @@ def test_evaluate_allows_dispatch_with_optional_articles_field() -> None:
         "}\n"
         "  ]\n"
         "}\n"
-    )
+    ) + _SKILL_CITATIONS_TAIL
     allow, reason = check_budget.evaluate(prompt)
     assert allow, "permissive allow -> empty output"
     assert reason == "ok"
@@ -204,7 +218,7 @@ def test_evaluate_allows_dispatch_without_articles_field() -> None:
         '  "forbidden": ["read entire repo"],\n'
         '  "return_format": {"max_words": 100}\n'
         "}\n"
-    )
+    ) + _SKILL_CITATIONS_TAIL
     allow, reason = check_budget.evaluate(prompt)
     assert allow
     assert reason == "ok"
@@ -220,7 +234,7 @@ def test_check_budget_execute_with_tests_in_scope_passes() -> None:
         '  "tests_in_scope": ["tests/tools/test_state.py"],\n'
         '  "forbidden": ["read entire repo"]\n'
         "}\n"
-    )
+    ) + _SKILL_CITATIONS_TAIL
     allow, reason = check_budget.evaluate(prompt)
     assert allow, reason
     assert reason == "ok"
@@ -268,7 +282,7 @@ def test_check_budget_execute_empty_tests_in_scope_with_exception_passes() -> No
         '  "tdd_exception_ref": "ADR-3",\n'
         '  "forbidden": ["read entire repo"]\n'
         "}\n"
-    )
+    ) + _SKILL_CITATIONS_TAIL
     allow, reason = check_budget.evaluate(prompt)
     assert allow, reason
     assert reason == "ok"
@@ -283,7 +297,7 @@ def test_check_budget_non_execute_tests_in_scope_optional() -> None:
         '  "files_in_scope": ["tools/state.py"],\n'
         '  "forbidden": ["read entire repo"]\n'
         "}\n"
-    )
+    ) + _SKILL_CITATIONS_TAIL
     allow, reason = check_budget.evaluate(prompt)
     assert allow, reason
     assert reason == "ok"
@@ -297,7 +311,7 @@ def test_check_budget_phase_absent_tests_in_scope_optional() -> None:
         '  "files_in_scope": ["tools/state.py"],\n'
         '  "forbidden": ["read entire repo"]\n'
         "}\n"
-    )
+    ) + _SKILL_CITATIONS_TAIL
     allow, reason = check_budget.evaluate(prompt)
     assert allow, reason
     assert reason == "ok"

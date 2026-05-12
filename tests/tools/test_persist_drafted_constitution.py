@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -116,6 +115,85 @@ def test_validate_drafted_markdown_duplicate_article_numbers_raises() -> None:
         )
     )
     with pytest.raises(am.AmendError, match="duplicate"):
+        am.validate_drafted_markdown(body)
+
+
+def test_validate_drafted_markdown_non_monotonic_articles_raises() -> None:
+    # `## Article 3` followed by `## Article 2` previously slipped past draft
+    # validation and only failed at the structural validator inside
+    # persist_drafted_constitution — two error surfaces for one root cause.
+    body = _draft(
+        articles=(
+            _article(number=1, title="First"),
+            _article(number=3, title="Way out front"),
+            _article(number=2, title="Backwards"),
+        )
+    )
+    with pytest.raises(am.AmendError, match=r"monotonic|gap"):
+        am.validate_drafted_markdown(body)
+
+
+def test_validate_drafted_markdown_strictly_descending_articles_raises() -> None:
+    # Body opens A1, A3 — the gap check fires; then a follow-up A2 would
+    # have been the monotonic-trigger if we ever reached it.
+    body = _draft(
+        articles=(
+            _article(number=1, title="First"),
+            _article(number=2, title="Second"),
+            _article(number=4, title="Skipped three"),
+            _article(number=3, title="Backwards"),
+        )
+    )
+    # First failure surfaces — could be gap (A4 instead of A3) or monotonic.
+    with pytest.raises(am.AmendError, match=r"gap|monotonic"):
+        am.validate_drafted_markdown(body)
+
+
+def test_validate_drafted_markdown_article_numbering_gap_raises() -> None:
+    body = _draft(
+        articles=(
+            _article(number=1, title="First"),
+            _article(number=3, title="Skipped two"),
+        )
+    )
+    with pytest.raises(am.AmendError, match="gap"):
+        am.validate_drafted_markdown(body)
+
+
+def test_validate_drafted_markdown_articles_must_start_at_one() -> None:
+    body = _draft(articles=(_article(number=2),))
+    with pytest.raises(am.AmendError, match="gap"):
+        am.validate_drafted_markdown(body)
+
+
+def test_validate_drafted_markdown_calendar_invalid_date_raises_month() -> None:
+    body = _draft(created="2026-13-99", articles=(_article(number=1),))
+    with pytest.raises(am.AmendError, match="created"):
+        am.validate_drafted_markdown(body)
+
+
+def test_validate_drafted_markdown_calendar_invalid_date_raises_feb30() -> None:
+    body = _draft(created="2026-02-30", articles=(_article(number=1),))
+    with pytest.raises(am.AmendError, match="created"):
+        am.validate_drafted_markdown(body)
+
+
+def test_validate_drafted_markdown_non_leap_feb29_raises() -> None:
+    body = _draft(created="2025-02-29", articles=(_article(number=1),))
+    with pytest.raises(am.AmendError, match="created"):
+        am.validate_drafted_markdown(body)
+
+
+def test_validate_drafted_markdown_leap_feb29_accepted() -> None:
+    # 2024 is a leap year — Feb 29 must round-trip cleanly.
+    body = _draft(created="2024-02-29", articles=(_article(number=1),))
+    result = am.validate_drafted_markdown(body)
+    assert len(result) == 1
+
+
+def test_validate_drafted_markdown_zero_date_raises() -> None:
+    body = _draft(created="0000-00-00", articles=(_article(number=1),))
+    with pytest.raises(am.AmendError, match="created"):
         am.validate_drafted_markdown(body)
 
 
@@ -279,14 +357,10 @@ def test_persist_drafted_constitution_append_failure_rolls_back_both(
     decisions = repo / "decisions.md"
     assert not decisions.exists()
 
-    original_open = Path.open
+    def _raise(_path: Path, _entry: str) -> None:
+        raise OSError("simulated append failure")
 
-    def _patched_open(self: Path, *a: Any, **kw: Any) -> Any:
-        if self == decisions and a and a[0] == "a":
-            raise OSError("simulated append failure")
-        return original_open(self, *a, **kw)
-
-    monkeypatch.setattr(Path, "open", _patched_open)
+    monkeypatch.setattr(am, "append_decisions_atomic", _raise)
 
     with pytest.raises(am.AmendError, match=r"decisions\.md append failed"):
         am.persist_drafted_constitution(
@@ -311,14 +385,10 @@ def test_persist_drafted_constitution_append_failure_preserves_existing_decision
     original_text = "# Decisions\n\n## 2026-01-01 — earlier\n**Context:** keep me.\n"
     decisions.write_text(original_text, encoding="utf-8")
 
-    original_open = Path.open
+    def _raise(_path: Path, _entry: str) -> None:
+        raise OSError("simulated append failure")
 
-    def _patched_open(self: Path, *a: Any, **kw: Any) -> Any:
-        if self == decisions and a and a[0] == "a":
-            raise OSError("simulated append failure")
-        return original_open(self, *a, **kw)
-
-    monkeypatch.setattr(Path, "open", _patched_open)
+    monkeypatch.setattr(am, "append_decisions_atomic", _raise)
 
     with pytest.raises(am.AmendError, match=r"decisions\.md append failed"):
         am.persist_drafted_constitution(
@@ -330,6 +400,64 @@ def test_persist_drafted_constitution_append_failure_preserves_existing_decision
 
     assert not (repo / ".forge" / "CONSTITUTION.md").exists()
     # Pre-existing decisions.md must NOT be deleted.
+    assert decisions.read_text(encoding="utf-8") == original_text
+
+
+def test_persist_drafted_constitution_validate_failure_preserves_existing_decisions(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / ".forge").mkdir(parents=True)
+    decisions = repo / "decisions.md"
+    original_text = "# Decisions\n\n## 2025-01-01 — prior entry\n**Context:** keep me.\n"
+    decisions.write_text(original_text, encoding="utf-8")
+
+    # Non-monotonic article numbering trips validate_drafted_markdown before
+    # any disk mutation; the pre-existing decisions.md must survive byte-equal.
+    bad_body = _draft(
+        articles=(
+            _article(number=1, title="First"),
+            _article(number=3, title="Way out front"),
+            _article(number=2, title="Backwards"),
+        )
+    )
+
+    with pytest.raises(am.AmendError):
+        am.persist_drafted_constitution(
+            repo_root=repo,
+            body=bad_body,
+            decisions_path=decisions,
+            today=date(2026, 5, 11),
+        )
+
+    assert not (repo / ".forge" / "CONSTITUTION.md").exists()
+    assert decisions.read_text(encoding="utf-8") == original_text
+
+
+def test_persist_drafted_constitution_structural_failure_preserves_existing_decisions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / ".forge").mkdir(parents=True)
+    decisions = repo / "decisions.md"
+    original_text = "# Decisions\n\n## 2025-01-01 — prior entry\n**Context:** keep me.\n"
+    decisions.write_text(original_text, encoding="utf-8")
+
+    def _fake_validate(_target: Path) -> None:
+        raise am.AmendError("forced structural failure")
+
+    monkeypatch.setattr(am, "_validate_constitution_body", _fake_validate)
+
+    with pytest.raises(am.AmendError, match="structural failure"):
+        am.persist_drafted_constitution(
+            repo_root=repo,
+            body=_good_body(),
+            decisions_path=decisions,
+            today=date(2026, 5, 11),
+        )
+
+    assert not (repo / ".forge" / "CONSTITUTION.md").exists()
     assert decisions.read_text(encoding="utf-8") == original_text
 
 

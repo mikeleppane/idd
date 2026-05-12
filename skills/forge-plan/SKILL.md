@@ -21,6 +21,18 @@ Active feature `state.json` has `tier in ("standard", "full")`, `phases.scenario
 1. **Validate state.** Read `state.json`; abort if not in plan phase.
 2. **Copy template** if PLAN.md does not exist: copy `templates/feature/PLAN.md` into `.forge/features/<id>/PLAN.md`. Set frontmatter: `spec: <feature-id>`, `slices: <integer>`, `status: ready`.
 2a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<spec_anchors>)`. Pass `articles[]` into the planner subagent budget. The planner MUST flag any slice whose `Files in scope` overlaps a CRITICAL article's domain (e.g., `repository/`, `vault.ts`, `secrets/`) under the slice's notes.
+2b. **Lessons preflight.** Call
+    `tools.intel.lessons.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<spec_anchors>)`.
+    Pass `traps[]` (Lesson records via `Lesson.to_budget_dict()`) into
+    the planner subagent's dispatch budget. The planner MUST flag any
+    slice whose `Files in scope` overlaps a CRITICAL trap's tag domain
+    (e.g. `secrets`, `fixtures`, `async`) under the slice's notes — the
+    same flagging discipline that 2a enforces for Constitution articles
+    applies here for trap tags. The PreToolUse hook
+    (`hooks/check_budget.py`) is permissive on the `traps` field;
+    shape ownership lives in this skill, not the hook. Missing
+    `.forge/intel/lessons.md` is a no-op (the loader returns
+    `([], [])`); pass the empty list through unchanged.
 3. **Derive vertical slices.** Each slice ships end-to-end user-visible behavior, not a horizontal layer. Slice count rule: aim for 1–4 in standard tier; > 4 means feature is too big — surface to user.
 4. **Per slice, define:**
    - **Goal:** end-to-end behavior the slice delivers.

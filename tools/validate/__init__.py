@@ -25,8 +25,10 @@ from .delta import validate_delta
 from .domain_glossary import validate_domain_glossary
 from .git_conventions import GitConventionsConfig, validate_git_conventions
 from .health import validate_health
+from .lessons import validate_lessons
 from .plan import validate_plan_tasks, validate_verified_deps
 from .qa_shape import validate_qa_shape
+from .review_lesson_tags import validate_review_lesson_tags
 from .spec_semantic import validate_anchors, validate_scenarios
 from .spec_structural import (
     validate_capability_spec_sections,
@@ -57,10 +59,12 @@ __all__ = [
     "validate_frontmatter",
     "validate_git_conventions",
     "validate_health",
+    "validate_lessons",
     "validate_negative_requirements",
     "validate_plan_tasks",
     "validate_qa_shape",
     "validate_research",
+    "validate_review_lesson_tags",
     "validate_scenarios",
     "validate_tdd_evidence",
     "validate_verified_deps",

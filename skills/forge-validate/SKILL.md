@@ -26,9 +26,10 @@ Run `python -m tools.validate` against a target and surface findings to the user
     - `deviations` — cross-references `state.json` deviations against `decisions.md`.
   - **Repo-wide (no positional path; uses `--repo-root`)**:
     - `health` — D-HEALTH layout scan over `.forge/`.
-    - `ship` — capability-uniqueness check (P2a slice; full ship-gate in P5).
+    - `ship` — capability-uniqueness check + Constitution ship-gate parser smoke.
     - `constitution` — Constitution structural check (defaults to `<repo-root>/.forge/CONSTITUTION.md` if `path` omitted).
-    - `all` — fan-out: `health` + `ship` + per-feature semantic validators across `.forge/changes/` and `.forge/features/`.
+    - `lessons` — `.forge/intel/lessons.md` parse check (cross-feature trap memory). Optional artifact; absent file passes silently.
+    - `all` — fan-out: `health` + `ship` + `constitution` + `lessons` + per-feature semantic validators across `.forge/changes/` and `.forge/features/`.
 - `--repo-root <path>` (defaults to cwd) for repo-wide targets and the `anchors` module-resolve base.
 - `--check-registries` (off by default). When set, `verified-deps` (and `all`) probe `npm` / `pip` for declared dependencies.
 

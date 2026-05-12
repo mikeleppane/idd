@@ -64,7 +64,7 @@ def test_gate_acknowledge_writes_full_audit_trail(repo: Path) -> None:
     assert deviation["resolution"] == "user_acknowledged"
     assert "[constitution:A3]" in deviation["cause"]
 
-    assert "Constitution finding acknowledged at ship" in decisions.read_text(encoding="utf-8")
+    assert "Ship-gate finding acknowledged at ship" in decisions.read_text(encoding="utf-8")
     assert "[constitution:A3]" in decisions.read_text(encoding="utf-8")
 
     # Round-trip through validate_deviations so the audit-trail entry the gate

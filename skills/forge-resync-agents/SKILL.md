@@ -177,6 +177,30 @@ either choice aborts with no disk mutation.
    the edited file as authoritative and proceed to step 6's mechanism
    dispatch with the new groupings.
 
+## Mechanism precedence
+
+When a single logical convention overlaps multiple mechanisms (e.g.,
+a banned commit trailer matches both a `forbidden_text` rule in
+`.forge/conventions.json` AND a `trailer_ban_patterns` entry in
+`.forge/config.json:git_conventions`), the precedence is:
+
+1. **git-conventions** wins for commit-message-shape rules. Always
+   ship trailer bans in `git_conventions.trailers.ban_patterns` —
+   not in conventions.json. The git-conventions validator has the
+   most specific match (full trailer parsing, RFC 5322 alignment)
+   and the strictest gate (BLOCK with no ACK path).
+2. **conventions.json** owns dispatch-brief and diff-content rules.
+3. **Constitution articles** own architectural and policy rules
+   that span diffs, commits, AND review prose.
+
+The resync skill SHOULD refuse to append a `forbidden_text` /
+`required_text` rule that overlaps an existing
+`git_conventions.trailers.ban_patterns` entry. Surface the conflict
+to the user with a hint to remove one or the other. (This is
+documented intent; a Python guard for the refusal is not yet
+implemented — when authoring conventions, prefer the surface called
+out above and verify no overlap by inspection.)
+
 ## Sequential-question contract (locked)
 
 This skill follows the **one-question-per-turn** pattern that already

@@ -10,6 +10,7 @@ import pytest
 
 from tools import ship_gate as sg
 from tools.constitution import Article
+from tools.constitution_amend import atomic_replace as _real_atomic_replace
 from tools.validate.state_semantic import validate_deviations
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "_constitution"
@@ -168,13 +169,13 @@ def test_make_acknowledgement_hook_writes_state_and_decisions(tmp_path: Path) ->
     assert deviation["phase"] == "ship"
     # Cause prefix MUST share a 60-char substring with the decisions heading title
     # so the existing `validate_deviations` cross-ref passes.
-    assert deviation["cause"].lower().startswith("constitution finding acknowledged at ship:"), (
+    assert deviation["cause"].lower().startswith("ship-gate finding acknowledged at ship:"), (
         f"cause={deviation['cause']!r} must align with decisions title prefix"
     )
     assert "[constitution:A1]" in deviation["cause"]
     assert deviation["resolution"] == "user_acknowledged"
     decisions = decisions_path.read_text(encoding="utf-8")
-    assert "Constitution finding acknowledged at ship" in decisions
+    assert "Ship-gate finding acknowledged at ship" in decisions
     assert "src/services/checkout.py:142" in decisions
 
 
@@ -272,7 +273,7 @@ def test_ack_hook_recovers_from_state_write_failure(
 
     # Decisions heading was written on the first attempt.
     decisions_after_fail = decisions_path.read_text(encoding="utf-8")
-    assert "Constitution finding acknowledged at ship" in decisions_after_fail
+    assert "Ship-gate finding acknowledged at ship" in decisions_after_fail
     # State unchanged from initial.
     assert json.loads(state_path.read_text(encoding="utf-8"))["deviations"] == []
 
@@ -287,11 +288,11 @@ def test_ack_hook_recovers_from_state_write_failure(
     # orphan heading from the first attempt and skipped re-appending. The
     # phrase itself appears twice per entry (heading line + Cause: body line),
     # so count the heading marker instead.
-    assert final_decisions.count("## 2026-05-07 — Constitution finding acknowledged at ship") == 1
+    assert final_decisions.count("## 2026-05-07 — Ship-gate finding acknowledged at ship") == 1
 
 
 def test_render_gate_prompt_raises_on_unknown_article_id() -> None:
-    """L1 — defense in depth: gate-bucket findings must reference known articles.
+    """Defense in depth: gate-bucket findings must reference known articles.
 
     `partition_by_article_level` already routes unknown article ids to info
     so this path is unreachable in production. The assertion documents the
@@ -553,7 +554,7 @@ def test_ack_hook_creates_decisions_file_with_h1_header_when_missing(tmp_path: P
     assert text.startswith("# Decisions\n"), (
         f"auto-created decisions.md must lead with `# Decisions` H1, got {text[:64]!r}"
     )
-    assert "Constitution finding acknowledged at ship" in text
+    assert "Ship-gate finding acknowledged at ship" in text
 
 
 def test_ack_hook_raises_ship_gate_error_on_corrupt_state_json(tmp_path: Path) -> None:
@@ -583,7 +584,7 @@ def test_ack_hook_raises_ship_gate_error_on_corrupt_state_json(tmp_path: Path) -
 
 
 def test_parse_review_findings_skips_untagged_rows_with_unusual_status(tmp_path: Path) -> None:
-    """M3 — Status vocab check applies only to constitution-tagged rows.
+    """Status vocab check applies only to constitution-tagged rows.
 
     Pre-fix, the Status validity check ran BEFORE the tag check, so an
     untagged row with a typo Status (e.g. `In progress`) raised
@@ -636,3 +637,1099 @@ Quoting an example: `| F-1 | HIGH | open | src/x.py | [constitution:A1] x | fix 
         encoding="utf-8",
     )
     assert sg.parse_review_findings(src) == []
+
+
+# --- Resolved by column ---------------------------------------------------
+#
+# The trap-memory harvest hook needs a deterministic signal for which findings
+# convert into lessons. The `Resolved by` column carries that signal:
+#   - empty                       → no resolution recorded
+#   - 40-hex SHA                  → fix landed in this commit (harvest candidate)
+#   - spec-edit / plan-edit       → resolution lived outside the code
+#   - accepted-risk:<reason>      → exception logged in decisions.md
+# Legacy review files (no column) are tolerated for backwards compat; every
+# emitted ShipFinding from those files carries `resolved_by=None`.
+
+
+def test_parse_review_findings_legacy_layout_has_resolved_by_none() -> None:
+    """Pre-trap-memory review files have no `Resolved by` column → field None."""
+    findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
+    assert findings, "fixture must yield at least one tagged finding"
+    assert all(f.resolved_by is None for f in findings)
+
+
+def test_parse_review_findings_populates_resolved_by_for_sha_on_open_row(
+    tmp_path: Path,
+) -> None:
+    """40-hex SHA cell is preserved verbatim on the emitted ShipFinding.
+
+    An `open`-status row with a populated `Resolved by` is odd but permitted —
+    a reviewer may pre-populate the cell with a proposed commit before
+    flipping Status to `resolved`. The parser passes the value through; the
+    `Status: open` filter still surfaces the row.
+    """
+    src = tmp_path / "review_with_sha.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Resolved by | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|-------------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | 1a2b3c4d5e6f7890abcdef1234567890abcdef12 | src/x.py:1 | [constitution:A1] tag here | fix | self |
+""",
+        encoding="utf-8",
+    )
+    findings = sg.parse_review_findings(src)
+    assert len(findings) == 1
+    assert findings[0].resolved_by == "1a2b3c4d5e6f7890abcdef1234567890abcdef12"
+
+
+def test_parse_review_findings_empty_resolved_by_cell_is_none(tmp_path: Path) -> None:
+    """Empty `Resolved by` cell on a tagged row → `resolved_by=None`."""
+    src = tmp_path / "review_empty_resolved_by.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Resolved by | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|-------------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open |  | src/x.py:1 | [constitution:A1] tag here | fix | self |
+""",
+        encoding="utf-8",
+    )
+    findings = sg.parse_review_findings(src)
+    assert len(findings) == 1
+    assert findings[0].resolved_by is None
+
+
+def test_parse_review_findings_accepts_spec_edit_resolution(tmp_path: Path) -> None:
+    src = tmp_path / "review_spec_edit.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Resolved by | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|-------------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | spec-edit | src/x.py:1 | [constitution:A1] tag here | fix | self |
+""",
+        encoding="utf-8",
+    )
+    findings = sg.parse_review_findings(src)
+    assert len(findings) == 1
+    assert findings[0].resolved_by == "spec-edit"
+
+
+def test_parse_review_findings_accepts_plan_edit_resolution(tmp_path: Path) -> None:
+    src = tmp_path / "review_plan_edit.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Resolved by | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|-------------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | plan-edit | src/x.py:1 | [constitution:A1] tag here | fix | self |
+""",
+        encoding="utf-8",
+    )
+    findings = sg.parse_review_findings(src)
+    assert len(findings) == 1
+    assert findings[0].resolved_by == "plan-edit"
+
+
+def test_parse_review_findings_accepts_accepted_risk_resolution(tmp_path: Path) -> None:
+    """`accepted-risk:<reason>` preserves the trailing reason verbatim."""
+    src = tmp_path / "review_accepted_risk.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Resolved by | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|-------------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | accepted-risk:legacy module out of scope | src/x.py:1 | [constitution:A1] tag here | fix | self |
+""",
+        encoding="utf-8",
+    )
+    findings = sg.parse_review_findings(src)
+    assert len(findings) == 1
+    assert findings[0].resolved_by == "accepted-risk:legacy module out of scope"
+
+
+def test_parse_review_findings_raises_on_unknown_resolved_by_value(tmp_path: Path) -> None:
+    """`unknown` is not a recognized resolution method — must raise."""
+    src = tmp_path / "review_bad_resolved_by.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Resolved by | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|-------------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | unknown | src/x.py:1 | [constitution:A1] tag here | fix | self |
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(sg.ShipGateError, match="unrecognized Resolved by"):
+        sg.parse_review_findings(src)
+
+
+def test_parse_review_findings_raises_on_truncated_sha_resolved_by(tmp_path: Path) -> None:
+    """A 7-char SHA is not the 40-hex full form the vocabulary requires."""
+    src = tmp_path / "review_short_sha.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Resolved by | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|-------------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | 1a2b3c4 | src/x.py:1 | [constitution:A1] tag here | fix | self |
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(sg.ShipGateError, match="unrecognized Resolved by"):
+        sg.parse_review_findings(src)
+
+
+def test_parse_review_findings_skips_untagged_row_with_bad_resolved_by(tmp_path: Path) -> None:
+    """Tag-check-first discipline: an untagged row with a bad Resolved by
+    value must NOT raise. The harvest hook only cares about tagged rows;
+    forcing the gate to fail over reviewer convergence-history on an
+    untagged row would block ship over noise the gate never read.
+    """
+    src = tmp_path / "review_untagged_bad_resolved_by.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Resolved by | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|-------------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | totally-bogus | src/x.py:1 | no constitution tag here | strip | self |
+""",
+        encoding="utf-8",
+    )
+    # Untagged row → never gate-eligible → Resolved by typo must not raise.
+    assert sg.parse_review_findings(src) == []
+
+
+def test_parse_review_findings_multi_tag_row_shares_resolved_by(tmp_path: Path) -> None:
+    """Multi-tag rows emit one ShipFinding per tag, all carrying the same
+    Resolved by value — a single resolution covers every tag in the cell.
+    """
+    src = tmp_path / "review_multi_tag_resolved_by.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Resolved by | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|-------------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | 1a2b3c4d5e6f7890abcdef1234567890abcdef12 | src/x.py:1 | [constitution:A4] [constitution:A1] dual tag | fix | self |
+""",
+        encoding="utf-8",
+    )
+    findings = sg.parse_review_findings(src)
+    article_ids = sorted(f.article_id for f in findings if f.article_id)
+    assert article_ids == ["A1", "A4"]
+    assert {f.resolved_by for f in findings} == {"1a2b3c4d5e6f7890abcdef1234567890abcdef12"}
+
+
+def test_ship_finding_default_resolved_by_is_none() -> None:
+    """Existing call sites that build ShipFinding without resolved_by stay valid.
+
+    The dataclass field defaults to None so legacy constructors (every test
+    above this block, every production call site outside the parser) compile
+    and behave as before.
+    """
+    finding = sg.ShipFinding(
+        article_id="A1",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[constitution:A1] x",
+    )
+    assert finding.resolved_by is None
+
+
+# --- Lesson-kind ShipFinding + partitioner + renderer --------------------
+#
+# Reviewer subagents tag lesson-trap violations with [lesson:L<NNN>] in the
+# REVIEW.md Problem cell. Those flow through the same parser as constitution
+# tags but route via a separate partitioner that consults each lesson's own
+# Severity field (CRITICAL/HIGH -> gate, MEDIUM -> warn, LOW -> info). The
+# renderer and acknowledgement hook learn to print the lesson kind alongside
+# constitution-kind findings without disturbing the legacy article path.
+
+
+from datetime import date  # noqa: E402
+
+from tools.intel.lessons import Lesson  # noqa: E402
+
+
+def _make_lesson(
+    lesson_id: str,
+    severity: str,
+    *,
+    trap: str = "trap text",
+    avoidance: str = "avoidance text",
+    status: str = "active",
+) -> Lesson:
+    return Lesson(
+        id=lesson_id,
+        captured=date(2026, 5, 11),
+        captured_from="2026-05-11-demo",
+        resolved_by="1" * 40,
+        trap=trap,
+        avoidance=avoidance,
+        tags=("imports",),
+        severity=severity,  # type: ignore[arg-type]
+        status=status,
+        body_words=4,
+    )
+
+
+def _lessons_default() -> list[Lesson]:
+    return [
+        _make_lesson("L007", "HIGH", trap="async fixture teardown leaks DB sessions"),
+        _make_lesson("L010", "MEDIUM", trap="logger swallowed stacks"),
+        _make_lesson("L020", "CRITICAL", trap="missing PII redaction at sink"),
+        _make_lesson("L030", "LOW", trap="cosmetic import order"),
+    ]
+
+
+def test_parse_review_findings_extracts_mixed_article_and_lesson_tags(tmp_path: Path) -> None:
+    """A row containing both [constitution:A<n>] and [lesson:L<NNN>] tags emits one
+    ShipFinding per tag — article-kind first, then lesson-kind.
+    """
+    src = tmp_path / "review_mixed.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | src/x.py:1 | [constitution:A1] [lesson:L007] dual tag | fix | self |
+""",
+        encoding="utf-8",
+    )
+    findings = sg.parse_review_findings(src)
+    assert len(findings) == 2
+    # Article tag first, lesson tag second (pinned order from _findings_from_row).
+    assert findings[0].is_article
+    assert findings[0].article_id == "A1"
+    assert findings[0].lesson_id is None
+    assert findings[1].is_lesson
+    assert findings[1].lesson_id == "L007"
+    assert findings[1].article_id is None
+
+
+def test_parse_review_findings_multiple_lesson_tags_emit_one_finding_each(tmp_path: Path) -> None:
+    src = tmp_path / "review_multi_lesson.md"
+    src.write_text(
+        """---
+spec: 2026-05-07-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | src/x.py:1 | [lesson:L007] [lesson:L010] both | fix | self |
+""",
+        encoding="utf-8",
+    )
+    findings = sg.parse_review_findings(src)
+    assert [f.lesson_id for f in findings] == ["L007", "L010"]
+    assert all(f.is_lesson for f in findings)
+
+
+def test_ship_finding_article_only_builds_cleanly() -> None:
+    """article_id set, lesson_id default None constructs without error."""
+    finding = sg.ShipFinding(
+        article_id="A1",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[constitution:A1] x",
+    )
+    assert finding.is_article
+    assert not finding.is_lesson
+    assert finding.lesson_id is None
+
+
+def test_ship_finding_lesson_only_builds_cleanly() -> None:
+    """lesson_id set, article_id default None constructs without error."""
+    finding = sg.ShipFinding(
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L007] x",
+    )
+    assert finding.is_lesson
+    assert not finding.is_article
+    assert finding.lesson_id == "L007"
+    assert finding.article_id is None
+
+
+def test_partition_by_lesson_severity_empty_input() -> None:
+    gate, warn, info = sg.partition_by_lesson_severity([], _lessons_default())
+    assert gate == []
+    assert warn == []
+    assert info == []
+
+
+def test_partition_by_lesson_severity_critical_routes_to_gate() -> None:
+    finding = sg.ShipFinding(
+        lesson_id="L020",
+        severity="BLOCK",
+        location="src/x.py:1",
+        message="[lesson:L020] m",
+    )
+    gate, warn, info = sg.partition_by_lesson_severity([finding], _lessons_default())
+    assert gate == [finding]
+    assert warn == []
+    assert info == []
+
+
+def test_partition_by_lesson_severity_high_routes_to_gate() -> None:
+    finding = sg.ShipFinding(
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L007] m",
+    )
+    gate, warn, info = sg.partition_by_lesson_severity([finding], _lessons_default())
+    assert gate == [finding]
+    assert warn == [] and info == []
+
+
+def test_partition_by_lesson_severity_medium_routes_to_warn() -> None:
+    finding = sg.ShipFinding(
+        lesson_id="L010",
+        severity="MEDIUM",
+        location="src/x.py:1",
+        message="[lesson:L010] m",
+    )
+    gate, warn, info = sg.partition_by_lesson_severity([finding], _lessons_default())
+    assert warn == [finding]
+    assert gate == [] and info == []
+
+
+def test_partition_by_lesson_severity_low_routes_to_info() -> None:
+    finding = sg.ShipFinding(
+        lesson_id="L030",
+        severity="LOW",
+        location="src/x.py:1",
+        message="[lesson:L030] m",
+    )
+    gate, warn, info = sg.partition_by_lesson_severity([finding], _lessons_default())
+    assert info == [finding]
+    assert gate == [] and warn == []
+
+
+def test_partition_by_lesson_severity_filters_out_article_findings() -> None:
+    """Article-only findings pass through unaffected — they belong to the
+    article partitioner.
+    """
+    article_finding = sg.ShipFinding(
+        article_id="A1",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[constitution:A1] m",
+    )
+    lesson_finding = sg.ShipFinding(
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L007] m",
+    )
+    gate, warn, info = sg.partition_by_lesson_severity(
+        [article_finding, lesson_finding], _lessons_default()
+    )
+    assert gate == [lesson_finding]
+    assert article_finding not in gate
+    assert article_finding not in warn
+    assert article_finding not in info
+
+
+def test_partition_by_lesson_severity_unknown_lesson_id_routes_to_info() -> None:
+    """A lesson_id absent from the supplied lessons list surfaces via the
+    ``routing_warnings`` diagnostic channel instead of raising.
+
+    Pre-fix the partitioner raised ``ShipGateError`` and blocked the user
+    from reaching the ACK prompt — a stray tag became an unrecoverable
+    ship state. The downgrade routes the row to ``info`` (with a synthetic
+    LOW finding mentioning the typo'd id) so ship can proceed, while the
+    ``routing_warnings`` channel still surfaces the typo for cleanup.
+    """
+    finding = sg.ShipFinding(
+        lesson_id="L999",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L999] stale",
+    )
+    result = sg.partition_by_lesson_severity([finding], _lessons_default())
+    gate, warn, info = result
+    assert gate == []
+    assert warn == []
+    assert len(info) == 1
+    assert info[0].lesson_id == "L999"
+    assert info[0].severity == "LOW"
+    warnings = sg.routing_warnings(result)
+    assert any("L999" in w for w in warnings)
+
+
+def test_partition_by_lesson_severity_mismatched_severity_raises() -> None:
+    """Row Severity cell BLOCK but lesson L030 has Severity LOW → loud error."""
+    finding = sg.ShipFinding(
+        lesson_id="L030",
+        severity="BLOCK",
+        location="src/x.py:1",
+        message="[lesson:L030] m",
+    )
+    with pytest.raises(
+        sg.ShipGateError, match=r"row Severity=.*disagrees with lesson L030 Severity="
+    ):
+        sg.partition_by_lesson_severity([finding], _lessons_default())
+
+
+def test_partition_by_lesson_severity_batches_all_mismatches(tmp_path: Path) -> None:
+    """All routing errors must surface in a single raise, not one-per-row.
+
+    Pre-fix the partitioner short-circuited on the first severity mismatch.
+    The user then fixed-and-reshipped N times for N misaligned rows.
+    """
+    bad_a = sg.ShipFinding(
+        lesson_id="L030",
+        severity="BLOCK",
+        location="src/a.py:1",
+        message="[lesson:L030] a",
+    )
+    bad_b = sg.ShipFinding(
+        lesson_id="L007",
+        severity="MEDIUM",
+        location="src/b.py:1",
+        message="[lesson:L007] b",
+    )
+    with pytest.raises(sg.ShipGateError) as exc:
+        sg.partition_by_lesson_severity([bad_a, bad_b], _lessons_default())
+    msg = str(exc.value)
+    assert "2 row(s) failed routing" in msg
+    assert "src/a.py:1" in msg
+    assert "src/b.py:1" in msg
+
+
+def test_partition_by_lesson_severity_unknown_and_mismatch_use_separate_channels(
+    tmp_path: Path,
+) -> None:
+    """Severity-mismatch still raises (real config bug); unknown lesson ids
+    downgrade to the ``routing_warnings`` channel (recoverable typo).
+
+    Pre-fix both classes of error joined the same ``routing_errors``
+    accumulator and raised together. Splitting the channels lets ship
+    proceed past typo'd tags while still loudly blocking on real Severity
+    drift between the row's cell and the lesson's source-of-truth field.
+    """
+    unknown = sg.ShipFinding(
+        lesson_id="L999",
+        severity="HIGH",
+        location="src/u.py:1",
+        message="[lesson:L999] u",
+    )
+    mismatch = sg.ShipFinding(
+        lesson_id="L030",
+        severity="BLOCK",
+        location="src/m.py:1",
+        message="[lesson:L030] m",
+    )
+    # The Severity-mismatch row raises regardless of the unknown-id row's
+    # presence — real configuration bugs cannot ride along under the
+    # recoverable warning channel.
+    with pytest.raises(sg.ShipGateError) as exc:
+        sg.partition_by_lesson_severity([unknown, mismatch], _lessons_default())
+    msg = str(exc.value)
+    assert "disagrees with lesson L030" in msg
+    # The unknown-id row does NOT appear in the raise — it joined the
+    # warnings channel instead. Confirm by partitioning the unknown row on
+    # its own.
+    unknown_only = sg.partition_by_lesson_severity([unknown], _lessons_default())
+    warnings = sg.routing_warnings(unknown_only)
+    assert any("L999" in w for w in warnings)
+
+
+def test_partition_by_lesson_severity_multiple_lessons_split_correctly() -> None:
+    findings = [
+        sg.ShipFinding(
+            lesson_id="L020",
+            severity="BLOCK",
+            location="src/a.py:1",
+            message="[lesson:L020] crit",
+        ),
+        sg.ShipFinding(
+            lesson_id="L007",
+            severity="HIGH",
+            location="src/b.py:1",
+            message="[lesson:L007] high",
+        ),
+        sg.ShipFinding(
+            lesson_id="L010",
+            severity="MEDIUM",
+            location="src/c.py:1",
+            message="[lesson:L010] med",
+        ),
+        sg.ShipFinding(
+            lesson_id="L030",
+            severity="LOW",
+            location="src/d.py:1",
+            message="[lesson:L030] low",
+        ),
+    ]
+    gate, warn, info = sg.partition_by_lesson_severity(findings, _lessons_default())
+    assert {f.lesson_id for f in gate} == {"L020", "L007"}
+    assert {f.lesson_id for f in warn} == {"L010"}
+    assert {f.lesson_id for f in info} == {"L030"}
+
+
+def test_ship_finding_constructor_rejects_both_ids_none() -> None:
+    """ShipFinding refuses construction when neither article_id nor lesson_id is set."""
+    with pytest.raises(sg.ShipGateError, match="exactly one"):
+        sg.ShipFinding(
+            severity="HIGH",
+            location="src/x.py:1",
+            message="ambiguous",
+        )
+
+
+def test_ship_finding_constructor_rejects_both_ids_set() -> None:
+    """ShipFinding refuses construction when both article_id and lesson_id are set."""
+    with pytest.raises(sg.ShipGateError, match="exactly one"):
+        sg.ShipFinding(
+            article_id="A1",
+            lesson_id="L007",
+            severity="HIGH",
+            location="src/x.py:1",
+            message="ambiguous",
+        )
+
+
+def test_render_gate_prompt_article_only_unchanged_when_lessons_none() -> None:
+    """Regression: article-only gate must render identically with lessons=None."""
+    findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
+    gate, _warn, _info = sg.partition_by_article_level(findings, _articles())
+    prompt_legacy = sg.render_gate_prompt(gate, _articles())
+    prompt_with_kw = sg.render_gate_prompt(gate, _articles(), lessons=None)
+    assert prompt_legacy == prompt_with_kw
+    assert "[constitution:A1]" in prompt_legacy
+    assert "ACKNOWLEDGE" in prompt_legacy
+
+
+def test_render_gate_prompt_lesson_finding_renders_trap_and_avoidance() -> None:
+    finding = sg.ShipFinding(
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:99",
+        message="[lesson:L007] async fixture leaks here",
+    )
+    prompt = sg.render_gate_prompt([finding], _articles(), lessons=_lessons_default())
+    assert "[lesson:L007]" in prompt
+    assert "async fixture teardown leaks DB sessions" in prompt  # trap body
+    assert "src/x.py:99" in prompt
+    assert "ACKNOWLEDGE" in prompt
+
+
+def test_render_gate_prompt_mixed_kinds_renders_both() -> None:
+    article_findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
+    article_gate, _w, _i = sg.partition_by_article_level(article_findings, _articles())
+    lesson_finding = sg.ShipFinding(
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:42",
+        message="[lesson:L007] foo",
+    )
+    combined = [*list(article_gate), lesson_finding]
+    prompt = sg.render_gate_prompt(combined, _articles(), lessons=_lessons_default())
+    assert "[constitution:A1]" in prompt
+    assert "[lesson:L007]" in prompt
+    assert "Repository pattern" in prompt
+    assert "async fixture teardown leaks DB sessions" in prompt
+
+
+def test_render_gate_prompt_lesson_kind_without_lessons_arg_raises() -> None:
+    finding = sg.ShipFinding(
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L007] m",
+    )
+    with pytest.raises(sg.ShipGateError, match="no `lessons` argument"):
+        sg.render_gate_prompt([finding], _articles())
+
+
+def test_render_gate_prompt_unknown_lesson_id_raises() -> None:
+    finding = sg.ShipFinding(
+        lesson_id="L999",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L999] stale",
+    )
+    with pytest.raises(sg.ShipGateError, match="unknown lesson id"):
+        sg.render_gate_prompt([finding], _articles(), lessons=_lessons_default())
+
+
+def test_render_warn_summary_article_only_unchanged_when_lessons_none() -> None:
+    findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
+    _gate, warn, _info = sg.partition_by_article_level(findings, _articles())
+    legacy = sg.render_warn_summary(warn, _articles())
+    with_kw = sg.render_warn_summary(warn, _articles(), lessons=None)
+    assert legacy == with_kw
+    assert "[constitution:A4]" in legacy
+
+
+def test_render_warn_summary_lesson_finding_renders_trap_fragment() -> None:
+    finding = sg.ShipFinding(
+        lesson_id="L010",
+        severity="MEDIUM",
+        location="src/x.py:55",
+        message="[lesson:L010] note",
+    )
+    summary = sg.render_warn_summary([finding], _articles(), lessons=_lessons_default())
+    assert "[lesson:L010]" in summary
+    assert "logger swallowed stacks" in summary
+    assert "src/x.py:55" in summary
+
+
+def test_render_warn_summary_mixed_kinds_renders_both() -> None:
+    article_findings = sg.parse_review_findings(FIXTURES / "review_with_critical_finding.md")
+    _g, article_warn, _i = sg.partition_by_article_level(article_findings, _articles())
+    lesson_finding = sg.ShipFinding(
+        lesson_id="L010",
+        severity="MEDIUM",
+        location="src/y.py:1",
+        message="[lesson:L010] med",
+    )
+    summary = sg.render_warn_summary(
+        [*list(article_warn), lesson_finding], _articles(), lessons=_lessons_default()
+    )
+    assert "[constitution:A4]" in summary
+    assert "[lesson:L010]" in summary
+
+
+def test_render_warn_summary_lesson_kind_without_lessons_arg_raises() -> None:
+    finding = sg.ShipFinding(
+        lesson_id="L010",
+        severity="MEDIUM",
+        location="src/x.py:1",
+        message="[lesson:L010] m",
+    )
+    with pytest.raises(sg.ShipGateError, match="no `lessons` argument"):
+        sg.render_warn_summary([finding], _articles())
+
+
+def test_render_warn_summary_unknown_lesson_id_raises() -> None:
+    finding = sg.ShipFinding(
+        lesson_id="L999",
+        severity="MEDIUM",
+        location="src/x.py:1",
+        message="[lesson:L999] stale",
+    )
+    with pytest.raises(sg.ShipGateError, match="unknown lesson id"):
+        sg.render_warn_summary([finding], _articles(), lessons=_lessons_default())
+
+
+def test_ack_hook_records_lesson_kind_acknowledgement(tmp_path: Path) -> None:
+    """Lesson-kind ACK writes a recognizable ADR row + state.json deviation.
+
+    The decisions.md body bullet starts with `[lesson:L<NNN>]`, the lesson's
+    trap-fragment title, and the reviewer location — mirroring the
+    constitution-kind bullet shape. The state.json `cause` field carries the
+    `[lesson:L<NNN>]` tag verbatim so a future `validate_deviations` cross-ref
+    locates the heading inside the body block.
+    """
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "feature_id": "2026-05-11-demo",
+                "tier": "full",
+                "current_phase": "ship",
+                "phases": {"ship": {"status": "in_progress", "started_at": "2026-05-11T00:00:00Z"}},
+                "skipped": [],
+                "deviations": [],
+                "commits": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    decisions_path = tmp_path / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+    lesson_finding = sg.ShipFinding(
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:42",
+        message="[lesson:L007] async fixture leaks here",
+    )
+    hook = sg.make_acknowledgement_hook(
+        state_path=state_path,
+        decisions_path=decisions_path,
+        gate_findings=[lesson_finding],
+        articles=_articles(),
+        lessons=_lessons_default(),
+        now=datetime(2026, 5, 11, 12, 0, 0, tzinfo=UTC),
+    )
+    hook(tmp_path)
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert payload["deviations"], "deviation entry must be appended"
+    cause = payload["deviations"][-1]["cause"]
+    assert "[lesson:L007]" in cause
+    assert cause.lower().startswith("ship-gate finding acknowledged at ship:")
+    decisions = decisions_path.read_text(encoding="utf-8")
+    assert "[lesson:L007]" in decisions
+    assert "async fixture teardown leaks DB sessions" in decisions
+    assert "src/x.py:42" in decisions
+
+
+def test_ack_hook_raises_when_lesson_kind_without_lessons_arg(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "feature_id": "2026-05-11-demo",
+                "tier": "full",
+                "current_phase": "ship",
+                "phases": {"ship": {"status": "in_progress", "started_at": "2026-05-11T00:00:00Z"}},
+                "skipped": [],
+                "deviations": [],
+                "commits": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    decisions_path = tmp_path / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+    lesson_finding = sg.ShipFinding(
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L007] m",
+    )
+    with pytest.raises(sg.ShipGateError, match="no `lessons` argument"):
+        sg.make_acknowledgement_hook(
+            state_path=state_path,
+            decisions_path=decisions_path,
+            gate_findings=[lesson_finding],
+            articles=_articles(),
+            now=datetime(2026, 5, 11, 12, 0, 0, tzinfo=UTC),
+        )
+
+
+# --- Lesson title sanitization --------------------------------------------
+#
+# The Trap field is author-controlled markdown. A title with leading ``##`` or
+# an unbalanced backtick run could disfigure decisions.md headings or break
+# the inline code span. ``_sanitize_for_inline_markdown`` collapses these
+# before the title flows into the gate prompt or the ACK body bullets.
+
+
+def test_sanitize_inline_markdown_strips_leading_hashes() -> None:
+    assert sg._sanitize_for_inline_markdown("## leading heading text") == "leading heading text"
+
+
+def test_sanitize_inline_markdown_collapses_internal_whitespace() -> None:
+    assert sg._sanitize_for_inline_markdown("a\n\tb   c") == "a b c"
+
+
+def test_sanitize_inline_markdown_balances_odd_backtick_run() -> None:
+    """An odd-count backtick run must be neutralised so the span stays closed."""
+    cleaned = sg._sanitize_for_inline_markdown("text with `unbalanced inline code")
+    assert "`" not in cleaned
+
+
+def test_sanitize_inline_markdown_truncates_long_titles_with_ellipsis() -> None:
+    long_title = "x" * 200
+    cleaned = sg._sanitize_for_inline_markdown(long_title, max_chars=20)
+    assert len(cleaned) == 20
+    assert cleaned.endswith("…")
+
+
+def test_lesson_title_fragment_sanitises_heading_chars(tmp_path: Path) -> None:
+    """A Trap starting with ``##`` must not create a phantom heading."""
+    lesson = _make_lesson("L007", "HIGH", trap="## sneaky heading. body sentence")
+    title = sg._lesson_title_fragment(lesson)
+    assert not title.startswith("#")
+    assert "sneaky heading" in title
+
+
+def test_render_gate_prompt_uses_sanitised_lesson_title(tmp_path: Path) -> None:
+    """The gate prompt header line must carry the sanitised title verbatim."""
+    lesson = _make_lesson("L007", "HIGH", trap="## adversarial. body")
+    finding = sg.ShipFinding(
+        lesson_id="L007",
+        severity="HIGH",
+        location="src/x.py:1",
+        message="[lesson:L007] m",
+    )
+    prompt = sg.render_gate_prompt([finding], _articles(), lessons=[lesson])
+    # Title in the prompt must NOT include the leading ## that would otherwise
+    # be interpreted as a markdown heading by downstream renderers.
+    assert '(lesson: "adversarial")' in prompt
+
+
+# --- decisions.md atomic write --------------------------------------------
+#
+# The ACK hook previously appended the body via ``open("a") + write``, which
+# is not atomic for payloads above PIPE_BUF (~4 KiB). On a crash mid-write
+# the idempotency check could either double-append or assume completion. The
+# fix is to read + concatenate + ``atomic_replace`` so the rename is the
+# single moment the file flips.
+
+
+def test_ack_hook_writes_decisions_via_atomic_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``decisions.md`` mutation must go through ``atomic_replace``.
+
+    Capture every ``atomic_replace`` call and assert the decisions path is
+    among them. The raw append-mode write would not appear in this capture.
+    """
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "feature_id": "2026-05-11-demo",
+                "tier": "full",
+                "current_phase": "ship",
+                "phases": {"ship": {"status": "in_progress", "started_at": "2026-05-11T00:00:00Z"}},
+                "skipped": [],
+                "deviations": [],
+                "commits": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    decisions_path = tmp_path / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+
+    seen_paths: list[Path] = []
+    real_replace = _real_atomic_replace
+
+    def spy_atomic_replace(path: Path, text: str) -> None:
+        seen_paths.append(path)
+        real_replace(path, text)
+
+    monkeypatch.setattr(sg, "atomic_replace", spy_atomic_replace)
+
+    finding = sg.ShipFinding(
+        article_id="A1",
+        severity="BLOCK",
+        location="src/x.py:1",
+        message="[constitution:A1] message",
+    )
+    hook = sg.make_acknowledgement_hook(
+        state_path=state_path,
+        decisions_path=decisions_path,
+        gate_findings=[finding],
+        articles=_articles(),
+        now=datetime(2026, 5, 11, 12, 0, 0, tzinfo=UTC),
+    )
+    hook(tmp_path)
+
+    assert decisions_path in seen_paths, (
+        "decisions.md must be written through atomic_replace so a crash "
+        "mid-write cannot leave a partial heading on disk"
+    )
+    # Smoke: the recorded content survived end-to-end.
+    decisions_body = decisions_path.read_text(encoding="utf-8")
+    assert "Cause: " in decisions_body
+
+
+def test_ack_hook_idempotent_when_decisions_atomic_replace_failed_first_try(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Simulate a crash AFTER decisions.md but BEFORE state.json is rewritten.
+
+    The retry must observe the already-applied decisions heading, skip the
+    re-append, and complete the state.json write without producing a
+    duplicate heading in decisions.md.
+    """
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "feature_id": "2026-05-11-demo",
+                "tier": "full",
+                "current_phase": "ship",
+                "phases": {"ship": {"status": "in_progress", "started_at": "2026-05-11T00:00:00Z"}},
+                "skipped": [],
+                "deviations": [],
+                "commits": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    decisions_path = tmp_path / "decisions.md"
+    decisions_path.write_text("# Decisions\n\n", encoding="utf-8")
+
+    real_replace = _real_atomic_replace
+
+    crash_after_decisions = {"fired": False}
+
+    def crashing_replace(path: Path, text: str) -> None:
+        real_replace(path, text)
+        if path == decisions_path and not crash_after_decisions["fired"]:
+            crash_after_decisions["fired"] = True
+            raise RuntimeError("simulated crash after decisions.md atomic_replace")
+
+    monkeypatch.setattr(sg, "atomic_replace", crashing_replace)
+
+    finding = sg.ShipFinding(
+        article_id="A1",
+        severity="BLOCK",
+        location="src/x.py:1",
+        message="[constitution:A1] message",
+    )
+    hook = sg.make_acknowledgement_hook(
+        state_path=state_path,
+        decisions_path=decisions_path,
+        gate_findings=[finding],
+        articles=_articles(),
+        now=datetime(2026, 5, 11, 12, 0, 0, tzinfo=UTC),
+    )
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        hook(tmp_path)
+
+    # Restore the real atomic_replace for the retry path.
+    monkeypatch.setattr(sg, "atomic_replace", real_replace)
+    hook(tmp_path)
+
+    decisions_body = decisions_path.read_text(encoding="utf-8")
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert decisions_body.count("Cause: ") == 1, (
+        "decisions.md must carry exactly one heading after the retry — the "
+        "idempotency check observed the existing entry on the second pass"
+    )
+    assert len(state_payload["deviations"]) == 1, (
+        "state.json must carry exactly one deviation entry after the retry"
+    )
+
+
+# --- File-size cap on REVIEW.code.md parsing -------------------------------
+
+
+def test_parse_review_findings_refuses_oversize_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refuse to parse a REVIEW file larger than the cap."""
+    path = tmp_path / "REVIEW.code.md"
+    monkeypatch.setattr(sg, "_MAX_REVIEW_FILE_BYTES", 128)
+    path.write_text("x" * 256, encoding="utf-8")
+    with pytest.raises(sg.ShipGateError, match="refuse to parse"):
+        sg.parse_review_findings(path)
+
+
+# --- accepted-risk reason cap ---------------------------------------------
+
+
+def test_parse_review_findings_rejects_oversize_accepted_risk_reason(tmp_path: Path) -> None:
+    """``accepted-risk:<reason>`` must be bounded to 200 chars on the Resolved-by cell."""
+    bad = tmp_path / "review_long_reason.md"
+    long_reason = "x" * 201  # over the 200-char cap
+    bad.write_text(
+        f"""---
+spec: 2026-05-11-demo
+target: code
+status: open
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Resolved by | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|-------------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | accepted-risk:{long_reason} | src/x.py:1 | [constitution:A1] m | f | self |
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(sg.ShipGateError, match="unrecognized Resolved by"):
+        sg.parse_review_findings(bad)
+
+
+def test_parse_review_findings_accepts_bounded_accepted_risk_reason(tmp_path: Path) -> None:
+    """A 200-char reason still parses; the upper bound is inclusive."""
+    ok = tmp_path / "review_bounded_reason.md"
+    bounded_reason = "x" * 200
+    ok.write_text(
+        f"""---
+spec: 2026-05-11-demo
+target: code
+status: resolved
+cycles: 1
+---
+
+# Findings
+
+| ID | Severity | Status | Resolved by | Location | Problem | Recommended Fix | Source |
+|----|----------|--------|-------------|----------|---------|-----------------|--------|
+| F-1 | HIGH | open | accepted-risk:{bounded_reason} | src/x.py:1 | [constitution:A1] m | f | self |
+""",
+        encoding="utf-8",
+    )
+    findings = sg.parse_review_findings(ok)
+    assert len(findings) == 1
+    assert findings[0].resolved_by == f"accepted-risk:{bounded_reason}"

@@ -79,13 +79,14 @@ class _ScriptedRunner:
 
 
 def _script_commit(sha: str, message: str) -> dict[tuple[str, ...], Any]:
-    # ``git show`` accepts the ``--`` end-of-options separator and the
-    # production code threads it through. ``git rev-parse --verify`` rejects
-    # ``--`` (it makes the arg a pathspec), so that invocation stays clean
-    # and relies on the SHA-regex check in ``_load_commits``.
+    # ``git show`` is invoked WITHOUT the ``--`` end-of-options separator
+    # because ``git show`` treats every argument after ``--`` as a pathspec
+    # and prints an empty diff instead of the commit body. ``git rev-parse
+    # --verify`` rejects leading-dash positionals natively, so the upstream
+    # gate covers the flag-injection defense.
     return {
         ("git", "rev-parse", "--verify", f"{sha}^{{commit}}"): (0, sha + "\n", ""),
-        ("git", "show", "-s", "--format=%B", "--", sha): (0, message, ""),
+        ("git", "show", "-s", "--format=%B", sha): (0, message, ""),
     }
 
 
@@ -555,7 +556,7 @@ def test_show_failure_after_rev_parse_passes_emits_warn(tmp_path: Path) -> None:
     _write_state(folder, [{"sha": sha, "phase": "spec", "subject": "feat(tools): add"}])
     scripts: dict[tuple[str, ...], Any] = {
         ("git", "rev-parse", "--verify", f"{sha}^{{commit}}"): (0, sha + "\n", ""),
-        ("git", "show", "-s", "--format=%B", "--", sha): (128, "", "fatal: bad object\n"),
+        ("git", "show", "-s", "--format=%B", sha): (128, "", "fatal: bad object\n"),
     }
     findings = validate_git_conventions(folder, runner=_ScriptedRunner(scripts))
     assert len(findings) == 1
@@ -613,8 +614,20 @@ def test_unknown_sha_skips_further_checks(tmp_path: Path) -> None:
 # --- Trailer parsing edge cases ----------------------------------------------
 
 
-def test_keyvalue_in_body_not_parsed_as_trailer(tmp_path: Path) -> None:
-    """Only the trailing contiguous Key: value block counts as trailers."""
+def test_trailer_shaped_line_anywhere_in_message_is_flagged(tmp_path: Path) -> None:
+    """Trailer-shape lines fire ban patterns even outside the trailing block.
+
+    The earlier contract restricted ban matching to the parsed trailer
+    block, which let a malformed tail (one non-trailer line dropped after
+    a banned trailer) hide the banned line from the check entirely. The
+    fallback line-scan in :func:`_check_trailers` closes that bypass: any
+    ``Key: value`` line carrying banned text is flagged regardless of its
+    position in the message. The companion test
+    :func:`test_banned_pattern_in_body_only_not_flagged` still pins the
+    "prose containing colon-text is not a trailer" rule (because that
+    prose is not trailer-shaped — it has narrative context around the
+    colon).
+    """
     folder = _feature_layout(tmp_path)
     _write_config(
         tmp_path,
@@ -633,9 +646,9 @@ def test_keyvalue_in_body_not_parsed_as_trailer(tmp_path: Path) -> None:
     _write_state(folder, [{"sha": sha, "phase": "spec", "subject": subject}])
     scripts = _script_commit(sha, body)
     findings = validate_git_conventions(folder, runner=_ScriptedRunner(scripts))
-    # The "Forbidden:" line is in the body block, not the trailing trailer block,
-    # so it must NOT match the trailer ban.
-    assert all(f.severity != "BLOCK" for f in findings), findings
+    blockers = [f for f in findings if f.severity == "BLOCK"]
+    assert len(blockers) == 1, findings
+    assert "Forbidden: this is in the body" in blockers[0].message
 
 
 def test_only_subject_no_body_no_trailers(tmp_path: Path) -> None:

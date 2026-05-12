@@ -9,7 +9,7 @@
   "deviations": [
     {
       "phase": "ship",
-      "cause": "Constitution finding acknowledged at ship: [constitution:A3]",
+      "cause": "Ship-gate finding acknowledged at ship: [constitution:A3]",
       "resolution": "user_acknowledged",
       "logged_at": "2026-05-07T12:00:00Z"
     }

@@ -1,0 +1,70 @@
+{
+  "git_conventions": {
+    "subject": {
+      "max_length": 72,
+      "require_conventional_commits": true,
+      "allowed_scopes": [
+        "agents",
+        "archive",
+        "bdd-detect",
+        "branch",
+        "budget",
+        "change",
+        "check-schemas",
+        "commands",
+        "crucible",
+        "delta-merge",
+        "do",
+        "docs",
+        "domain",
+        "execute",
+        "fixtures",
+        "forge",
+        "forge-do",
+        "harden",
+        "health",
+        "hooks",
+        "images",
+        "make",
+        "orphan",
+        "p3",
+        "p4",
+        "p5",
+        "plan",
+        "plugin",
+        "portability",
+        "qa",
+        "quality",
+        "readme",
+        "refine",
+        "regression",
+        "rename",
+        "repo",
+        "research",
+        "review",
+        "routing",
+        "scenarios",
+        "schema",
+        "schemas",
+        "ship",
+        "skills",
+        "smoke",
+        "spec",
+        "state",
+        "templates",
+        "tests",
+        "tools",
+        "validate",
+        "verify",
+        "ws1",
+        "ws2",
+        "ws3"
+      ]
+    },
+    "trailers": {
+      "ban_patterns": [
+        "Co-Authored-By:\\s*Claude.*"
+      ]
+    }
+  }
+}

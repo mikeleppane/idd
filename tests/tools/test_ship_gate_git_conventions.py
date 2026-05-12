@@ -86,12 +86,13 @@ def _script_unknown_sha(sha: str) -> dict[tuple[str, ...], tuple[int, str, str]]
 
 
 def _script_clean_commit(sha: str, message: str) -> dict[tuple[str, ...], tuple[int, str, str]]:
-    # ``git show`` carries the ``--`` end-of-options separator; ``git rev-parse
-    # --verify`` does not (the ``--`` makes the arg a pathspec and breaks the
-    # verify).
+    # ``git show`` is invoked WITHOUT the ``--`` end-of-options separator
+    # because ``git show`` treats every argument after ``--`` as a pathspec
+    # and prints an empty diff instead of the commit body. ``git rev-parse
+    # --verify`` similarly excludes ``--`` (it requires a single revision).
     return {
         ("git", "rev-parse", "--verify", f"{sha}^{{commit}}"): (0, sha + "\n", ""),
-        ("git", "show", "-s", "--format=%B", "--", sha): (0, message, ""),
+        ("git", "show", "-s", "--format=%B", sha): (0, message, ""),
     }
 
 
