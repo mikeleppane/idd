@@ -1237,7 +1237,7 @@ def require_full_tier(payload: dict[str, Any], *, phase: str) -> None:
 
 
 def increment_refine_attempts(
-    path: Path,
+    path: Path | str,
     schema_path: Path | None = None,
 ) -> int:
     """Increment ``routing.refine_attempts`` by 1; persist and return the new count.
@@ -1248,7 +1248,10 @@ def increment_refine_attempts(
     Sibling routing fields are preserved.
 
     Args:
-        path: state.json path.
+        path: state.json path. A ``str`` is accepted at the entry boundary
+            and coerced to ``Path`` so agent callers that improvise on the
+            call shape do not trip a cryptic ``AttributeError`` deep inside
+            the lock-acquisition chain.
         schema_path: Optional schema for read+write validation.
 
     Returns:
@@ -1261,6 +1264,7 @@ def increment_refine_attempts(
             integer, the count already sits at the ``_REFINE_ATTEMPTS_CAP``
             cap, or schema validation fails.
     """
+    path = Path(path)
     with state_lock(path):
         payload = read_state(path, schema_path=schema_path)
 

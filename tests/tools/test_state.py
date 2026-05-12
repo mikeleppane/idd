@@ -1368,6 +1368,41 @@ def test_feature_folder_exists_coerces_string_repo_root(tmp_path: Path) -> None:
     assert state.feature_folder_exists(str(tmp_path), "2026-05-12-missing") is False
 
 
+def test_increment_refine_attempts_coerces_string_path(tmp_path: Path, schemas_dir: Path) -> None:
+    """A ``str`` ``path`` must increment refine_attempts identically to the ``Path`` form.
+
+    Agent callers improvising on the call shape pass a ``str`` state.json
+    path; the helper calls ``state_lock(path)`` immediately which invokes
+    ``path.exists()`` and ``path.with_name(...)`` — both ``Path`` methods
+    that trip a cryptic ``AttributeError`` deep inside the lock-acquisition
+    chain when no boundary coercion sits at the entry. The string form
+    must bump the counter identically to the ``Path`` form.
+    """
+    target = tmp_path / "state.json"
+    initial = {
+        "feature_id": "2026-05-12-coerce-refine-bump",
+        "tier": "full",
+        "current_phase": "refine",
+        "phases": {"refine": {"status": "in_progress", "started_at": "2026-05-12T10:00:00Z"}},
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+        "routing": {
+            "idea": "demo",
+            "final_tier": "full",
+            "decided_at": "2026-05-12T09:00:00Z",
+            "constitution_present": False,
+            "refine_attempts": 0,
+        },
+    }
+    schema_path = schemas_dir / "state.schema.json"
+    state.write_state(target, initial, schema_path=schema_path)
+
+    count = state.increment_refine_attempts(str(target), schema_path=schema_path)
+
+    assert count == 1
+
+
 def test_guard_refine_entry_coerces_string_path(tmp_path: Path, schemas_dir: Path) -> None:
     """A ``str`` ``path`` must guard refine entry identically to the ``Path`` form.
 
