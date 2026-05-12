@@ -1178,7 +1178,7 @@ def record_refined_idea(
         return payload
 
 
-def guard_refine_entry(path: Path, schema_path: Path | None = None) -> dict[str, Any]:
+def guard_refine_entry(path: Path | str, schema_path: Path | None = None) -> dict[str, Any]:
     """Guard ``/forge:refine`` entry on tier + phase BEFORE any mutation.
 
     Reads ``state.json`` once and refuses if the feature is not actually on
@@ -1193,7 +1193,10 @@ def guard_refine_entry(path: Path, schema_path: Path | None = None) -> dict[str,
     failed.
 
     Args:
-        path: state.json path.
+        path: state.json path. A ``str`` is accepted at the entry boundary
+            and coerced to ``Path`` so agent callers that improvise on the
+            call shape do not trip a cryptic ``AttributeError`` deep inside
+            the read chain.
         schema_path: Optional schema for validation on read.
 
     Returns:
@@ -1202,6 +1205,7 @@ def guard_refine_entry(path: Path, schema_path: Path | None = None) -> dict[str,
     Raises:
         StateError: ``current_phase != "refine"`` OR ``tier != "full"``.
     """
+    path = Path(path)
     payload = read_state(path, schema_path=schema_path)
     current_phase = payload.get("current_phase")
     if current_phase != "refine":
