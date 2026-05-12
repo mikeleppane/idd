@@ -80,42 +80,62 @@ Copy `templates/feature/RESEARCH.md` to
 Use `forge-subagent-dispatch` with the budget block below. RESEARCH.md
 is the **sole writable file**.
 
-```yaml
+**Required prompt prefix.** The dispatch prompt MUST start with a
+top-level `context_budget:` block at column 0 (outside any fenced
+code block). The PreToolUse hook (`hooks/check_budget.py`) parses
+the block with `json.loads` and refuses dispatches that omit the
+marker, lack `files_in_scope`, or leave `forbidden` empty. Canonical
+shape — copy verbatim and substitute the bracketed values:
+
+```text
 context_budget:
-  spec_sections: []          # no SPEC.md yet
-  files_in_scope:            # writable
-    - .forge/features/<id>/RESEARCH.md
-  read_only_files:
-    - <ecosystem manifests resolved by tools.research.ecosystem.detect()>
-    - .forge/CONSTITUTION.md
-    - .forge/external-docs/**         # BYOD path (read-only, optional)
-  scan_roots: [.]                     # codebase scan: project tree top-level + module list
-  intel_files: []                     # intel deferred; research scans tree directly
-  refined_idea: <verbatim>
-  forbidden:
-    - edit code
-    - write outside RESEARCH.md
-    - dispatch additional subagents
-  articles: <constitution articles serialized>
-  mcp_tools_allowed: [mcp__context7__resolve-library-id, mcp__context7__query-docs, WebSearch]
-return_format:
-  sections: [codebase_findings, external_docs, domain_notes, risks]
-  max_words: 800
-  extra:
-    grounding_probe:
-      context7_callable: bool        # subagent attempted resolve-library-id; tool found + responded
-      websearch_present: bool        # subagent verified WebSearch tool exists in surface
-    lookup_results:
-      - library: str
-        source: enum[context7, websearch, byod, none]
-        snippet_refs: [str]
-    libraries_extracted: [str]       # canonicalized list from step 5b
+{
+  "spec_sections": [],
+  "files_in_scope": [
+    ".forge/features/<id>/RESEARCH.md"
+  ],
+  "read_only_files": [
+    "<each ecosystem manifest resolved by tools.research.ecosystem.detect()>",
+    ".forge/CONSTITUTION.md",
+    ".forge/external-docs/**"
+  ],
+  "scan_roots": ["."],
+  "intel_files": [],
+  "refined_idea": "<verbatim refined-idea text>",
+  "forbidden": [
+    "do not edit code",
+    "do not write outside .forge/features/<id>/RESEARCH.md",
+    "do not dispatch additional subagents"
+  ],
+  "articles": [ <output of Article.to_budget_dict() for each filtered article, or [] when CONSTITUTION.md is absent> ],
+  "mcp_tools_allowed": [
+    "mcp__context7__resolve-library-id",
+    "mcp__context7__query-docs",
+    "WebSearch"
+  ],
+  "return_format": {
+    "sections": ["codebase_findings", "external_docs", "domain_notes", "risks"],
+    "max_words": 800,
+    "extra": {
+      "grounding_probe": {
+        "context7_callable": "bool",
+        "websearch_present": "bool"
+      },
+      "lookup_results": "list[{library: str, source: enum[context7, websearch, byod, none], snippet_refs: list[str]}]",
+      "libraries_extracted": "list[str]"
+    }
+  }
+}
+
+[task prose follows here, starting with a blank line]
 ```
 
-The `read_only_files` line uses the literal placeholder
-`<ecosystem manifests resolved by tools.research.ecosystem.detect()>`
-on purpose — manifests are a runtime detection result, never a
-hand-rolled inventory in skill prose.
+The `read_only_files` placeholder
+`<each ecosystem manifest resolved by tools.research.ecosystem.detect()>`
+is deliberate — manifests are a runtime detection result, never a
+hand-rolled inventory in skill prose. The block is JSON (not YAML)
+because the hook parses with stdlib `json.loads`; the YAML-shaped
+predecessor was unparseable to the hook and would be refused.
 
 ### 5. Subagent runs the four-section research.
 
