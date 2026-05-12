@@ -1368,6 +1368,44 @@ def test_feature_folder_exists_coerces_string_repo_root(tmp_path: Path) -> None:
     assert state.feature_folder_exists(str(tmp_path), "2026-05-12-missing") is False
 
 
+def test_record_routing_decision_coerces_string_path(tmp_path: Path, schemas_dir: Path) -> None:
+    """A ``str`` ``path`` must record the routing block identically to the ``Path`` form.
+
+    Agent callers improvising on the call shape pass a ``str`` state.json
+    path; the helper calls ``state_lock(path)`` immediately which invokes
+    ``path.exists()`` and ``path.with_name(...)`` — both ``Path`` methods
+    that trip a cryptic ``AttributeError`` deep inside the lock-acquisition
+    chain when no boundary coercion sits at the entry. The string form
+    must persist the same ``routing`` block as the ``Path`` form for the
+    same inputs.
+    """
+    target = tmp_path / "state.json"
+    initial = {
+        "feature_id": "2026-05-12-coerce-routing",
+        "tier": "focused",
+        "current_phase": "spec",
+        "phases": {"spec": {"status": "in_progress", "started_at": "2026-05-12T10:00:00Z"}},
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+    schema_path = schemas_dir / "state.schema.json"
+    state.write_state(target, initial, schema_path=schema_path)
+
+    result = state.record_routing_decision(
+        str(target),
+        idea="ship the thing",
+        final_tier="focused",
+        rationale="tiny scope",
+        schema_path=schema_path,
+        now="2026-05-12T11:30:00Z",
+    )
+
+    assert result["routing"]["idea"] == "ship the thing"
+    assert result["routing"]["final_tier"] == "focused"
+    assert result["routing"]["decided_at"] == "2026-05-12T11:30:00Z"
+
+
 def test_finish_feature_coerces_string_path(tmp_path: Path, schemas_dir: Path) -> None:
     """A ``str`` ``path`` must finish the feature identically to the ``Path`` form.
 

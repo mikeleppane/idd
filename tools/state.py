@@ -1061,7 +1061,7 @@ def finish_feature(
 
 
 def record_routing_decision(
-    path: Path,
+    path: Path | str,
     *,
     idea: str,
     final_tier: str,
@@ -1075,7 +1075,10 @@ def record_routing_decision(
     """Record a routing decision in state.json.routing. Idempotent overwrite.
 
     Args:
-        path: state.json path.
+        path: state.json path. A ``str`` is accepted at the entry boundary
+            and coerced to ``Path`` so agent callers that improvise on the
+            call shape do not trip a cryptic ``AttributeError`` deep inside
+            the lock-acquisition chain.
         idea: User-supplied idea text.
         final_tier: Tier the user confirmed (focused/standard/full).
         proposed_tier: Tier the router proposed before user override.
@@ -1100,6 +1103,7 @@ def record_routing_decision(
     if proposed_tier is not None and proposed_tier not in VALID_TIERS:
         raise StateError(f"invalid proposed_tier {proposed_tier!r}; must be one of {VALID_TIERS}")
 
+    path = Path(path)
     with state_lock(path):
         payload = read_state(path, schema_path=schema_path)
         # Cross-check: final_tier must match the seeded state.json.tier so a
