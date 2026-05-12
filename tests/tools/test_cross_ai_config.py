@@ -165,6 +165,44 @@ def test_overlong_fatal_regex_also_rejected(tmp_path: Path) -> None:
         load_config(tmp_path)
 
 
+def test_nested_unbounded_quantifier_rejected_in_deny_regex(tmp_path: Path) -> None:
+    """``(a+)+`` and friends are obvious ReDoS foot-guns; refuse at load time."""
+    _write_config(
+        tmp_path,
+        {"cross_ai": {"mode": "manual", "redaction": {"deny_regex": ["(a+)+"]}}},
+    )
+    with pytest.raises(CrossAiConfigError, match="nested unbounded quantifier"):
+        load_config(tmp_path)
+
+
+def test_nested_unbounded_quantifier_rejected_in_fatal_regex(tmp_path: Path) -> None:
+    _write_config(
+        tmp_path,
+        {"cross_ai": {"mode": "manual", "redaction": {"fatal_regex": ["(?:b*)*"]}}},
+    )
+    with pytest.raises(CrossAiConfigError, match="nested unbounded quantifier"):
+        load_config(tmp_path)
+
+
+def test_well_formed_user_regex_still_accepted(tmp_path: Path) -> None:
+    """Regression: tightening the ReDoS guard must not over-refuse benign patterns."""
+    _write_config(
+        tmp_path,
+        {
+            "cross_ai": {
+                "mode": "manual",
+                "redaction": {
+                    "deny_regex": [r"sk-[A-Za-z0-9]{32}"],
+                    "fatal_regex": [r"-----BEGIN PRIVATE KEY-----"],
+                },
+            }
+        },
+    )
+    cfg = load_config(tmp_path)
+    assert cfg.redaction.deny_regex == (r"sk-[A-Za-z0-9]{32}",)
+    assert cfg.redaction.fatal_regex == (r"-----BEGIN PRIVATE KEY-----",)
+
+
 def test_invalid_dispatch_approved_at_timestamp_rejected(tmp_path: Path) -> None:
     """``dispatch_approved_at`` declares ``format: date-time``. The loader
     must wire up the default format checker (mirroring ``tools/state.py``)

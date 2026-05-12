@@ -10,11 +10,19 @@ install location (``Path(__file__)``-relative) rather than the runtime
 without colocating a copy of the schemas.
 
 ReDoS guard: every pattern in ``redaction.deny_regex`` and
-``redaction.fatal_regex`` is rejected when its length exceeds
-``REDACTION_REGEX_MAX_LEN`` and probe-compiled via ``re.compile`` so a
-malformed pattern fails at load time rather than at first use. The
-compiled object is discarded; production redaction in ``tools.redaction``
-performs its own compile.
+``redaction.fatal_regex`` passes three checks at load time so a
+malformed or pathological pattern fails immediately rather than at
+first use:
+
+  * Length cap (``REDACTION_REGEX_MAX_LEN`` = 256 chars).
+  * Nested-unbounded-quantifier sanity filter via
+    :func:`tools.conventions_runtime.has_nested_unbounded_quantifier`
+    (catches ``(a+)+``, ``(a*)*``, ``(?:a+)+`` — necessary not
+    sufficient against ReDoS, but covers the obvious foot-guns).
+  * Probe-compile via ``re.compile``.
+
+The compiled object is discarded; production redaction in
+``tools.redaction`` performs its own compile.
 """
 
 from __future__ import annotations
@@ -29,6 +37,7 @@ from typing import Any
 import jsonschema
 
 from tools import redaction
+from tools.conventions_runtime import has_nested_unbounded_quantifier
 
 # Schema resolved from the package install location, not the caller-supplied
 # ``repo_root`` (tests pass ``tmp_path`` with no schemas/ subdirectory).
@@ -88,13 +97,34 @@ class CrossAiConfigError(ValueError):
 def _validate_regex_pattern(pattern: str) -> None:
     """Apply the ReDoS guard to one user-supplied pattern.
 
-    Length-cap first, probe-compile second; raises ``CrossAiConfigError`` on
-    either failure with a message that previews the offending pattern (so a
-    misconfigured ``.forge/config.json`` is diagnosable without a debugger).
+    Three-step check, ordered from cheapest to most surgical so the
+    error message points at the actual problem:
+
+      1. Length cap (256 chars). Catches paste-bomb inputs before any
+         engine work.
+      2. Nested-unbounded-quantifier sanity filter via
+         :func:`tools.conventions_runtime.has_nested_unbounded_quantifier`.
+         Rejects the most obvious ReDoS foot-guns (``(a+)+``, ``(a*)*``,
+         ``(?:a+)+``). This is *necessary not sufficient* — alternation
+         pathologies (``(a|a)*``), greedy-wildcard nesting (``(.*)+``),
+         and backreference shapes still slip through. Patterns that
+         compile but match slowly should be exercised against
+         adversarial input.
+      3. Probe-compile. ``re.error`` becomes a ``CrossAiConfigError``
+         so the loader does not raise a bare regex error from inside an
+         unrelated layer.
+
+    Each failure raises :class:`CrossAiConfigError` with a preview of
+    the offending pattern.
     """
     if len(pattern) > REDACTION_REGEX_MAX_LEN:
         preview = pattern[:32]
         raise CrossAiConfigError(f"regex pattern exceeds 256-char ReDoS guard: {preview!r}...")
+    if has_nested_unbounded_quantifier(pattern):
+        preview = pattern[:64]
+        raise CrossAiConfigError(
+            f"regex pattern has nested unbounded quantifier (ReDoS foot-gun): {preview!r}"
+        )
     try:
         re.compile(pattern)
     except re.error as exc:
