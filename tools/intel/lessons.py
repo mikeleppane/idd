@@ -725,7 +725,7 @@ def _escape_body(text: str) -> str:
     return "\n".join(escaped)
 
 
-def append(repo_root: Path, draft: Lesson, *, today: date | None = None) -> Path:
+def append(repo_root: Path | str, draft: Lesson, *, today: date | None = None) -> Path:
     """Append a fresh lesson to ``.forge/intel/lessons.md``.
 
     Refuses when ``draft.id`` does not equal :func:`next_id` (caller cannot
@@ -740,6 +740,16 @@ def append(repo_root: Path, draft: Lesson, *, today: date | None = None) -> Path
     Each entry's ``Captured:`` line always reflects ``draft.captured`` and
     is independent of ``today``.
 
+    Args:
+        repo_root: Repository root containing the ``.forge/`` tree. A
+            ``str`` is accepted at the entry boundary and coerced to
+            ``Path`` so agent callers that improvise on the call shape
+            do not trip a cryptic ``TypeError`` on the first ``/``
+            operator inside ``_lessons_path``.
+        draft: Lesson to append; ``draft.id`` must equal :func:`next_id`.
+        today: Optional override used only to stamp the auto-generated
+            frontmatter header on first-write.
+
     Concurrency:
         Holds an advisory exclusive non-blocking lock on a sidecar
         ``.forge/intel/lessons.md.lock`` for the duration of the call so two
@@ -751,6 +761,7 @@ def append(repo_root: Path, draft: Lesson, *, today: date | None = None) -> Path
         A defensive post-lock re-derivation of :func:`next_id` covers the
         narrow window between body build and rename.
     """
+    repo_root = Path(repo_root)
     today = today or date.today()
     path = _lessons_path(repo_root)
     lock_path = path.with_suffix(path.suffix + ".lock")

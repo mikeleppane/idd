@@ -470,6 +470,22 @@ def test_append_creates_file_from_template(tmp_path: Path) -> None:
     assert [e.id for e in parsed] == ["L001"]
 
 
+def test_append_coerces_string_repo_root(tmp_path: Path) -> None:
+    """Boundary coercion: a string repo_root must not trip ``TypeError``.
+
+    Mirrors the pattern locked into ``tools.bdd_detect.detect`` — agent
+    callers that pass a string for an annotated ``Path`` parameter must
+    not crash four frames deep on ``str / ".forge" / ...`` inside
+    ``_lessons_path``; the append should land on disk just like the
+    ``Path`` form.
+    """
+    draft = _make_lesson(id="L001")
+    path = lessons.append(str(tmp_path), draft)
+    assert path == tmp_path / ".forge" / "intel" / "lessons.md"
+    parsed = lessons.parse(path)
+    assert [e.id for e in parsed] == ["L001"]
+
+
 def test_append_adds_to_existing_file(tmp_path: Path) -> None:
     seed = _make_lesson(id="L001")
     lessons.append(tmp_path, seed)
