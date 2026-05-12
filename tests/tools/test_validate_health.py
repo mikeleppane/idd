@@ -101,7 +101,16 @@ def test_fresh_feature_with_no_commits_produces_low_orphan_finding(tmp_path: Pat
 
 def test_orphan_feature_folder_low(tmp_path: Path) -> None:
     folder = tmp_path / ".forge" / "features" / "2026-05-04-orphan"
-    _seed_state(folder, current_phase="refine", phases={"refine": {"status": "in_progress"}})
+    # Refine is full-tier only per the per-tier propertyNames constraint;
+    # override tier alongside current_phase so the orphan fixture is
+    # schema-coherent and health surfaces the orphan finding rather than
+    # a schema-error BLOCK that masks it.
+    _seed_state(
+        folder,
+        tier="full",
+        current_phase="refine",
+        phases={"refine": {"status": "in_progress"}},
+    )
     _seed_spec(folder, "orphan")  # only templated files; no commits
 
     findings = validate.validate_health(tmp_path)

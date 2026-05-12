@@ -166,5 +166,79 @@
       "format": "date-time",
       "description": "RFC 3339 UTC timestamp recorded when /forge:ship completes the ship phase. Required for post-merge /forge:qa to find the feature; absence means ship has not completed."
     }
-  }
+  },
+  "allOf": [
+    {
+      "$comment": "Tier-allowed phase set for focused. Focused tier ends at verify; QA only exists on standard and full per the QA-lifecycle policy decided in the state-machine pre-flight.",
+      "if": {
+        "required": ["tier"],
+        "properties": { "tier": { "const": "focused" } }
+      },
+      "then": {
+        "properties": {
+          "phases": {
+            "propertyNames": {
+              "enum": ["spec", "execute", "verify"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "$comment": "Tier-allowed phase set for standard. The optional research slot is admitted because /forge:do with --research prepends it to the canonical 8-phase standard list (routing.phase_list opt-in); features that do not opt in simply never instantiate the research block.",
+      "if": {
+        "required": ["tier"],
+        "properties": { "tier": { "const": "standard" } }
+      },
+      "then": {
+        "properties": {
+          "phases": {
+            "propertyNames": {
+              "enum": [
+                "research",
+                "spec",
+                "scenarios",
+                "plan",
+                "crucible",
+                "review",
+                "execute",
+                "verify",
+                "ship",
+                "qa"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "$comment": "Tier-allowed phase set for full. Full tier always carries refine + research + domain in addition to the standard set, plus qa post-ship.",
+      "if": {
+        "required": ["tier"],
+        "properties": { "tier": { "const": "full" } }
+      },
+      "then": {
+        "properties": {
+          "phases": {
+            "propertyNames": {
+              "enum": [
+                "refine",
+                "research",
+                "spec",
+                "domain",
+                "scenarios",
+                "plan",
+                "crucible",
+                "review",
+                "execute",
+                "verify",
+                "ship",
+                "qa"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
 }

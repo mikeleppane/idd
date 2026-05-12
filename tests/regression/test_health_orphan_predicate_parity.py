@@ -87,12 +87,19 @@ def _seed_feature(
     extra_files: list[str] | None = None,
     **state_overrides: Any,
 ) -> Path:
-    """Create a feature folder with an orphan-candidate state.json."""
+    """Create a feature folder with an orphan-candidate state.json.
+
+    Seeds a full-tier refine orphan by default — full is the only tier
+    whose canonical lifecycle includes the refine phase. Callers that
+    need a different tier/phase shape pass overrides; the per-tier
+    schema constraint refuses tier/phase pairings that the lifecycle
+    does not permit.
+    """
     folder = repo_root / ".forge" / "features" / feature_id
     folder.mkdir(parents=True, exist_ok=True)
     payload: dict[str, Any] = {
         "feature_id": feature_id,
-        "tier": "focused",
+        "tier": "full",
         "current_phase": "refine",
         "phases": {"refine": {"status": "in_progress"}},
         "skipped": [],

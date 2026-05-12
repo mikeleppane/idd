@@ -12,9 +12,13 @@ from tools import state
 
 
 def _base_payload(feature_id: str = "2026-05-04-demo") -> dict[str, Any]:
+    # ``refine`` is a full-tier-only phase per the tier-allowed phase set
+    # in schemas/state.schema.json. These routing tests pre-date that
+    # constraint; the tier is incidental to the routing behaviour under
+    # test, so the fixture now seeds tier=full to stay schema-coherent.
     return {
         "feature_id": feature_id,
-        "tier": "standard",
+        "tier": "full",
         "current_phase": "refine",
         "phases": {"refine": {"status": "in_progress", "started_at": "2026-05-04T10:00:00Z"}},
         "skipped": [],
@@ -81,7 +85,7 @@ def test_record_routing_decision_writes_block(tmp_path: Path, schemas_dir: Path)
         target,
         idea="Add coupon redemption",
         proposed_tier="standard",
-        final_tier="standard",
+        final_tier="full",
         rationale="Cross-cutting checkout change",
         constitution_present=False,
         schema_path=schemas_dir / "state.schema.json",
@@ -89,7 +93,7 @@ def test_record_routing_decision_writes_block(tmp_path: Path, schemas_dir: Path)
     )
 
     assert result["routing"]["idea"] == "Add coupon redemption"
-    assert result["routing"]["final_tier"] == "standard"
+    assert result["routing"]["final_tier"] == "full"
     assert result["routing"]["decided_at"] == "2026-05-04T09:55:00Z"
     assert result["routing"]["constitution_present"] is False
 
@@ -102,20 +106,20 @@ def test_record_routing_decision_overwrites_existing_block(
     initial["routing"] = {
         "idea": "old idea",
         "proposed_tier": "focused",
-        "final_tier": "focused",
+        "final_tier": "full",
         "rationale": "stale",
         "constitution_present": False,
         "decided_at": "2026-05-04T08:00:00Z",
     }
     state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
 
-    # final_tier MUST match state.json.tier under the M3 cross-check guard;
-    # base payload carries tier="standard" so the re-call uses "standard".
+    # final_tier MUST match state.json.tier under the cross-check guard;
+    # base payload carries tier="full" so the re-call uses "full".
     result = state.record_routing_decision(
         target,
         idea="new idea",
         proposed_tier="focused",
-        final_tier="standard",
+        final_tier="full",
         rationale="user override on second decision",
         constitution_present=True,
         schema_path=schemas_dir / "state.schema.json",
@@ -123,7 +127,7 @@ def test_record_routing_decision_overwrites_existing_block(
     )
 
     assert result["routing"]["idea"] == "new idea"
-    assert result["routing"]["final_tier"] == "standard"
+    assert result["routing"]["final_tier"] == "full"
     assert result["routing"]["constitution_present"] is True
 
 
@@ -187,15 +191,25 @@ def test_record_routing_decision_rejects_unknown_proposed_tier_without_schema(
 def test_record_routing_decision_rejects_final_tier_mismatching_state_tier(
     tmp_path: Path,
 ) -> None:
-    """``final_tier`` must equal ``state.json.tier`` (M3 cross-check).
+    """``final_tier`` must equal ``state.json.tier`` (cross-check).
 
     A focused/standard feature whose routing block somehow ends up with
     ``final_tier="full"`` would corrupt downstream phase-pump logic. The
     cross-check refuses the write so the inconsistency cannot reach disk.
     """
     target = tmp_path / "state.json"
-    # base payload tier is "standard"
-    state.write_state(target, _base_payload())
+    # Use a standard-tier seed at the spec slot so the tier/phase pairing is
+    # schema-coherent under the per-tier propertyNames constraint.
+    standard_payload = {
+        "feature_id": "2026-05-04-demo",
+        "tier": "standard",
+        "current_phase": "spec",
+        "phases": {"spec": {"status": "in_progress", "started_at": "2026-05-04T10:00:00Z"}},
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+    state.write_state(target, standard_payload)
 
     with pytest.raises(
         state.StateError, match=r"final_tier 'full' mismatches state\.json\.tier 'standard'"
@@ -611,20 +625,26 @@ def test_schema_rejects_refine_attempts_over_cap(tmp_path: Path, schemas_dir: Pa
 
 
 def test_increment_refine_attempts_raises_when_tier_not_full(
-    tmp_path: Path, schemas_dir: Path
+    tmp_path: Path,
 ) -> None:
-    """Refine is full-tier only; standard/focused tiers must trip the helper guard."""
+    """Refine is full-tier only; standard/focused tiers must trip the helper guard.
+
+    Writes the deliberately-incoherent fixture (standard tier with a
+    refine phase block) straight to disk so the per-tier propertyNames
+    constraint does not refuse it before the helper-level tier guard
+    can run. ``schema_path=None`` from a ``tmp_path`` autodiscovers no
+    schema (the walk-up never reaches the repo's ``schemas/`` dir from
+    pytest's tmpdir tree), so the runtime ``require_full_tier`` check
+    is the one under test.
+    """
     target = tmp_path / "state.json"
     payload = _routed_payload()
     payload["tier"] = "standard"
     payload["routing"]["final_tier"] = "standard"
-    state.write_state(target, payload, schema_path=schemas_dir / "state.schema.json")
+    target.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(state.StateError) as excinfo:
-        state.increment_refine_attempts(
-            target,
-            schema_path=schemas_dir / "state.schema.json",
-        )
+        state.increment_refine_attempts(target)
 
     message = str(excinfo.value)
     assert "'standard'" in message
