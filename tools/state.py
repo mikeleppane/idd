@@ -1310,7 +1310,7 @@ def increment_refine_attempts(
 
 
 def set_review_target(
-    path: Path,
+    path: Path | str,
     *,
     review_target: str,
     schema_path: Path | None = None,
@@ -1318,7 +1318,10 @@ def set_review_target(
     """Set phases.review.current_target and ensure targets_done is initialized.
 
     Args:
-        path: state.json path.
+        path: state.json path. A ``str`` is accepted at the entry boundary
+            and coerced to ``Path`` so agent callers that improvise on the
+            call shape do not trip a cryptic ``AttributeError`` deep inside
+            the lock-acquisition chain.
         review_target: One of VALID_REVIEW_TARGETS.
         schema_path: Optional schema for read+write validation.
 
@@ -1332,6 +1335,7 @@ def set_review_target(
         raise StateError(
             f"invalid review_target {review_target!r}; must be one of {VALID_REVIEW_TARGETS}"
         )
+    path = Path(path)
     with state_lock(path):
         payload = read_state(path, schema_path=schema_path)
         review_block = payload.get("phases", {}).get("review")
