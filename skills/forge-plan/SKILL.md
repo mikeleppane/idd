@@ -20,11 +20,11 @@ Active feature `state.json` has `tier in ("standard", "full")`, `phases.scenario
 
 1. **Validate state.** Read `state.json`; abort if not in plan phase.
 2. **Copy template** if PLAN.md does not exist: copy `templates/feature/PLAN.md` into `.forge/features/<id>/PLAN.md`. Set frontmatter: `spec: <feature-id>`, `slices: <integer>`, `status: ready`.
-2a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<spec_anchors>)`. Pass `articles[]` into the planner subagent budget. The planner MUST flag any slice whose `Files in scope` overlaps a CRITICAL article's domain (e.g., `repository/`, `vault.ts`, `secrets/`) under the slice's notes.
+2a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<spec_anchors>)`. Keep `articles[]` in this skill's working context. The planner MUST flag any slice whose `Files in scope` overlaps a CRITICAL article's domain (e.g., `repository/`, `vault.ts`, `secrets/`) under the slice's notes.
 2b. **Lessons preflight.** Call
     `tools.intel.lessons.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<spec_anchors>)`.
-    Pass `traps[]` (Lesson records via `Lesson.to_budget_dict()`) into
-    the planner subagent's dispatch budget. The planner MUST flag any
+    Keep `traps[]` (Lesson records via `Lesson.to_budget_dict()`) in
+    this skill's working context. The planner MUST flag any
     slice whose `Files in scope` overlaps a CRITICAL trap's tag domain
     (e.g. `secrets`, `fixtures`, `async`) under the slice's notes — the
     same flagging discipline that 2a enforces for Constitution articles

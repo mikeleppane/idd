@@ -104,11 +104,11 @@ up a guard described below.
 
     The prelude is read-only; it never mutates `state.json` or RESEARCH.md.
 5. **Initialize SPEC.md** from the copied template; `decisions.md` stays empty until the first decision is logged.
-5a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<idea>, files_in_scope=[])`. When `articles[]` is non-empty, include them in the spec-author subagent's dispatch budget under the `articles` field. The author MUST keep CRITICAL articles' rules in view while drafting Intent + Negative Requirements.
+5a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<idea>, files_in_scope=[])`. When `articles[]` is non-empty, keep them in this skill's working context as the `articles` set the author consults while drafting. The author MUST keep CRITICAL articles' rules in view while drafting Intent + Negative Requirements.
 5b. **Lessons preflight.** Call
     `tools.intel.lessons.load_and_filter(repo_root, idea_text=<idea>, files_in_scope=[])`.
-    When the returned `lessons[]` is non-empty, include them in the
-    spec-author subagent's dispatch budget under the `traps` field,
+    When the returned `lessons[]` is non-empty, keep them in this skill's
+    working context as the `traps` set the author consults while drafting,
     serialized via `Lesson.to_budget_dict()` (locked JSON shape — `id`,
     `trap`, `avoidance`, `tags`, `severity`, `status`). The author MUST
     keep CRITICAL traps in view while drafting Intent + Negative
@@ -118,7 +118,7 @@ up a guard described below.
     schema validation at hook layer; the producing skill owns shape.
     Missing `.forge/intel/lessons.md` is a no-op (`load_and_filter`
     returns `([], [])` on a fresh repo); pass the empty list through to
-    the budget unchanged.
+    the working context unchanged.
 6. **Fill the template — one section at a time, asking only when ambiguous.**
    - **Frontmatter.** Set `id`, `status: draft`, `tier`, `created`, `capability` (stable handle).
    - **Intent.** One paragraph. WHY. Drill until the *why* is concrete. **Idea-source precedence (locked, three-level)** — consume sources in order, falling back when the prior source is absent:
