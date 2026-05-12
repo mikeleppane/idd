@@ -262,6 +262,7 @@ def validate_health(repo_root: Path) -> list[Finding]:
         | Canonical SPEC.md missing `evidence:` link                     | LOW      |
         | Constitution article count >=12                                | WARN     |
         | Constitution article count >=16                                | BLOCK    |
+        | Repo root missing the .forge/ directory                        | WARN     |
 
     Args:
         repo_root: Repository root containing the .forge/ tree.
@@ -280,7 +281,15 @@ def validate_health(repo_root: Path) -> list[Finding]:
     findings: list[Finding] = []
     forge_root = repo_root / ".forge"
     if not forge_root.is_dir():
-        return findings
+        return [
+            Finding(
+                "WARN",
+                "health",
+                repo_root,
+                f"no .forge/ directory under {repo_root!s}; this is not a FORGE "
+                f"repo yet — bootstrap with /forge:do or install the FORGE plugin",
+            ),
+        ]
 
     findings.extend(validate_capability_uniqueness(repo_root))
 

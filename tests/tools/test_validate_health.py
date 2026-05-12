@@ -298,6 +298,35 @@ def test_constitution_article_count_warn(tmp_path: Path) -> None:
     assert any(f.severity == "WARN" and "article count" in f.message.lower() for f in findings)
 
 
-def test_missing_forge_root_returns_no_findings(tmp_path: Path) -> None:
+def test_validate_health_warns_when_forge_dir_absent(tmp_path: Path) -> None:
+    """A directory with no ``.forge/`` must surface a single WARN finding so
+    users who mistype ``--repo-root`` or run from the wrong cwd see a clear
+    pointer toward bootstrap instead of an empty 'all clean' report."""
     findings = validate.validate_health(tmp_path)
-    assert findings == []
+
+    assert len(findings) == 1, f"expected exactly one finding; got {findings}"
+    only = findings[0]
+    assert only.severity == "WARN"
+    assert only.target == "health"
+    assert only.file == tmp_path
+    assert ".forge" in only.message
+    lower = only.message.lower()
+    assert "forge:do" in lower or "bootstrap" in lower, only.message
+
+
+def test_validate_health_no_warn_when_forge_dir_present_but_empty(tmp_path: Path) -> None:
+    """An empty ``.forge/`` directory means the repo IS a forge repo (even if
+    nothing has been seeded yet) — the missing-dir warning must not fire.
+    Other findings are allowed; only the missing-.forge message is forbidden."""
+    (tmp_path / ".forge").mkdir()
+
+    findings = validate.validate_health(tmp_path)
+
+    missing_dir_warnings = [
+        f
+        for f in findings
+        if f.severity == "WARN" and ".forge" in f.message and "bootstrap" in f.message.lower()
+    ]
+    assert missing_dir_warnings == [], (
+        f"empty .forge/ must not emit the missing-dir WARN; got {missing_dir_warnings}"
+    )

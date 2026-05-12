@@ -12,12 +12,32 @@ from tools.validate import cli as validate_cli
 
 
 def test_health_clean_repo_returns_zero(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """An empty ``.forge/`` directory is a healthy, bootstrapped repo:
+    the missing-dir WARN must not fire and the CLI must report a clean
+    findings list with exit 0."""
+    (tmp_path / ".forge").mkdir()
+
     rc = validate.main(["--target", "health", "--repo-root", str(tmp_path)])
 
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert rc == 0
     assert payload == {"target": "health", "findings": []}
+
+
+def test_validate_cli_exit_code_when_only_warn_findings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Running health against a directory with no ``.forge/`` emits a WARN
+    (no .forge/), but WARN must not flip the exit code: BLOCK/HIGH ⇒ 1,
+    everything else ⇒ 0. The user still sees the warning in the JSON payload."""
+    rc = validate.main(["--target", "health", "--repo-root", str(tmp_path)])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert rc == 0
+    warns = [f for f in payload["findings"] if f["severity"] == "WARN"]
+    assert any(".forge" in f["message"] for f in warns), payload
 
 
 def test_constitution_target_blocks_on_missing_file(
@@ -43,6 +63,10 @@ def test_unknown_target_exits_2(capsys: pytest.CaptureFixture[str]) -> None:
 def test_all_target_runs_health_only_when_no_paths(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """A bootstrapped (empty .forge/) directory under ``--target all`` runs
+    health and the no-path-required validators with no findings and exit 0."""
+    (tmp_path / ".forge").mkdir()
+
     rc = validate.main(["--target", "all", "--repo-root", str(tmp_path)])
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
