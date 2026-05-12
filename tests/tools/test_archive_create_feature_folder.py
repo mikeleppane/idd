@@ -418,3 +418,70 @@ def test_create_feature_folder_full_tier_refine_phase_block_only_has_refine(
     )
     payload = _read_state(tmp_path / ".forge" / "features" / feature_id)
     assert set(payload["phases"].keys()) == {"refine"}
+
+
+def test_create_feature_folder_appends_gitignore_managed_block(tmp_path: Path) -> None:
+    """First feature seed appends a FORGE-managed block to existing .gitignore."""
+    gitignore = tmp_path / ".gitignore"
+    gitignore.write_text(".venv/\n", encoding="utf-8")
+    create_feature_folder(
+        tmp_path,
+        feature_id="2026-05-12-gitignore-append",
+        tier="focused",
+        schema_path=SCHEMA_PATH,
+    )
+    body = gitignore.read_text(encoding="utf-8")
+    assert "# === BEGIN FORGE managed ===" in body
+    assert ".forge/**/*.lock" in body
+    assert ".forge/state/*.log" in body
+    assert ".venv/" in body  # existing content preserved
+
+
+def test_create_feature_folder_gitignore_append_is_idempotent(tmp_path: Path) -> None:
+    """Re-seeding does not re-append the managed block."""
+    gitignore = tmp_path / ".gitignore"
+    gitignore.write_text(".venv/\n", encoding="utf-8")
+    create_feature_folder(
+        tmp_path,
+        feature_id="2026-05-12-first-seed",
+        tier="focused",
+        schema_path=SCHEMA_PATH,
+    )
+    first = gitignore.read_text(encoding="utf-8")
+    create_feature_folder(
+        tmp_path,
+        feature_id="2026-05-12-second-seed",
+        tier="focused",
+        schema_path=SCHEMA_PATH,
+    )
+    second = gitignore.read_text(encoding="utf-8")
+    assert first == second
+    assert second.count("# === BEGIN FORGE managed ===") == 1
+
+
+def test_create_feature_folder_gitignore_absent_is_noop(tmp_path: Path) -> None:
+    """No .gitignore on disk: helper does not create one (user opted out of git)."""
+    create_feature_folder(
+        tmp_path,
+        feature_id="2026-05-12-no-gitignore",
+        tier="focused",
+        schema_path=SCHEMA_PATH,
+    )
+    assert not (tmp_path / ".gitignore").exists()
+
+
+def test_create_feature_folder_gitignore_with_forge_wildcard_skips_managed_block(
+    tmp_path: Path,
+) -> None:
+    """Repos that already ignore .forge/ wholesale do not need the managed block."""
+    gitignore = tmp_path / ".gitignore"
+    gitignore.write_text("/.forge/*\n", encoding="utf-8")
+    create_feature_folder(
+        tmp_path,
+        feature_id="2026-05-12-wildcard-ignore",
+        tier="focused",
+        schema_path=SCHEMA_PATH,
+    )
+    body = gitignore.read_text(encoding="utf-8")
+    assert "# === BEGIN FORGE managed ===" not in body
+    assert "/.forge/*" in body

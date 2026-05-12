@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+from typing import Final
 
 import yaml
 
@@ -404,6 +405,53 @@ _RESEARCH_SKIPPED_ENTRY: dict[str, str] = {
 _VALID_SEED_PHASES: frozenset[str] = frozenset({"spec", "refine", "research"})
 
 
+_GITIGNORE_BEGIN: Final[str] = "# === BEGIN FORGE managed ==="
+_GITIGNORE_END: Final[str] = "# === END FORGE managed ==="
+_GITIGNORE_BODY: Final[tuple[str, ...]] = (
+    ".forge/**/*.lock",
+    ".forge/state/*.log",
+)
+
+
+def _ensure_target_gitignore_rules(repo_root: Path) -> None:
+    """Append a managed `.gitignore` block to ``repo_root/.gitignore`` once.
+
+    Downstream target repos that opt to track ``.forge/`` will otherwise commit
+    ephemeral artifacts the runtime drops next to feature state: lockfiles
+    (``state.json.lock``) from the advisory-lock helper, and any future log
+    sidecars. This helper appends a clearly fenced FORGE-managed block listing
+    those patterns the first time a feature is seeded.
+
+    Idempotent: re-seeding is detected by presence of ``_GITIGNORE_BEGIN`` in
+    the existing file. No-op when ``.gitignore`` does not exist (caller has
+    chosen not to use git; mutating their working tree would be surprising).
+    No-op when ``repo_root`` is the FORGE plugin install itself (already has
+    its own ``/.forge/*`` rule covering every artifact in this tree).
+    """
+    gitignore = repo_root / ".gitignore"
+    if not gitignore.is_file():
+        return
+    try:
+        existing = gitignore.read_text(encoding="utf-8")
+    except OSError:
+        return
+    if _GITIGNORE_BEGIN in existing:
+        return
+    if "/.forge/*" in existing:
+        return
+    suffix = "" if existing.endswith("\n") else "\n"
+    block_lines = (
+        _GITIGNORE_BEGIN,
+        "# Auto-added on first feature seed. Edit freely between BEGIN/END.",
+        *_GITIGNORE_BODY,
+        _GITIGNORE_END,
+        "",
+    )
+    with gitignore.open("a", encoding="utf-8") as fh:
+        fh.write(suffix)
+        fh.write("\n".join(block_lines))
+
+
 def _render_seed_spec_md(template: str, *, feature_id: str, tier: str) -> str:
     """Substitute the four placeholders in templates/feature/SPEC.md.
 
@@ -533,6 +581,8 @@ def create_feature_folder(
         )
     if feature_folder_exists(repo_root, feature_id):
         raise ArchiveError(f"feature folder already exists: {feature_id!r}")
+
+    _ensure_target_gitignore_rules(repo_root)
 
     folder = repo_root / ".forge" / "features" / feature_id
     # Wrap mkdir's FileExistsError as ArchiveError so callers see a
