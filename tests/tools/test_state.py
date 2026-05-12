@@ -1368,6 +1368,44 @@ def test_feature_folder_exists_coerces_string_repo_root(tmp_path: Path) -> None:
     assert state.feature_folder_exists(str(tmp_path), "2026-05-12-missing") is False
 
 
+def test_record_refined_idea_coerces_string_path(tmp_path: Path, schemas_dir: Path) -> None:
+    """A ``str`` ``path`` must persist the refined idea identically to the ``Path`` form.
+
+    Agent callers improvising on the call shape pass a ``str`` state.json
+    path; the helper calls ``state_lock(path)`` immediately which invokes
+    ``path.exists()`` and ``path.with_name(...)`` — both ``Path`` methods
+    that trip a cryptic ``AttributeError`` deep inside the lock-acquisition
+    chain when no boundary coercion sits at the entry. The string form
+    must persist the same ``refined_idea`` as the ``Path`` form.
+    """
+    target = tmp_path / "state.json"
+    initial = {
+        "feature_id": "2026-05-12-coerce-refine-idea",
+        "tier": "full",
+        "current_phase": "refine",
+        "phases": {"refine": {"status": "in_progress", "started_at": "2026-05-12T10:00:00Z"}},
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+        "routing": {
+            "idea": "demo",
+            "final_tier": "full",
+            "decided_at": "2026-05-12T09:00:00Z",
+            "constitution_present": False,
+        },
+    }
+    schema_path = schemas_dir / "state.schema.json"
+    state.write_state(target, initial, schema_path=schema_path)
+
+    result = state.record_refined_idea(
+        str(target),
+        refined="A clearly stated refined idea paragraph.",
+        schema_path=schema_path,
+    )
+
+    assert result["refined_idea"] == "A clearly stated refined idea paragraph."
+
+
 def test_record_routing_decision_coerces_string_path(tmp_path: Path, schemas_dir: Path) -> None:
     """A ``str`` ``path`` must record the routing block identically to the ``Path`` form.
 

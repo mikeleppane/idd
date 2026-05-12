@@ -1135,7 +1135,7 @@ def record_routing_decision(
 
 
 def record_refined_idea(
-    path: Path,
+    path: Path | str,
     *,
     refined: str,
     schema_path: Path | None = None,
@@ -1143,7 +1143,10 @@ def record_refined_idea(
     """Persist the refined idea paragraph to state.json.refined_idea.
 
     Args:
-        path: state.json path.
+        path: state.json path. A ``str`` is accepted at the entry boundary
+            and coerced to ``Path`` so agent callers that improvise on the
+            call shape do not trip a cryptic ``AttributeError`` deep inside
+            the lock-acquisition chain.
         refined: Single-paragraph refined idea text.
         schema_path: Optional schema for read+write validation.
 
@@ -1162,6 +1165,7 @@ def record_refined_idea(
             f"(got {len(refined)} chars); trim before persistence"
         )
 
+    path = Path(path)
     with state_lock(path):
         payload = read_state(path, schema_path=schema_path)
         current_phase = payload.get("current_phase")
