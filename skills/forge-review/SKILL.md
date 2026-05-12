@@ -72,6 +72,54 @@ The plain name `.forge/features/<id>/REVIEW.md` is reserved (do not write it). D
 
    Steps:
    - Dispatch ONE review subagent. Apply the `forge-context-budget` skill rules and `forge-subagent-dispatch` shape. The PreToolUse hook (`hooks/check_budget.py`) tolerates the optional `articles` budget field.
+   - **Required prompt prefix.** The dispatch prompt MUST start with a top-level `context_budget:` block at column 0 (outside any fenced code block). The hook refuses dispatches that omit it. Canonical shapes — copy the matching one verbatim and substitute the bracketed values:
+
+     For `target=plan`:
+
+     ```text
+     context_budget:
+     {
+       "files_in_scope": [
+         ".forge/features/<id>/SPEC.md",
+         ".forge/features/<id>/PLAN.md",
+         ".forge/features/<id>/UNDERSTANDING.md",
+         ".forge/features/<id>/decisions.md"
+       ],
+       "forbidden": [
+         "do not read src/**",
+         "do not run pytest",
+         "do not write any file"
+       ]
+     }
+
+     [task prose follows here, starting with a blank line]
+     ```
+
+     For `target=code` (add `tests_in_scope` — required by the hook for execute-phase-style dispatches that include diff inspection; add `articles` when the constitution preflight returned a non-empty list):
+
+     ```text
+     context_budget:
+     {
+       "files_in_scope": [
+         ".forge/features/<id>/SPEC.md",
+         ".forge/features/<id>/PLAN.md",
+         ".forge/features/<id>/UNDERSTANDING.md",
+         "<each file touched by the diff>"
+       ],
+       "tests_in_scope": [
+         "<each test file touched by the diff>"
+       ],
+       "forbidden": [
+         "do not run pytest",
+         "do not edit any file under .forge/",
+         "do not commit"
+       ],
+       "articles": [ <output of Article.to_budget_dict() for each filtered article> ]
+     }
+
+     [task prose follows here, starting with a blank line]
+     ```
+
    - Budget: SPEC § Acceptance + Negative Requirements + UNDERSTANDING § Pre-Mortem; for target=code, also `git diff --stat` plus the touched files. The `articles` budget field carries the filtered Constitution articles serialized via `Article.to_budget_dict()` (Task 5).
    - Task: produce findings the self-pass missed. For target=code, additionally check the diff against every article in `articles`. **Tag every article-related finding** in the REVIEW.code.md row's Problem column with `[constitution:A<n>]` (matching the article's `id`). Severity mapping for article violations:
      - CRITICAL article → HIGH severity finding.
