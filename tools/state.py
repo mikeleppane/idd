@@ -1536,7 +1536,7 @@ def record_commit(
 
 
 def append_deviation(
-    path: Path,
+    path: Path | str,
     *,
     phase: str,
     cause: str,
@@ -1553,7 +1553,10 @@ def append_deviation(
     against ``decisions.md``.
 
     Args:
-        path: state.json path.
+        path: state.json path. A ``str`` is accepted at the entry boundary
+            and coerced to ``Path`` so agent callers that improvise on the
+            call shape do not trip a cryptic ``AttributeError`` deep inside
+            the lock-acquisition chain.
         phase: Lifecycle phase the deviation belongs to.
         cause: Why the deviation was needed; non-empty string.
         resolution: What was done to address it; non-empty string.
@@ -1577,6 +1580,7 @@ def append_deviation(
     if not isinstance(resolution, str) or not resolution:
         raise StateError("deviation resolution must be a non-empty string")
 
+    path = Path(path)
     with state_lock(path):
         payload = read_state(path, schema_path=schema_path)
         deviations = payload.setdefault("deviations", [])
