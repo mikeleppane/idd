@@ -204,7 +204,7 @@ def _detect_go(repo_root: Path) -> DetectionResult | None:
     )
 
 
-def detect(repo_root: Path) -> DetectionResult:
+def detect(repo_root: Path | str) -> DetectionResult:
     """Resolve the project's BDD framework as ``Detected | Ambiguous | NotDetected``.
 
     Order: forge config override > python > node > ruby > go.
@@ -216,11 +216,15 @@ def detect(repo_root: Path) -> DetectionResult:
     - ``NotDetected``: no signal of any kind.
 
     Args:
-        repo_root: Absolute path to the repository root to inspect.
+        repo_root: Absolute path to the repository root to inspect. A ``str``
+            is accepted at the entry boundary and coerced to ``Path`` so
+            agent callers that improvise on the call shape do not trip a
+            cryptic ``TypeError`` deep inside the detection chain.
 
     Returns:
         A ``DetectionResult`` describing the binding, ambiguity, or absence.
     """
+    repo_root = Path(repo_root)
     override = _read_forge_config_override(repo_root)
     if override is not None:
         return override

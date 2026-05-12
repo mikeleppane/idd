@@ -171,6 +171,11 @@ def test_no_signals_returns_not_detected(tmp_path: Path) -> None:
     assert detect(tmp_path) == NotDetected()
 
 
+def test_detect_coerces_string_repo_root(tmp_path: Path) -> None:
+    """Boundary coercion: a string repo_root must not trip ``TypeError``."""
+    assert detect(str(tmp_path)) == NotDetected()
+
+
 def test_transitive_dep_in_lockfile_does_not_trigger(tmp_path: Path) -> None:
     """False positives are worse than missed escalations (design §6.6)."""
     _write_text(tmp_path / "pyproject.toml", "[project]\nname = 'demo'\ndependencies = []\n")
