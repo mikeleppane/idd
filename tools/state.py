@@ -233,6 +233,13 @@ def _autodiscover_state_schema(path: Path) -> Path | None:
       filesystem activity; in practice no legitimate tree needs more than
       six.
 
+    Distinct from :func:`tools._repo_root.discover_repo_root`: that helper
+    answers "where is the FORGE repo root?" by treating ``.forge/`` as the
+    target marker. This helper answers "where is the on-disk schema file?"
+    by treating ``.forge/`` and ``.git/`` as stop boundaries. The two are
+    kept separate because converging them would require one to grow knobs
+    it does not need.
+
     Args:
         path: Target state.json path (existence not required).
 
