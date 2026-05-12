@@ -7,6 +7,54 @@ disable-model-invocation: true
 
 # FORGE Do — adaptive routing
 
+> **STOP. Read this first. The rest of this skill is reference; this block is operational.**
+>
+> Do **NOT** call `Write`, `Edit`, or `MultiEdit` against any file under
+> `.forge/features/<id>/`. Do **NOT** invent a `feature_id` (the slug
+> derivation is mechanical — the helper handles it). The seed is owned
+> mechanically by `tools.routing.seed_routed_feature`. The PreToolUse
+> hook at `hooks/check_state_writer.py` will refuse direct writes and
+> surface a permission-deny.
+>
+> After you have resolved tier + rationale + idea (steps 1–7 below),
+> execute exactly this Bash invocation — substitute the bracketed
+> values, leave the rest verbatim:
+>
+> ```bash
+> python3 - <<'PY'
+> import sys
+> sys.path.insert(0, '/home/mikelep/.claude/plugins/cache/forge-marketplace/forge/0.1.0')
+> from pathlib import Path
+> from tools.routing import seed_routed_feature
+>
+> result = seed_routed_feature(
+>     Path.cwd(),
+>     idea=<idea_verbatim_from_user>,
+>     final_tier=<focused|standard|full>,
+>     proposed_tier=<focused|standard|full>,
+>     rationale=<one_sentence>,
+>     constitution_present=<bool>,
+>     research_opt_in=<bool>,  # True only for standard + --research; False otherwise (full always runs research and REFUSES research_opt_in=True)
+> )
+> print('seeded:', result)
+> PY
+> ```
+>
+> The exact path on `sys.path.insert(...)` is the active plugin install;
+> resolve it from `$CLAUDE_PLUGIN_ROOT` when present, or by reading
+> `claude plugin list` to find the active forge cache entry. Do not
+> hand-build the call from individual helpers — `seed_routed_feature`
+> composes `tools.archive.create_feature_folder` and
+> `tools.state.record_routing_decision` with the right schema path and
+> the right cleanup wrapper; replicating that by hand is the bug class
+> the previous dogfood surfaced.
+>
+> Post-seed mutations to `state.json` go through `tools.state.*`:
+> `complete_phase`, `start_phase`, `record_routing_decision`,
+> `record_refined_idea`, `record_commit`, `append_deviation`,
+> `set_execute_current_slice`. Direct `Write` / `Edit` / `MultiEdit`
+> on `.forge/features/<id>/state.json` is refused at every callsite.
+
 > **`state.json` is hook-protected.** Mutate it only through the
 > `tools.state.*` helpers — `complete_phase`, `start_phase`,
 > `record_routing_decision`, `record_refined_idea`, `record_commit`,
