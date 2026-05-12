@@ -195,7 +195,7 @@ def slug_from_idea(text: str, *, max_words: int = 5) -> str:
     return slug
 
 
-def scan_existing_capabilities(repo_root: Path) -> list[str]:
+def scan_existing_capabilities(repo_root: Path | str) -> list[str]:
     """Return a sorted list of canonical capability slugs present in the repo.
 
     A capability is considered canonical when a directory exists at
@@ -204,13 +204,17 @@ def scan_existing_capabilities(repo_root: Path) -> list[str]:
     Listing is filesystem-driven, not state-driven.
 
     Args:
-        repo_root: Repository root containing the ``.forge/`` tree.
+        repo_root: Repository root containing the ``.forge/`` tree. A ``str``
+            is accepted at the entry boundary and coerced to ``Path`` so
+            agent callers that improvise on the call shape do not trip a
+            cryptic ``TypeError`` on the first ``/`` operator.
 
     Returns:
         Sorted list of capability slug strings (may be empty). Never raises
         ``FileNotFoundError`` — if ``.forge/specs/`` does not exist, returns
         ``[]``.
     """
+    repo_root = Path(repo_root)
     specs_dir = repo_root / ".forge" / "specs"
     if not specs_dir.is_dir():
         return []

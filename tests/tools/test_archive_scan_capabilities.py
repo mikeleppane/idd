@@ -103,3 +103,19 @@ def test_scan_existing_capabilities_nested_spec_md_not_promoted(tmp_path: Path) 
 
     assert result == ["foo"]
     assert "bar" not in result
+
+
+def test_scan_existing_capabilities_coerces_string_repo_root(tmp_path: Path) -> None:
+    """Boundary coercion: a string repo_root must not trip ``AttributeError``.
+
+    Mirrors the pattern locked into ``tools.bdd_detect.detect`` — agent
+    callers that pass a string for an annotated ``Path`` parameter must
+    not crash four frames deep on ``str / ".forge" / ...``.
+    """
+    specs = tmp_path / ".forge" / "specs"
+    (specs / "auth").mkdir(parents=True)
+    (specs / "auth" / "SPEC.md").touch()
+
+    result = scan_existing_capabilities(str(tmp_path))
+
+    assert result == ["auth"]
