@@ -26,6 +26,22 @@ def _write(repo: Path, rel: str, body: str | bytes) -> None:
         target.write_text(body, encoding="utf-8")
 
 
+def test_collect_bootstrap_signals_coerces_string_repo_root(tmp_path: Path) -> None:
+    """Boundary coercion: a string repo_root must not trip ``AttributeError``.
+
+    Mirrors the pattern locked into ``tools.bdd_detect.detect`` — agent
+    callers that pass a string for an annotated ``Path`` parameter must
+    not crash four frames deep on ``str.is_dir()``.
+    """
+    _write(tmp_path, "pyproject.toml", '[project]\nname = "demo"\n')
+
+    result = collect_bootstrap_signals(str(tmp_path))
+
+    assert isinstance(result, BootstrapSignals)
+    rels = [f.relative_path for f in result.files]
+    assert PurePosixPath("pyproject.toml") in rels
+
+
 def test_collect_bootstrap_signals_picks_up_pyproject_and_readme(tmp_path: Path) -> None:
     _write(tmp_path, "pyproject.toml", '[project]\nname = "demo"\n')
     _write(tmp_path, "README.md", "# Demo\n\nA small project.\n")

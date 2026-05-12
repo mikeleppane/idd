@@ -599,7 +599,7 @@ def _collect_signals(
 
 
 def collect_bootstrap_signals(
-    repo_root: Path,
+    repo_root: Path | str,
     *,
     nonce_hex: str | None = None,
 ) -> BootstrapSignals:
@@ -618,7 +618,11 @@ def collect_bootstrap_signals(
     no network access.
 
     Args:
-        repo_root: Absolute path to the repository root.
+        repo_root: Absolute path to the repository root. A ``str`` is
+            accepted at the entry boundary and coerced to ``Path`` so
+            agent callers that improvise on the call shape do not trip
+            a cryptic ``AttributeError`` on ``str.is_dir`` inside the
+            shared collector.
         nonce_hex: Optional 16-char lowercase hex string used as the
             truncation marker's per-collect nonce. Defaults to a fresh
             random nonce per call (cryptographically random, via
@@ -637,7 +641,7 @@ def collect_bootstrap_signals(
             hex characters.
     """
     return _collect_signals(
-        repo_root,
+        Path(repo_root),
         names=_MANIFEST_NAMES + _DOC_NAMES,
         nonce_hex=nonce_hex,
     )
