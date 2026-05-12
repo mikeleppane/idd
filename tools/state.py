@@ -282,9 +282,15 @@ def read_state(path: Path, schema_path: _SchemaPathArg = None) -> dict[str, Any]
     if not path.exists():
         raise StateError(f"state.json not found at {path}")
     try:
-        payload: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+        raw_payload: Any = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise StateError(f"state.json at {path} is invalid JSON: {exc}") from exc
+    if not isinstance(raw_payload, dict):
+        raise StateError(
+            f"state.json at {path}: expected JSON object at top level, "
+            f"got {type(raw_payload).__name__}"
+        )
+    payload: dict[str, Any] = raw_payload
 
     effective_schema = _resolve_schema_path(path, schema_path)
     if effective_schema is not None:

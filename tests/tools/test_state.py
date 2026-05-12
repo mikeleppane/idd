@@ -161,6 +161,55 @@ def test_read_state_accepts_feature_id_with_valid_calendar_segment(
     assert result["feature_id"] == good_feature_id
 
 
+def test_read_state_rejects_top_level_list(tmp_path: Path) -> None:
+    target = tmp_path / "state.json"
+    target.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(
+        state.StateError, match="expected JSON object at top level, got list"
+    ) as exc:
+        state.read_state(target, schema_path=state.NO_VALIDATE)
+    assert str(target) in str(exc.value)
+
+
+def test_read_state_rejects_top_level_string(tmp_path: Path) -> None:
+    target = tmp_path / "state.json"
+    target.write_text('"hello"', encoding="utf-8")
+
+    with pytest.raises(state.StateError, match="expected JSON object at top level, got str") as exc:
+        state.read_state(target, schema_path=state.NO_VALIDATE)
+    assert str(target) in str(exc.value)
+
+
+def test_read_state_rejects_top_level_number(tmp_path: Path) -> None:
+    target = tmp_path / "state.json"
+    target.write_text("42", encoding="utf-8")
+
+    with pytest.raises(state.StateError, match="expected JSON object at top level, got int") as exc:
+        state.read_state(target, schema_path=state.NO_VALIDATE)
+    assert str(target) in str(exc.value)
+
+
+def test_read_state_rejects_top_level_null(tmp_path: Path) -> None:
+    target = tmp_path / "state.json"
+    target.write_text("null", encoding="utf-8")
+
+    with pytest.raises(
+        state.StateError, match="expected JSON object at top level, got NoneType"
+    ) as exc:
+        state.read_state(target, schema_path=state.NO_VALIDATE)
+    assert str(target) in str(exc.value)
+
+
+def test_read_state_accepts_empty_dict_when_no_schema(tmp_path: Path) -> None:
+    target = tmp_path / "state.json"
+    target.write_text("{}", encoding="utf-8")
+
+    result = state.read_state(target, schema_path=state.NO_VALIDATE)
+
+    assert result == {}
+
+
 def test_write_state_creates_file_with_pretty_json(tmp_path: Path, schemas_dir: Path) -> None:
     target = tmp_path / "state.json"
     payload = {
