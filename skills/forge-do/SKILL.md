@@ -169,9 +169,10 @@ and dispatches to `/forge:spec`. Standard without `--research` seeds
    but the skill-side abort in step 1 already prevents reaching the
    helper with that combination.
    The helper composes `tools.archive.create_feature_folder` and
-   `tools.state.record_routing_decision` (both with `schema_path` set to
-   `<repo_root>/schemas/state.schema.json` so an invalid payload refuses
-   before disk mutation). On full tier the helper writes the 11-entry
+   `tools.state.record_routing_decision` (both with `schema_path` set
+   to the plugin-install copy of `schemas/state.schema.json` resolved
+   by `tools.routing` so an invalid payload refuses before disk
+   mutation). On full tier the helper writes the 11-entry
    `routing.phase_list`; on
    standard with `--research` the helper writes the 9-entry list with
    `research` at index 0; on focused or standard-without-flag the
