@@ -483,7 +483,7 @@ def _render_seed_spec_md(template: str, *, feature_id: str, tier: str) -> str:
 
 
 def create_feature_folder(
-    repo_root: Path,
+    repo_root: Path | str,
     *,
     feature_id: str,
     tier: str,
@@ -537,7 +537,10 @@ def create_feature_folder(
         6. Folder collision via ``feature_folder_exists``.
 
     Args:
-        repo_root: Repository root containing the ``.forge/`` tree.
+        repo_root: Repository root containing the ``.forge/`` tree. A ``str``
+            is accepted at the entry boundary and coerced to ``Path`` so
+            agent callers that improvise on the call shape do not trip a
+            cryptic ``TypeError`` on the first ``/`` operator.
         feature_id: Feature folder name in YYYY-MM-DD-slug form.
         tier: One of ``VALID_TIERS`` (focused/standard/full).
         current_phase: Seed entry phase; one of
@@ -569,6 +572,7 @@ def create_feature_folder(
             ``schema_path`` is given (folder rmtree'd before re-raise).
         OSError: Per-file write failure (folder rmtree'd before re-raise).
     """
+    repo_root = Path(repo_root)
     _validate_feature_id(feature_id)
     if tier not in VALID_TIERS:
         raise ArchiveError(f"invalid tier: {tier!r}; must be one of {VALID_TIERS}")

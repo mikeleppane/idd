@@ -485,3 +485,24 @@ def test_create_feature_folder_gitignore_with_forge_wildcard_skips_managed_block
     body = gitignore.read_text(encoding="utf-8")
     assert "# === BEGIN FORGE managed ===" not in body
     assert "/.forge/*" in body
+
+
+def test_create_feature_folder_coerces_string_repo_root(tmp_path: Path) -> None:
+    """A string repo_root must not trip ``TypeError`` on ``str / ".forge"``.
+
+    Mirrors the pattern locked into ``tools.bdd_detect.detect`` — the
+    ``/forge:do`` seed entry point sees agent-improvised call shapes
+    where ``repo_root`` is occasionally a string. A cryptic operator
+    failure four frames deep is worse than a clean ``Path`` coercion at
+    the entry boundary.
+    """
+    feature_dir = create_feature_folder(
+        str(tmp_path),
+        feature_id="2026-05-12-string-coercion",
+        tier="focused",
+        schema_path=SCHEMA_PATH,
+    )
+
+    assert isinstance(feature_dir, Path)
+    assert feature_dir.is_dir()
+    assert (feature_dir / "state.json").is_file()
