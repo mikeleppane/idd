@@ -84,10 +84,18 @@ def test_deny_regex_replaces_with_opaque_marker() -> None:
 
 
 def test_fatal_regex_does_not_replace_output_text() -> None:
-    """(f) fatal_regex matches recorded but output_text retained for diagnostic."""
+    """(f) fatal_regex matches recorded but output_text retained for diagnostic.
+
+    Overrides deny_regex to an empty tuple so the default inline-secret
+    patterns (which would redact the PEM marker) do not contend with the
+    fatal-regex contract under test.
+    """
     text = "blob -----BEGIN PRIVATE KEY-----\nMIIE..."
     payload = redaction.PromptPayload(text=text)
-    config = redaction.RedactionConfig(fatal_regex=(r"-----BEGIN PRIVATE KEY-----",))
+    config = redaction.RedactionConfig(
+        deny_regex=(),
+        fatal_regex=(r"-----BEGIN PRIVATE KEY-----",),
+    )
 
     result = redaction.filter(payload, config)
 

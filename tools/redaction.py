@@ -31,10 +31,12 @@ default-config path has no exposure.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
 from tools._glob import globstar_match as _globstar_match
+from tools.conventions_runtime import has_nested_unbounded_quantifier
 
 # Back-compat alias retained so any existing private import (and the lock-down
 # regression suite under tests/tools/test_redaction_globstar.py) keeps working.
@@ -47,6 +49,60 @@ DEFAULT_DENY_GLOBS: tuple[str, ...] = (
     "**/.aws/**",
     "**/.ssh/**",
 )
+
+# Inline-secret patterns that fire UNCONDITIONALLY at default config. The
+# patterns target well-known credential shapes that have no legitimate reason
+# to land verbatim in a cross-AI prompt:
+#
+#   * AWS access key id (AKIA + 16 base32 chars)
+#   * GitHub PATs (classic ghp_ + 36; fine-grained github_pat_ + 82)
+#   * Anthropic API key (sk-ant-api03- / sk-ant-admin01- + 93-108 chars)
+#   * Anthropic OAuth bearer (sk-ant-oauth- + 40+ chars)
+#   * OpenAI / Project API keys (sk- or sk-proj- + 20+ chars)
+#   * Google AI / Gemini key (AIza + 35 char id)
+#   * Slack bot/user/refresh tokens (xox{a,b,p,r,s})
+#   * PEM private key markers (any flavour)
+#   * Authorization: Bearer ... header context
+#   * UPPER_CASE = ... env-line shape carrying SECRET / TOKEN / API_KEY /
+#     PASSWORD in the key name
+#
+# No allowlist hook exists for these — a false positive on documentation
+# costs a single ``[REDACTED:<idx>]`` marker, while a leak costs a real key.
+DEFAULT_DENY_REGEX: tuple[str, ...] = (
+    r"AKIA[0-9A-Z]{16}",
+    r"ghp_[A-Za-z0-9]{36}",
+    r"github_pat_[A-Za-z0-9_]{82}",
+    r"sk-ant-(api03|admin01)-[A-Za-z0-9_\-]{93,108}",
+    r"sk-ant-oauth-[A-Za-z0-9_\-]{40,}",
+    r"sk-(proj-)?[A-Za-z0-9_\-]{20,}",
+    r"AIza[0-9A-Za-z_\-]{35}",
+    r"xox[abprs]-[0-9]+-[0-9]+-[A-Za-z0-9-]+",
+    r"-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----",
+    r"(?i)authorization:\s*bearer\s+[A-Za-z0-9_\-\.]+",
+    r"(?im)^[A-Z_]{0,32}(SECRET|TOKEN|API_KEY|PASSWORD)\s*=\s*\S+",
+)
+
+
+# Load-time regression guard: every default pattern must compile cleanly and
+# pass the rough ReDoS sanity filter. A typo introducing a nested unbounded
+# quantifier (e.g. ``(a+)+``) into DEFAULT_DENY_REGEX would otherwise ship
+# silently. Refusing the import surfaces the bug at the first test run.
+def _assert_default_patterns_safe() -> None:
+    for pattern in DEFAULT_DENY_REGEX:
+        try:
+            re.compile(pattern)
+        except re.error as exc:  # pragma: no cover - regression guard
+            msg = f"tools.redaction: DEFAULT_DENY_REGEX entry does not compile: {pattern!r}: {exc}"
+            raise RuntimeError(msg) from exc
+        if has_nested_unbounded_quantifier(pattern):  # pragma: no cover - regression guard
+            msg = (
+                f"tools.redaction: DEFAULT_DENY_REGEX entry has nested unbounded "
+                f"quantifier (ReDoS foot-gun): {pattern!r}"
+            )
+            raise RuntimeError(msg)
+
+
+_assert_default_patterns_safe()
 
 # Cap on the ``sample`` field stored on Span / Match. Keeps RedactionResult
 # bounded even when a deny_regex matches a very long substring.
@@ -75,7 +131,11 @@ class RedactionConfig:
     Attributes:
         deny_globs: Globstar patterns; matching files are dropped.
         deny_regex: Regex patterns matched against ``payload.text``;
-            matches are replaced with ``[REDACTED:<idx>]``.
+            matches are replaced with ``[REDACTED:<idx>]``. Defaults to
+            :data:`DEFAULT_DENY_REGEX` so common credential shapes are
+            redacted out of the box. Callers extending the list should
+            append to ``DEFAULT_DENY_REGEX`` rather than overwriting it
+            unless they have a deliberate reason to disable the defaults.
         fatal_regex: Regex patterns that record a ``fatal_match`` so the
             caller refuses dispatch. Matches are NOT replaced.
         allow_globs: Explicit allow-list; rescues a file from any deny rule.
@@ -85,7 +145,7 @@ class RedactionConfig:
     """
 
     deny_globs: tuple[str, ...] = DEFAULT_DENY_GLOBS
-    deny_regex: tuple[str, ...] = ()
+    deny_regex: tuple[str, ...] = DEFAULT_DENY_REGEX
     fatal_regex: tuple[str, ...] = ()
     allow_globs: tuple[str, ...] = ()
     gitignore_patterns: tuple[str, ...] = ()
@@ -237,6 +297,17 @@ def filter(  # noqa: A001 — module-level shadow is documented in module docstr
     for idx in range(len(merged_intervals) - 1, -1, -1):
         m_start, m_end = merged_intervals[idx]
         output_text = output_text[:m_start] + f"[REDACTED:{idx}]" + output_text[m_end:]
+
+    # Operator visibility: every redaction emits a single stderr line. The
+    # sample is intentionally NOT echoed (it's the secret); we surface only
+    # the rule id and the marker index so the operator knows something fired
+    # without leaking the matched substring into terminal scrollback.
+    if spans:
+        for span in spans:
+            print(
+                f"WARN: tools.redaction: inline secret redacted (rule={span.rule_id!r})",
+                file=sys.stderr,
+            )
 
     # Fatal regex: record only, NEVER mutate output_text.
     fatal: list[Match] = []

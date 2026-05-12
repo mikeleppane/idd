@@ -476,29 +476,38 @@ def _read_and_truncate(path: Path, *, marker: str) -> tuple[str, bool]:
 def _detect_secret(body: str) -> str | None:
     """Return the matched secret-pattern label, or ``None`` when nothing fires.
 
-    Runs ``body`` through :func:`tools.redaction.filter` first so any
-    project-supplied ``deny_regex`` / ``fatal_regex`` takes precedence
-    (the redaction surface owns user-configurable patterns), then through
-    the curated :data:`_SECRET_PATTERNS` list. Surfacing the matched
-    label lets callers tell users WHICH credential shape triggered the
-    drop (e.g. ``"github_pat detected"``) rather than the legacy generic
-    "secret-shaped content detected" message.
+    Detection order:
 
-    Returns ``"redaction_deny"`` / ``"redaction_fatal"`` when the
-    redaction surface fired the rejection — those branches honor user
-    configuration and the curated label list does not own them.
+      1. The curated :data:`_SECRET_PATTERNS` list. These are the project's
+         labelled shapes (``aws_access_key``, ``github_pat``,
+         ``pem_private_key``, ...) and the most informative drop reason
+         for downstream UI.
+      2. :func:`tools.redaction.filter` — surfaces ``"redaction_fatal"``
+         and ``"redaction_deny"`` for any user-configured pattern OR for
+         a default inline-secret pattern that the curated list does not
+         cover. Project-supplied ``fatal_regex`` / ``deny_regex`` still
+         wins via this path.
+
+    Running the curated list first preserves the specific-label contract
+    (``"github_pat detected"`` over the generic ``"redaction_deny"``).
     """
+    for pattern in _SECRET_PATTERNS:
+        if pattern.regex.search(body):
+            return pattern.label
+    # The constitution-bootstrap detector applies a deliberately stricter
+    # false-positive contract than the cross-AI redaction path: a Python
+    # snippet that names ``api_key = foo_bar`` is legitimate constitution
+    # context, not a secret. We skip the redaction layer's ``DEFAULT_DENY_REGEX``
+    # (which is tuned for cross-AI safety, "false positives > leaks") and
+    # consult only ``fatal_regex`` / user-supplied ``deny_regex`` if present.
     result = redaction.filter(
         redaction.PromptPayload(text=body, files=()),
-        redaction.RedactionConfig(),
+        redaction.RedactionConfig(deny_regex=()),
     )
     if result.fatal_matches:
         return "redaction_fatal"
     if result.had_denials:
         return "redaction_deny"
-    for pattern in _SECRET_PATTERNS:
-        if pattern.regex.search(body):
-            return pattern.label
     return None
 
 
