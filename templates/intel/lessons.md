@@ -11,13 +11,16 @@ are appended via the harvest path in `forge-review` (auto) or
 `/forge:lesson` (manual). Status transitions go through
 `tools.intel.lessons.amend_status`.
 
-## L001 — Example lesson (delete me on first real entry)
+## L001 — Example seed entry (delete on first real append)
 **Captured:** 2026-05-11 from feature m0-example
 **Resolved by:** manual
-**Trap:** Example trap text describing what went wrong with sufficient
-detail to be searchable but tight enough to fit a dispatch budget.
-**Avoidance:** Example avoidance describing what future subagents should
-do instead.
+**Trap:** Template seed placeholder. This entry exists only so the file
+parses cleanly on a fresh repository; replace it with a real lesson on the
+first harvest. Retired status keeps it out of the dispatch budget.
+**Avoidance:** Delete this entry as soon as a real lesson is appended;
+keeping retired template seeds in place is harmless but noisy. Real
+entries should describe a concrete trap and the avoidance future
+subagents must follow.
 **Tags:** dispatch, validation
 **Severity:** LOW
 **Status:** retired

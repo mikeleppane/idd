@@ -173,12 +173,17 @@ def test_load_and_filter_caps_by_ascending_score_when_over_cap(
 def test_load_and_filter_raises_when_critical_alone_exceed_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Authoring cap lifted for the same reason as the previous test.
+    # Authoring cap lifted for the same reason as the previous test. Each
+    # lesson stays under the per-entry combined-word cap enforced by
+    # ``Lesson.__post_init__`` (MAX_LESSON_WORDS = 600); aggregate CRITICAL
+    # body still tops the budget once four such lessons coexist.
     monkeypatch.setattr(lessons, "_MAX_FIELD_CHARS", 10_000)
-    bloat = "word " * 400  # ~400 words per field
+    bloat = "word " * 200  # ~200 words per field -> 400 combined per lesson
     body = _file(
         _entry(nid="L001", severity="CRITICAL", trap=bloat, avoidance=bloat),
         _entry(nid="L002", severity="CRITICAL", trap=bloat, avoidance=bloat),
+        _entry(nid="L003", severity="CRITICAL", trap=bloat, avoidance=bloat),
+        _entry(nid="L004", severity="CRITICAL", trap=bloat, avoidance=bloat),
     )
     _write_lessons(tmp_path, body)
     with pytest.raises(lessons.LessonError, match=r"CRITICAL lessons .* exceed"):

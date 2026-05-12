@@ -63,7 +63,10 @@ _TERMINAL_STATUSES: frozenset[str] = frozenset({"active", "retired"})
 # Body block regexes. The header captures only the L<NNN> id; structural
 # checks for the id digit count happen against the captured token.
 _ID_RE = re.compile(r"^L\d{3}$")
-_HEADER_RE = re.compile(r"^## (L\d+)\s+—\s+(.+?)\s*$")
+# Header anchors the id to exactly three digits so a one-digit ``L7`` or a
+# four-digit ``L9999`` is rejected at the header pass with a single clear
+# error. The downstream ``_ID_RE`` check stays as belt-and-braces.
+_HEADER_RE = re.compile(r"^## (L\d{3})\s+—\s+(.+?)\s*$")
 _FIELD_RE = re.compile(
     r"^\*\*(Captured|Resolved by|Trap|Avoidance|Tags|Severity|Status):\*\*\s*(.*)$"
 )
@@ -91,13 +94,39 @@ _INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
 
 _DEFAULT_HEADER = '---\nversion: 0.1.0\ncreated: "{created}"\n---\n\n# FORGE Lessons\n\n'
 
-# Authoring cap on individual Trap / Avoidance prose. The interactive skill
-# (forge-lesson) enforces this at the UI prompt, but the cap also lives here
-# so any direct ``append(lesson)`` caller — tests, future CLIs, library users —
-# cannot smuggle a 5000-char Trap into the file via the back door. The dispatch
-# budget cap (MAX_LESSON_WORDS) is independent: it controls cumulative budget
-# at filter time, not per-entry authoring length.
+# Authoring cap on individual Trap / Avoidance prose surfaced at the parser
+# level. The interactive skill (forge-lesson) enforces this at the UI prompt,
+# and the parser also enforces it so a malformed file is rejected with a
+# message that points at the offending line and field. Direct construction
+# via ``Lesson(...)`` bypasses the parser, so the dataclass also defends a
+# looser back-door cap (:data:`_MAX_LESSON_FIELD_CHARS`) — see
+# :meth:`Lesson.__post_init__`. The dispatch budget cap (MAX_LESSON_WORDS) is
+# independent: it controls cumulative budget at filter time, not per-entry
+# authoring length.
 _MAX_FIELD_CHARS: Final[int] = 1000
+
+# Back-door cap enforced by ``Lesson.__post_init__`` for direct construction
+# paths that bypass the parser (tests, future CLIs, library users). Sized
+# above the parser's 1000-char cap so a caller stamping ~1500 chars during
+# integration testing does not have to wrap every fixture in a parser round
+# trip, but tight enough that a stray 5000-char paste still fails loudly.
+_MAX_LESSON_FIELD_CHARS: Final[int] = 2000
+
+MAX_LESSON_WORDS: Final[int] = 600
+"""Dispatch-budget cap for ``lessons[]``.
+
+Sized at roughly half of :data:`tools.constitution.MAX_INJECTED_WORDS`
+(1153 ~= 1500 tokens / 1.3 words-per-token). Articles describe the project's
+durable rules and earn the larger budget; lessons describe transient
+failure modes and pay the smaller cap. Keeping the two caps independent
+means a heavy lesson load cannot squeeze CRITICAL Constitution articles
+out of their own budget — the caller injects both lists side-by-side and
+each list pays its own cap.
+
+Revisit if real-world dispatches consistently report lessons being trimmed
+at the cap. Until then, 600 words ~= 780 tokens stays comfortable inside
+the ~3000-token total subagent context overhead.
+"""
 
 # Refuse to read a lessons file larger than this cap. A typical lessons.md
 # holds a handful of entries at a few hundred chars each; 1 MiB is several
@@ -137,6 +166,34 @@ class Lesson:
     severity: LessonSeverity
     status: str
     body_words: int
+
+    def __post_init__(self) -> None:
+        """Defend per-entry length bounds for direct construction callers.
+
+        The parser already enforces a tighter 1000-char authoring cap (see
+        :data:`_MAX_FIELD_CHARS`) and surfaces line-number context. Direct
+        ``Lesson(...)`` callers — tests, future CLIs, library users — skip
+        that path, so the dataclass guards a looser back-door cap of
+        :data:`_MAX_LESSON_FIELD_CHARS` per field plus a combined-word cap
+        aligned to :data:`MAX_LESSON_WORDS` so a single bloated lesson
+        cannot crash the dispatch-budget filter at load time.
+        """
+        if len(self.trap) > _MAX_LESSON_FIELD_CHARS:
+            raise LessonError(
+                f"lesson {self.id!r}: trap exceeds {_MAX_LESSON_FIELD_CHARS} chars "
+                f"(got {len(self.trap)})"
+            )
+        if len(self.avoidance) > _MAX_LESSON_FIELD_CHARS:
+            raise LessonError(
+                f"lesson {self.id!r}: avoidance exceeds {_MAX_LESSON_FIELD_CHARS} chars "
+                f"(got {len(self.avoidance)})"
+            )
+        combined_words = len(self.trap.split()) + len(self.avoidance.split())
+        if combined_words > MAX_LESSON_WORDS:
+            raise LessonError(
+                f"lesson {self.id!r}: trap+avoidance exceeds {MAX_LESSON_WORDS} words "
+                f"(got {combined_words}); trim before append"
+            )
 
     def to_budget_dict(self) -> dict[str, object]:
         """Return the locked JSON shape consumed by the dispatch budget injection.
@@ -361,21 +418,28 @@ def _expect_str(block: dict[str, object], key: str) -> str:
 def _parse_tags(ctx: str, raw: str) -> tuple[str, ...]:
     """Parse the comma-separated Tags cell against the controlled vocabulary.
 
+    Vocabulary matching is case-insensitive: ``Dispatch`` and ``DISPATCH``
+    both resolve to the canonical lowercase ``dispatch`` form stored on the
+    Lesson. Error messages preserve the author's original spelling so the
+    offending row stays greppable in the source file.
+
     ``ctx`` is a free-form caller-supplied prefix prepended to every error
     message — typically the per-block ``line N lesson L001`` string or, when
     invoked from a non-parser caller, the raw ``lesson L001``.
     """
-    tokens = [t.strip() for t in raw.split(",") if t.strip()]
-    if not tokens:
+    raw_tokens = [t.strip() for t in raw.split(",") if t.strip()]
+    if not raw_tokens:
         raise LessonError(f"{ctx}: Tags list is empty; at least one tag required")
     seen: list[str] = []
-    for tok in tokens:
-        if tok not in _TAG_VOCAB:
+    for raw_tok in raw_tokens:
+        canonical = raw_tok.casefold()
+        if canonical not in _TAG_VOCAB:
             raise LessonError(
-                f"{ctx}: tag {tok!r} not in controlled vocabulary (allowed: {sorted(_TAG_VOCAB)})"
+                f"{ctx}: tag {raw_tok!r} not in controlled vocabulary "
+                f"(allowed: {sorted(_TAG_VOCAB)})"
             )
-        if tok not in seen:
-            seen.append(tok)
+        if canonical not in seen:
+            seen.append(canonical)
     return tuple(seen)
 
 
@@ -487,6 +551,14 @@ def append(repo_root: Path, draft: Lesson, *, today: date | None = None) -> Path
     Refuses when ``draft.id`` does not equal :func:`next_id` (caller cannot
     skip a slot). Atomic write via
     :func:`tools.constitution_amend.atomic_replace`.
+
+    The ``today`` parameter only stamps the auto-generated frontmatter header
+    when the lessons file does not yet exist. Once the file exists each
+    subsequent ``append`` call leaves the ``created:`` line untouched — the
+    parameter is silently ignored on those paths so the signature stays
+    stable for callers (test fixtures, scripted CLIs) that always pass it.
+    Each entry's ``Captured:`` line always reflects ``draft.captured`` and
+    is independent of ``today``.
 
     Concurrency:
         Holds an advisory ``fcntl.LOCK_EX | LOCK_NB`` on a sidecar
@@ -669,23 +741,6 @@ def _rewrite_status(text: str, *, lesson_id: str, new_status: str) -> str:
 # ---------------------------------------------------------------------------
 # Dispatch-budget loader
 # ---------------------------------------------------------------------------
-
-
-MAX_LESSON_WORDS: Final[int] = 600
-"""Dispatch-budget cap for ``lessons[]``.
-
-Sized at roughly half of :data:`tools.constitution.MAX_INJECTED_WORDS`
-(1153 ~= 1500 tokens / 1.3 words-per-token). Articles describe the project's
-durable rules and earn the larger budget; lessons describe transient
-failure modes and pay the smaller cap. Keeping the two caps independent
-means a heavy lesson load cannot squeeze CRITICAL Constitution articles
-out of their own budget — the caller injects both lists side-by-side and
-each list pays its own cap.
-
-Revisit if real-world dispatches consistently report lessons being trimmed
-at the cap. Until then, 600 words ~= 780 tokens stays comfortable inside
-the ~3000-token total subagent context overhead.
-"""
 
 
 # Severity -> bucket map for the relevance gate. CRITICAL lessons are always
