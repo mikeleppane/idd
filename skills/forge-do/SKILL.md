@@ -12,42 +12,37 @@ disable-model-invocation: true
 > Do **NOT** call `Write`, `Edit`, or `MultiEdit` against any file under
 > `.forge/features/<id>/`. Do **NOT** invent a `feature_id` (the slug
 > derivation is mechanical — the helper handles it). The seed is owned
-> mechanically by `tools.routing.seed_routed_feature`. The PreToolUse
-> hook at `hooks/check_state_writer.py` will refuse direct writes and
-> surface a permission-deny.
+> mechanically by the `forge-do` Bash CLI, which wraps
+> `tools.routing.seed_routed_feature`. The PreToolUse hook at
+> `hooks/check_state_writer.py` will refuse direct writes and surface
+> a permission-deny.
 >
 > After you have resolved tier + rationale + idea (steps 1–7 below),
 > execute exactly this Bash invocation — substitute the bracketed
 > values, leave the rest verbatim:
 >
 > ```bash
-> python3 - <<'PY'
-> import sys
-> sys.path.insert(0, '/home/mikelep/.claude/plugins/cache/forge-marketplace/forge/0.1.0')
-> from pathlib import Path
-> from tools.routing import seed_routed_feature
->
-> result = seed_routed_feature(
->     Path.cwd(),
->     idea=<idea_verbatim_from_user>,
->     final_tier=<focused|standard|full>,
->     proposed_tier=<focused|standard|full>,
->     rationale=<one_sentence>,
->     constitution_present=<bool>,
->     research_opt_in=<bool>,  # True only for standard + --research; False otherwise (full always runs research and REFUSES research_opt_in=True)
-> )
-> print('seeded:', result)
-> PY
+> forge-do --idea "<idea_verbatim_from_user>" \
+>          --tier <focused|standard|full> \
+>          --rationale "<one_sentence>" \
+>          [--proposed-tier <focused|standard|full>] \
+>          [--constitution-present | --no-constitution-present] \
+>          [--research]
 > ```
 >
-> The exact path on `sys.path.insert(...)` is the active plugin install;
-> resolve it from `$CLAUDE_PLUGIN_ROOT` when present, or by reading
-> `claude plugin list` to find the active forge cache entry. Do not
-> hand-build the call from individual helpers — `seed_routed_feature`
+> The CLI prints `seeded: <feature_folder_path>` followed by the
+> resolved `Next: /forge:<phase> --feature <feature_id>` literal on
+> success (stdout). The secrets warning and any helper refusal land on
+> stderr. Pass `--research` only when the user supplied `--research`
+> AND the resolved tier is `standard` (the CLI mirrors the helper's
+> focused+research refusal and exits 1 with the locked escalate hint).
+> Pass `--constitution-present` only when `.forge/CONSTITUTION.md`
+> exists on disk after step 2; default is `--no-constitution-present`.
+> Do not hand-build the call from individual helpers — the CLI
 > composes `tools.archive.create_feature_folder` and
-> `tools.state.record_routing_decision` with the right schema path and
-> the right cleanup wrapper; replicating that by hand is the bug class
-> the previous dogfood surfaced.
+> `tools.state.record_routing_decision` with the right schema path
+> and the right cleanup wrapper; replicating that by hand is the bug
+> class the previous dogfood surfaced.
 >
 > Post-seed mutations to `state.json` go through `tools.state.*`:
 > `complete_phase`, `start_phase`, `record_routing_decision`,
@@ -182,55 +177,43 @@ and dispatches to `/forge:spec`. Standard without `--research` seeds
 7. **Resolve final tier.** The override flag wins over the LLM
    proposal. The resolved tier is one of `focused` / `standard` / `full`
    and is passed verbatim to `seed_routed_feature` as `final_tier=`.
-8. **Seed via routing helper.** Call
-   `tools.routing.seed_routed_feature(repo_root, idea=<idea>, final_tier=<tier>, proposed_tier=<llm_tier>, rationale=<one_sentence>, constitution_present=<bool>, feature_slug=<chosen_slug_or_None>, research_opt_in=<bool>)`.
-
-   Canonical invocation — copy verbatim and substitute the bracketed
-   values resolved by steps 1-7. Do not improvise alternate callables;
-   `seed_routed_feature` is the single post-confirm entry-point.
-
-   ```python
-   from tools.routing import seed_routed_feature
-
-   feature_folder = seed_routed_feature(
-       repo_root,
-       idea=<idea>,
-       final_tier=<tier>,
-       proposed_tier=<llm_tier>,
-       rationale=<one_sentence>,
-       constitution_present=<bool>,
-       feature_slug=<chosen_slug_or_None>,
-       research_opt_in=<bool>,
-   )
-   ```
+8. **Seed via the `forge-do` Bash CLI.** Run the resolved Bash
+   invocation from the STOP block — substitute the bracketed values
+   resolved by steps 1–7 and leave the rest verbatim. The CLI is the
+   single post-confirm entry point; do not improvise alternate
+   callables or hand-build the Python call.
 
    When step 4 took the suffix-disambig branch, pass the chosen
-   disambiguated slug as `feature_slug=` — the helper uses it verbatim
-   for `feature_id` while `idea` is persisted into `routing.idea`
-   unchanged, so the user's original phrasing remains in the audit
-   record. When step 4 found no collision, omit `feature_slug` (or
-   pass `None`) and the helper derives the slug via
-   `tools.archive.slug_from_idea(idea)` as before. Pass
-   `research_opt_in=True` when the user supplied `--research` (and the
-   resolved tier is standard); otherwise pass `False`. The helper
-   refuses focused+`research_opt_in` and raises before any disk write,
-   but the skill-side abort in step 1 already prevents reaching the
-   helper with that combination.
-   The helper composes `tools.archive.create_feature_folder` and
+   disambiguated slug as `--feature-slug <slug>` — the helper uses it
+   verbatim for `feature_id` while `idea` is persisted into
+   `routing.idea` unchanged, so the user's original phrasing remains
+   in the audit record. When step 4 found no collision, omit
+   `--feature-slug` and the helper derives the slug via
+   `tools.archive.slug_from_idea(idea)` as before. Pass `--research`
+   only when the user supplied `--research` AND the resolved tier is
+   `standard`; otherwise omit the flag. The CLI refuses focused +
+   `--research` with the locked escalate hint and exits 1 before any
+   disk mutation, mirroring the skill-side abort in step 1.
+
+   Under the hood the CLI maps its flags onto
+   `tools.routing.seed_routed_feature(repo_root, idea=..., final_tier=...,
+   proposed_tier=..., rationale=..., constitution_present=...,
+   feature_slug=..., research_opt_in=...)`, which composes
+   `tools.archive.create_feature_folder` and
    `tools.state.record_routing_decision` (both with `schema_path` set
    to the plugin-install copy of `schemas/state.schema.json` resolved
    by `tools.routing` so an invalid payload refuses before disk
    mutation). On full tier the helper writes the 11-entry
-   `routing.phase_list`; on
-   standard with `--research` the helper writes the 9-entry list with
-   `research` at index 0; on focused or standard-without-flag the
-   helper omits the field and consumers fall back to the per-tier
-   static table via `tools.state.get_phase_list`'s lazy-derive branch.
-   On any post-seed exception inside the helper, it invokes
-   `tools.archive.cleanup_seeded_feature(repo_root, feature_id)` before
-   re-raising. `ArchiveError`, `StateError`, and `ValueError` surface
-   to the user with the seeded folder already cleaned up by the
-   helper.
+   `routing.phase_list`; on standard with `--research` the helper
+   writes the 9-entry list with `research` at index 0; on focused or
+   standard-without-flag the helper omits the field and consumers
+   fall back to the per-tier static table via
+   `tools.state.get_phase_list`'s lazy-derive branch. On any post-seed
+   exception inside the helper, it invokes
+   `tools.archive.cleanup_seeded_feature(repo_root, feature_id)`
+   before re-raising. `ArchiveError`, `StateError`, and `ValueError`
+   surface as a non-zero CLI exit with the underlying message on
+   stderr; the seeded folder is already cleaned up by the helper.
 9. **Cleanup hook (UI cancel paths).** Wrap step 8 in a try/finally
    that calls `tools.archive.cleanup_seeded_feature(repo_root, feature_id)`
    on `KeyboardInterrupt` and on user-decline-after-seed. Best-effort
@@ -338,8 +321,10 @@ and dispatches to `/forge:spec`. Standard without `--research` seeds
 
 ## See also
 
-- `tools.routing.seed_routed_feature` — single Python entry-point for the
-  post-confirm half of `/forge:do`.
+- `forge-do` — Bash CLI surface (`tools.do_cli:main`); single
+  post-confirm entry point referenced by the STOP block.
+- `tools.routing.seed_routed_feature` — Python entry-point wrapped by
+  the `forge-do` CLI.
 - `tools.archive.create_feature_folder` — composed by the routing helper
   to seed the feature folder.
 - `tools.archive.cleanup_seeded_feature` — invoked on UI-cancel paths
