@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1024,6 +1025,220 @@ def test_complete_phase_plan_isolation_scenario_findings_do_not_fire_on_plan(
     )
 
     assert result["phases"]["plan"]["status"] == "done"
+
+
+def _seed_feature_with_execute_in_progress(
+    repo_root: Path,
+    schemas_dir: Path,
+    *,
+    feature_id: str,
+    deviations: list[dict[str, str]] | None = None,
+    commits: list[dict[str, str]] | None = None,
+    spec_body: str = "",
+    decisions_body: str = "",
+    slice_summary: str | None = None,
+) -> Path:
+    """Build a tmp ``.forge/features/<id>/`` carrying state.json with
+    ``current_phase=execute`` / ``status=in_progress``.
+
+    Optional artifacts (SPEC.md / decisions.md / slice-1.summary) are written
+    only when the body string is supplied; absence is the common case for
+    fixtures that exercise the deviations or tdd_evidence shape directly.
+    """
+    feature = repo_root / ".forge" / "features" / feature_id
+    feature.mkdir(parents=True)
+    initial: dict[str, Any] = {
+        "feature_id": feature_id,
+        "tier": "focused",
+        "current_phase": "execute",
+        "phases": {
+            "spec": {"status": "done"},
+            "execute": {
+                "status": "in_progress",
+                "started_at": "2026-05-12T10:00:00Z",
+            },
+        },
+        "skipped": [],
+        "deviations": deviations or [],
+        "commits": commits or [],
+    }
+    target = feature / "state.json"
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+    if spec_body:
+        (feature / "SPEC.md").write_text(spec_body, encoding="utf-8")
+    if decisions_body:
+        (feature / "decisions.md").write_text(decisions_body, encoding="utf-8")
+    if slice_summary is not None:
+        (feature / "slice-1.summary").write_text(slice_summary, encoding="utf-8")
+    return target
+
+
+def test_complete_phase_refuses_execute_exit_with_high_deviation_findings(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    """Completing the ``execute`` phase must run ``validate_deviations``
+    against the feature folder and refuse the transition when any
+    finding has severity ``HIGH`` or ``BLOCK``. The mechanical gate
+    replaces the prose-only enforcement in the forge-execute skill — a
+    deviation whose cause is not recorded in decisions.md must not be
+    able to exit execute via ``complete_phase``."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = _seed_feature_with_execute_in_progress(
+        repo,
+        schemas_dir,
+        feature_id="2026-05-12-dev-bad",
+        deviations=[
+            {
+                "phase": "execute",
+                "cause": "missing toolchain on CI runner",
+                "resolution": "pinned alternate image",
+                "logged_at": "2026-05-12T11:00:00Z",
+            }
+        ],
+        # decisions.md is non-empty but does NOT mention the deviation
+        # cause, so ``validate_deviations`` emits HIGH.
+        decisions_body=(
+            "# Decisions Log\n\n## 2026-05-12 — unrelated decision\n**Context:** other\n"
+        ),
+    )
+
+    on_disk_before = target.read_text(encoding="utf-8")
+
+    with pytest.raises(state.StateError, match=r"HIGH|BLOCK") as exc:
+        state.complete_phase(
+            target,
+            phase="execute",
+            schema_path=schemas_dir / "state.schema.json",
+        )
+
+    assert "deviations" in str(exc.value)
+    assert target.read_text(encoding="utf-8") == on_disk_before, (
+        "state.json must not be mutated when the execute gate refuses"
+    )
+
+
+def test_complete_phase_refuses_execute_exit_with_block_tdd_evidence_findings(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    """An impl commit recorded in ``state.commits`` without a paired
+    preceding test commit (and without a TDD Exception ADR) trips
+    ``validate_tdd_evidence`` with a ``BLOCK`` finding. The execute gate
+    must refuse the transition; ``BLOCK`` is the only severity the
+    tdd_evidence check blocks on (per the SKILL prose)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = _seed_feature_with_execute_in_progress(
+        repo,
+        schemas_dir,
+        feature_id="2026-05-12-tdd-bad",
+        # Single impl commit, no preceding test commit recorded in
+        # ``state.commits``; the slice summary maps AC-1 to that SHA, so
+        # the validator can pair them up and emit
+        # ``tdd_evidence:missing_test_pair`` at BLOCK severity.
+        commits=[
+            {
+                "sha": "abcdef0",
+                "phase": "execute",
+                "subject": "feat(api): AC-1 implement login",
+                "logged_at": "2026-05-12T11:00:00Z",
+            }
+        ],
+        spec_body="# Acceptance Criteria\n1. crit-1 login works\n",
+        slice_summary="AC-1: abcdef0\n",
+    )
+
+    on_disk_before = target.read_text(encoding="utf-8")
+
+    with pytest.raises(state.StateError, match="BLOCK") as exc:
+        state.complete_phase(
+            target,
+            phase="execute",
+            schema_path=schemas_dir / "state.schema.json",
+        )
+
+    assert "tdd_evidence" in str(exc.value)
+    assert target.read_text(encoding="utf-8") == on_disk_before
+
+
+def test_complete_phase_allows_execute_exit_when_deviations_and_tdd_evidence_clean(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    """When ``state.deviations`` is empty and ``state.commits`` has a
+    matched test+impl pair for every AC, ``complete_phase("execute")``
+    transitions normally."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = _seed_feature_with_execute_in_progress(
+        repo,
+        schemas_dir,
+        feature_id="2026-05-12-exec-ok",
+        # Test commit FIRST, then impl, both mapped to AC-1 via the
+        # slice summary; ``validate_tdd_evidence`` accepts the pair.
+        commits=[
+            {
+                "sha": "aaaaaaa",
+                "phase": "execute",
+                "subject": "test(api): AC-1 login fixtures",
+                "logged_at": "2026-05-12T10:30:00Z",
+            },
+            {
+                "sha": "bbbbbbb",
+                "phase": "execute",
+                "subject": "feat(api): AC-1 implement login",
+                "logged_at": "2026-05-12T10:31:00Z",
+            },
+        ],
+        spec_body="# Acceptance Criteria\n1. crit-1 login works\n",
+        slice_summary="AC-1: aaaaaaa\nAC-1: bbbbbbb\n",
+    )
+
+    result = state.complete_phase(
+        target,
+        phase="execute",
+        schema_path=schemas_dir / "state.schema.json",
+        now="2026-05-12T12:00:00Z",
+    )
+
+    assert result["phases"]["execute"]["status"] == "done"
+    assert result["phases"]["execute"]["completed_at"] == "2026-05-12T12:00:00Z"
+
+
+def test_complete_phase_execute_tdd_evidence_low_severity_does_not_block(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    """The execute gate's ``tdd_evidence`` check refuses ONLY on ``BLOCK``
+    (per the forge-execute SKILL prose — ``LOW`` and ``INFO`` are
+    advisory). A non-BLOCK tdd_evidence finding must NOT refuse the
+    transition. This fixture has an AC whose only execute-phase commit
+    is a docs commit; ``validate_tdd_evidence`` emits
+    ``no_impl_commits`` at ``INFO`` severity. The phase must complete."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = _seed_feature_with_execute_in_progress(
+        repo,
+        schemas_dir,
+        feature_id="2026-05-12-exec-info",
+        commits=[
+            {
+                "sha": "ccccccc",
+                "phase": "execute",
+                "subject": "docs(api): AC-1 wording polish",
+                "logged_at": "2026-05-12T10:30:00Z",
+            }
+        ],
+        spec_body="# Acceptance Criteria\n1. crit-1 login works\n",
+        slice_summary="AC-1: ccccccc\n",
+    )
+
+    result = state.complete_phase(
+        target,
+        phase="execute",
+        schema_path=schemas_dir / "state.schema.json",
+        now="2026-05-12T12:00:00Z",
+    )
+
+    assert result["phases"]["execute"]["status"] == "done"
 
 
 def test_finish_feature_sets_current_phase_done_without_phases_entry(
