@@ -58,6 +58,32 @@ text verbatim into the dispatch prompt.
    - Budget: SPEC § [Intent, Codebase Anchors, Scope, Scenarios, Acceptance, Negative Requirements]; `files_in_scope` = union of Codebase Anchors paths.
    - Budget MUST also include `phase: "execute"` (literal) so the PreToolUse hook applies the TDD-pair check, and `tests_in_scope: string[]` listing the test files this dispatch creates or modifies (drives the validator's pairing check). When a paired test genuinely does not fit, set `tdd_exception_ref` to the matching ADR id from `decisions.md` (recorded as a `## TDD Exception: <AC-id>` heading with `Rationale`, `Reviewer`, and `Date` keys) — only then may `tests_in_scope` be empty.
    - Task: implement each acceptance criterion via TDD per [forge-tdd](../forge-tdd/SKILL.md); embed that skill's `<!-- scaffold:begin -->` / `<!-- scaffold:end -->` block verbatim in the dispatched subagent's `# Steps`.
+   - **Required prompt prefix.** The dispatch prompt MUST start with a top-level `context_budget:` block at column 0 (outside any fenced code block). The PreToolUse hook (`hooks/check_budget.py`) refuses dispatches that omit it. Canonical shape — copy verbatim and substitute the bracketed values:
+
+     ```text
+     context_budget:
+     {
+       "phase": "execute",
+       "spec_sections": ["Intent", "Codebase Anchors", "Scope", "Scenarios", "Acceptance", "Negative Requirements"],
+       "files_in_scope": [
+         "<each Codebase Anchors path from SPEC.md>"
+       ],
+       "tests_in_scope": [
+         "<each test file this dispatch creates or modifies>"
+       ],
+       "forbidden": [
+         "do not read outside files_in_scope",
+         "do not edit any file under .forge/",
+         "do not skip the RED commit"
+       ],
+       "articles": [ <output of Article.to_budget_dict() for each filtered article, or [] when CONSTITUTION.md is absent> ],
+       "traps": [ <output of Lesson.to_budget_dict() for each filtered lesson, or [] when lessons.md is absent> ]
+     }
+
+     [task prose follows here, starting with a blank line]
+     ```
+
+     When `tests_in_scope` cannot be populated, set `"tdd_exception_ref": "<ADR-id>"` to a matching ADR in `decisions.md` and the hook will accept an empty `tests_in_scope`.
 3c. Append summary to `.forge/features/<id>/slice-1.summary`. Record each commit via `tools.state.record_commit(path, sha=<sha>, phase="execute", subject=<subject>)` — the helper stamps `logged_at`, schema-validates the entry, and writes through the hook-protected path. Do NOT attempt to `Write`/`Edit`/`MultiEdit` `state.json` to append commits; the PreToolUse hook refuses those calls and a Bash-bypass would skip schema validation. Slice membership lives in `slice-<N>.summary`, not in `state.commits[]` (the schema rejects extra keys on commits[] items).
 
 ### Standard / Full branch (M2)
@@ -77,6 +103,41 @@ text verbatim into the dispatch prompt.
        `.forge/intel/lessons.md` is absent or no lessons match scope).
      - `tests_in_scope`: the test files this task creates or modifies — drives the validator's pairing check. The dispatched subagent's `# Steps` MUST embed the [forge-tdd](../forge-tdd/SKILL.md) `<!-- scaffold:begin -->` / `<!-- scaffold:end -->` block verbatim against these test files.
      - `tdd_exception_ref` (optional): an ADR id from `decisions.md` recorded as a `## TDD Exception: <AC-id>` heading with `Rationale`, `Reviewer`, and `Date` keys. Only with this set may `tests_in_scope` be empty; the rationale lives in the ADR.
+   - **Required prompt prefix.** The dispatch prompt MUST start with a top-level `context_budget:` block at column 0 (outside any fenced code block). The PreToolUse hook (`hooks/check_budget.py`) refuses dispatches that omit it. Canonical shape — copy verbatim and substitute the bracketed values:
+
+     ```text
+     context_budget:
+     {
+       "phase": "execute",
+       "spec_sections": ["<sections this task implements, e.g. Intent, Scenarios.scenario-2>"],
+       "files_in_scope": [
+         "<each file the slice scopes down to this task>"
+       ],
+       "owned_files": [
+         "<each file this specific task writes>"
+       ],
+       "read_only_files": [
+         "<each file the task reads but does not modify>"
+       ],
+       "prior_summaries": [
+         "<each slice-N.summary from prior slices; add prior task summaries from this slice only when needed>"
+       ],
+       "tests_in_scope": [
+         "<each test file this task creates or modifies>"
+       ],
+       "forbidden": [
+         "do not read outside files_in_scope",
+         "do not edit any file under .forge/",
+         "do not skip the RED commit"
+       ],
+       "articles": [ <output of Article.to_budget_dict() for each filtered article, or [] when CONSTITUTION.md is absent> ],
+       "traps": [ <output of Lesson.to_budget_dict() for each filtered lesson, or [] when lessons.md is absent> ]
+     }
+
+     [task prose follows here, starting with a blank line]
+     ```
+
+     When `tests_in_scope` cannot be populated, set `"tdd_exception_ref": "<ADR-id>"` to a matching ADR in `decisions.md` and the hook will accept an empty `tests_in_scope`.
    - Receive subagent summary (≤500 words). Record each commit via `tools.state.record_commit(path, sha=<sha>, phase="execute", subject=<subject>)` — the helper stamps `logged_at`, schema-validates the entry, and writes through the hook-protected path. **Do NOT** add a `slice` key (or any other extra) — the helper passes the payload through the schema, which enforces `additionalProperties: false` on `commits[]` items. Record slice membership in `slice-<N>.summary` instead. Direct `Write`/`Edit`/`MultiEdit` on `state.json` is refused by the PreToolUse hook.
 3e. After each slice completes:
    - Write `.forge/features/<id>/slice-<N>.summary` with the aggregated wave outputs.
