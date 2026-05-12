@@ -117,12 +117,22 @@ _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _SHA_RE_INSENSITIVE = re.compile(r"^[0-9a-fA-F]{40}$")
 _SUPERSEDED_RE = re.compile(r"^superseded-by:(L\d{3})$")
 
-# Detect fenced-code-block delimiters so header scanning can skip lines that
-# live inside a fence (illustrative ``## L042`` examples must not register as
-# phantom lessons). Field bodies are captured from the raw line stream so
-# user-authored inline backticks and fenced code round-trip verbatim into
-# ``Lesson.trap`` / ``Lesson.avoidance``.
-_FENCE_DELIM_RE = re.compile(r"^\s*```")
+# Detect fenced-code-block delimiters per the CommonMark rule: a fence
+# opens with three or more backticks at column 0, captures its length, and
+# only closes on a matching-or-longer run of backticks with no info string.
+# This lets nested fences round-trip — the inner fence does not match the
+# outer fence's length so it stays body content. The captured groups expose
+# (opening backticks, info-string remainder) so the parser can apply the
+# CommonMark close rule when it sees a candidate closing line.
+_FENCE_DELIM_RE = re.compile(r"^(`{3,})([^`]*)$")
+
+# 4-space prefix used to escape a body line whose stripped form would
+# otherwise re-parse as a field-marker line (``**Trap:**`` etc.). The
+# parser strips this prefix on read; the serializer adds it on write. Lines
+# that already begin with 4+ spaces in the source are unaffected because
+# the unescape branch only fires when the de-prefixed remainder matches a
+# field marker AND nothing else.
+_ESCAPE_PREFIX: Final[str] = "    "
 
 _DEFAULT_HEADER = '---\nversion: 0.1.0\ncreated: "{created}"\n---\n\n# FORGE Lessons\n\n'
 
@@ -252,7 +262,11 @@ class Lesson:
 class _ParseState:
     current: dict[str, object] | None = None
     active_field: str | None = None
-    in_fence: bool = False
+    # Length of the opening backtick fence currently held open, or 0 when
+    # not inside a fence. The CommonMark close rule requires the closing
+    # run to be at least this long; nested fences with shorter runs stay
+    # as body content.
+    fence_open: int = 0
 
 
 def parse(path: Path) -> list[Lesson]:
@@ -311,20 +325,45 @@ def parse_text(text: str) -> list[Lesson]:
 def _handle_fence(state: _ParseState, line: str) -> bool:
     """Return True when ``line`` belongs to a fenced-code block.
 
-    Toggles ``state.in_fence`` on each ```` ``` ```` delimiter and routes the
-    raw line into the active field body (verbatim, newline-joined) so the
-    fenced content survives round-trip while header / field detection is
-    bypassed inside the fence.
+    Tracks fence state with CommonMark close semantics:
+
+      * An opening fence is 3+ backticks at column 0, optionally followed
+        by an info string (any non-backtick text). ``state.fence_open``
+        records the opening length.
+      * A closing fence must be 3+ backticks at column 0, length >=
+        ``state.fence_open``, AND have no info string (the trailing text
+        must be empty or whitespace). Shorter backtick runs and
+        info-strung fences stay as body content.
+
+    Every line landing inside the fence — including the opening and
+    closing delimiters themselves — joins the active field body verbatim
+    with newline separators so authored code blocks round-trip.
     """
-    is_fence_delim = bool(_FENCE_DELIM_RE.match(line))
-    if not state.in_fence and not is_fence_delim:
-        return False
-    if state.current is not None and state.active_field is not None:
-        existing = cast(str, state.current.get(state.active_field, ""))
-        state.current[state.active_field] = f"{existing}\n{line}" if existing else line
-    if is_fence_delim:
-        state.in_fence = not state.in_fence
+    fence_match = _FENCE_DELIM_RE.match(line)
+    if state.fence_open == 0:
+        if fence_match is None:
+            return False
+        # Opening fence. Record the run length and capture the delimiter.
+        state.fence_open = len(fence_match.group(1))
+        _append_body_line(state, line)
+        return True
+
+    # Inside an open fence. Test the CommonMark close rule.
+    if fence_match is not None:
+        closing_run = fence_match.group(1)
+        info_remainder = fence_match.group(2)
+        if len(closing_run) >= state.fence_open and not info_remainder.strip():
+            state.fence_open = 0
+    _append_body_line(state, line)
     return True
+
+
+def _append_body_line(state: _ParseState, line: str) -> None:
+    """Append a literal body line to the active field body."""
+    if state.current is None or state.active_field is None:
+        return
+    existing = cast(str, state.current.get(state.active_field, ""))
+    state.current[state.active_field] = f"{existing}\n{line}" if existing else line
 
 
 def _open_field(field_match: re.Match[str], state: _ParseState) -> None:
@@ -411,8 +450,24 @@ def _consume_line(
     if not stripped:
         state.active_field = None
         return
+
+    # Reverse the writer's escape: a body line whose stripped form re-parses
+    # as a field marker is prefixed with 4 spaces on write. Strip that
+    # prefix so the round-trip stays byte-stable on the marker-shaped body.
+    line_body = _unescape_body_line(line)
     existing = cast(str, state.current.get(state.active_field, ""))
-    state.current[state.active_field] = f"{existing} {stripped}".strip() if existing else stripped
+    state.current[state.active_field] = (
+        f"{existing}\n{line_body.rstrip()}" if existing else line_body.rstrip()
+    )
+
+
+def _unescape_body_line(line: str) -> str:
+    """Reverse :data:`_ESCAPE_PREFIX` on lines that re-parse as field markers."""
+    if line.startswith(_ESCAPE_PREFIX):
+        candidate = line[len(_ESCAPE_PREFIX) :]
+        if _FIELD_RE.match(candidate):
+            return candidate
+    return line
 
 
 def _block_to_lesson(block: dict[str, object]) -> Lesson:
@@ -620,12 +675,46 @@ def _serialize_lesson(lesson: Lesson) -> str:
         f"## {lesson.id} — {title}\n"
         f"**Captured:** {lesson.captured.isoformat()} from feature {lesson.captured_from}\n"
         f"**Resolved by:** {lesson.resolved_by}\n"
-        f"**Trap:** {lesson.trap}\n"
-        f"**Avoidance:** {lesson.avoidance}\n"
+        f"**Trap:** {_escape_body(lesson.trap)}\n"
+        f"**Avoidance:** {_escape_body(lesson.avoidance)}\n"
         f"**Tags:** {tags_csv}\n"
         f"**Severity:** {lesson.severity}\n"
         f"**Status:** {lesson.status}\n"
     )
+
+
+def _escape_body(text: str) -> str:
+    """Escape continuation lines that would re-parse as field markers.
+
+    The first line of a multi-line body sits on the same source line as
+    the ``**Trap:** ...`` marker, so it never collides with the parser's
+    field detection (the parser is already past column 0 by the time it
+    sees the body content). Continuation lines start at column 0 and
+    would re-trigger ``_FIELD_RE`` if their stripped form began with
+    ``**Captured:**`` / ``**Trap:**`` / etc. — prefixing them with
+    :data:`_ESCAPE_PREFIX` keeps them as body content; the parser strips
+    the prefix on read via :func:`_unescape_body_line`.
+
+    CRLF normalises to LF here so the on-disk representation is the
+    canonical form regardless of authoring platform.
+    """
+    if "\r" in text:
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if "\n" not in text:
+        return text
+    lines = text.split("\n")
+    escaped: list[str] = [lines[0]]
+    for cont in lines[1:]:
+        # Only escape when the line would re-trigger ``_FIELD_RE`` at
+        # column 0. Lines that already carry leading whitespace are inert
+        # to the column-0 anchored matcher, so prefixing them would
+        # corrupt the round-trip by adding spaces that the parser cannot
+        # reverse.
+        if _FIELD_RE.match(cont):
+            escaped.append(_ESCAPE_PREFIX + cont)
+        else:
+            escaped.append(cont)
+    return "\n".join(escaped)
 
 
 def append(repo_root: Path, draft: Lesson, *, today: date | None = None) -> Path:

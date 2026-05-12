@@ -92,7 +92,14 @@ def test_parse_missing_file_returns_empty_list(tmp_path: Path) -> None:
     assert lessons.parse(tmp_path / "nonexistent.md") == []
 
 
-def test_parse_concatenates_multi_line_trap_and_avoidance(tmp_path: Path) -> None:
+def test_parse_preserves_multi_line_trap_and_avoidance(tmp_path: Path) -> None:
+    """Multi-line trap / avoidance bodies preserve newlines (canonical contract).
+
+    The legacy parser flattened continuation lines into a single space-joined
+    string, losing all structure in bulleted lists and code-style prose. The
+    canonical contract keeps the newlines so operator-authored layout survives
+    round-trip.
+    """
     body = _file(
         "## L001 — Multi-line\n"
         "**Captured:** 2026-05-11 from feature x\n"
@@ -107,8 +114,8 @@ def test_parse_concatenates_multi_line_trap_and_avoidance(tmp_path: Path) -> Non
     )
     path = _write(tmp_path / "lessons.md", body)
     parsed = lessons.parse(path)
-    assert "First trap line. Second trap line continues" in parsed[0].trap
-    assert "First avoidance line. Second avoidance line continues" in parsed[0].avoidance
+    assert parsed[0].trap == "First trap line.\nSecond trap line continues."
+    assert parsed[0].avoidance == "First avoidance line.\nSecond avoidance line continues."
 
 
 def test_parse_body_words_counts_trap_plus_avoidance(tmp_path: Path) -> None:
