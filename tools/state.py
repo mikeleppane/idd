@@ -1541,9 +1541,17 @@ def append_deviation(
         return payload
 
 
-def feature_folder_exists(repo_root: Path, feature_id: str) -> bool:
-    """Return True when .forge/features/<feature_id>/ exists under repo_root."""
-    return (repo_root / ".forge" / "features" / feature_id).is_dir()
+def feature_folder_exists(repo_root: Path | str, feature_id: str) -> bool:
+    """Return True when .forge/features/<feature_id>/ exists under repo_root.
+
+    Args:
+        repo_root: Repository root containing the ``.forge/`` tree. A ``str``
+            is accepted at the entry boundary and coerced to ``Path`` so
+            agent callers that improvise on the call shape do not trip a
+            cryptic ``TypeError`` at the first ``/`` operator.
+        feature_id: Feature folder name under ``.forge/features/``.
+    """
+    return (Path(repo_root) / ".forge" / "features" / feature_id).is_dir()
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:

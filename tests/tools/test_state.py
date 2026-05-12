@@ -1271,3 +1271,19 @@ def test_finish_feature_sets_current_phase_done_without_phases_entry(
 
     assert result["current_phase"] == "done"
     assert "done" not in result["phases"]
+
+
+def test_feature_folder_exists_coerces_string_repo_root(tmp_path: Path) -> None:
+    """A ``str`` ``repo_root`` must return the same result as the ``Path`` form.
+
+    Agent callers improvising on the call shape pass a ``str`` repo path; the
+    helper composes ``repo_root / ".forge" / "features" / ...`` immediately,
+    which trips a cryptic ``TypeError`` at the first ``/`` operator when no
+    boundary coercion sits at the entry. The string form must return the
+    same boolean as the ``Path`` form for the same inputs.
+    """
+    feature_id = "2026-05-12-alpha"
+    (tmp_path / ".forge" / "features" / feature_id).mkdir(parents=True)
+
+    assert state.feature_folder_exists(str(tmp_path), feature_id) is True
+    assert state.feature_folder_exists(str(tmp_path), "2026-05-12-missing") is False
