@@ -224,10 +224,23 @@ The plain name `.forge/features/<id>/REVIEW.md` is reserved (do not write it). D
    batched "harvest all" prompt. The sequential pattern matches the
    rest of FORGE's user interactions.
 8. **Self-review gate:** `REVIEW.<target>.md` status is `resolved` AND no BLOCK findings remain unresolved.
-9. **Record target completion.** Call `tools.state.complete_review_target(path, review_target=<plan|code>)` so `phases.review.targets_done` records this pass. Idempotent within the same target.
+9. **Record target completion.** Run the forge-state Bash CLI (do NOT translate to a Python heredoc — `review_target` is keyword-only):
+
+   ```bash
+   forge-state complete-review-target --feature <id> --target <plan|code>
+   ```
+
+   `phases.review.targets_done` records this pass. Idempotent within the same target.
 10. **Transition state — depends on target:**
    - **target=plan:** review phase stays `in_progress`; `targets_done == ["plan"]`. Do **not** call `complete_phase("review")` yet — the gate requires both targets done. The next phase command is `/forge:execute` (which still observes review as in_progress; `forge-execute` accepts that state).
-   - **target=code:** both targets are now in `targets_done`. Call `tools.state.complete_phase(path, "review")` (the gate clears) followed by `tools.state.start_phase(path, "verify")`.
+   - **target=code:** both targets are now in `targets_done`. Run the forge-state Bash CLI (do NOT translate to a Python heredoc):
+
+     ```bash
+     forge-state complete-phase --feature <id> --phase review
+     forge-state start-phase    --feature <id> --phase verify
+     ```
+
+     Module fallback: `PYTHONPATH=$CLAUDE_PLUGIN_ROOT python3 -m tools.state_cli ...`.
 11. **Surface to user:** `REVIEW.<target>.md` path, findings count by severity, cycles used, and the resolved next phase (`/forge:execute` after target=plan; `/forge:verify` after target=code).
 
 ## Done

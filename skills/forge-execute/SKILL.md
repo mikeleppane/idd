@@ -37,7 +37,13 @@ truth for the TDD-pairing discipline this orchestrator enforces; copy the
 text verbatim into the dispatch prompt.
 
 1. **Validate tier and state.** Read `state.json`. For `tier in ("standard", "full")`, require PLAN.md with `status: ready`, `REVIEW.plan.md` with `target: plan` and `status: resolved`, and `"plan"` recorded in `phases.review.targets_done` (the gate's audit trail). The review phase will be `status: in_progress` at this point — that is expected; do not abort.
-2. **Transition state.** Call `tools.state.start_phase(path, "execute")` (idempotent if already in_progress). For standard/full, this changes `current_phase` from `review` to `execute` while leaving `phases.review` untouched so the plan-pass audit (`targets_done`, `current_target`) survives until the second review pass completes.
+2. **Transition state.** Run the forge-state Bash CLI (do NOT translate to a Python heredoc):
+
+   ```bash
+   forge-state start-phase --feature <id> --phase execute
+   ```
+
+   Idempotent if already `in_progress`. For standard/full, this changes `current_phase` from `review` to `execute` while leaving `phases.review` untouched so the plan-pass audit (`targets_done`, `current_target`) survives until the second review pass completes. Module fallback: `PYTHONPATH=$CLAUDE_PLUGIN_ROOT python3 -m tools.state_cli ...`.
 2a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<plan_files_union>)`. The resulting `articles[]` (serialized via `Article.to_budget_dict()`) is included in EVERY per-task subagent dispatch budget under the `articles` field.
 2b. **Lessons preflight.** Call
     `tools.intel.lessons.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<plan_files_union>)`.
@@ -84,12 +90,25 @@ text verbatim into the dispatch prompt.
      ```
 
      When `tests_in_scope` cannot be populated, set `"tdd_exception_ref": "<ADR-id>"` to a matching ADR in `decisions.md` and the hook will accept an empty `tests_in_scope`.
-3c. Append summary to `.forge/features/<id>/slice-1.summary`. Record each commit via `tools.state.record_commit(path, sha=<sha>, phase="execute", subject=<subject>)` — the helper stamps `logged_at`, schema-validates the entry, and writes through the hook-protected path. Do NOT attempt to `Write`/`Edit`/`MultiEdit` `state.json` to append commits; the PreToolUse hook refuses those calls and a Bash-bypass would skip schema validation. Slice membership lives in `slice-<N>.summary`, not in `state.commits[]` (the schema rejects extra keys on commits[] items).
+3c. Append summary to `.forge/features/<id>/slice-1.summary`. Record each commit via the forge-state Bash CLI (do NOT translate to a Python heredoc — `sha` / `phase` / `subject` are keyword-only):
+
+   ```bash
+   forge-state record-commit --feature <id> --sha <sha> \
+     --phase execute --subject "<commit subject>"
+   ```
+
+   The CLI stamps `logged_at`, schema-validates the entry, and writes through the hook-protected path. Do NOT attempt to `Write`/`Edit`/`MultiEdit` `state.json` to append commits; the PreToolUse hook refuses those calls and a Bash-bypass would skip schema validation. Slice membership lives in `slice-<N>.summary`, not in `state.commits[]` (the schema rejects extra keys on commits[] items).
 
 ### Standard / Full branch (M2)
 
 3d. Read PLAN.md. Parse slices in order. For each slice:
-   - Stamp the slice cursor via `tools.state.set_execute_current_slice(path, slice_number=<N>)`. The helper validates `<N> >= 1`, requires `phases.execute.status == "in_progress"`, and writes through the hook-protected path. Do NOT `Write`/`Edit` `state.json` to set this field directly.
+   - Stamp the slice cursor via the forge-state Bash CLI (do NOT translate to a Python heredoc):
+
+     ```bash
+     forge-state set-current-slice --feature <id> --slice <N>
+     ```
+
+     The CLI validates `<N> >= 1`, requires `phases.execute.status == "in_progress"`, and writes through the hook-protected path. Do NOT `Write`/`Edit` `state.json` to set this field directly.
    - Walk waves in order. Within a wave, dispatch tasks in parallel; between waves, sequential.
    - For each task: dispatch ONE subagent. Budget block MUST include:
      - `phase`: literal `"execute"` so the PreToolUse hook applies the TDD-pair check.
@@ -138,7 +157,14 @@ text verbatim into the dispatch prompt.
      ```
 
      When `tests_in_scope` cannot be populated, set `"tdd_exception_ref": "<ADR-id>"` to a matching ADR in `decisions.md` and the hook will accept an empty `tests_in_scope`.
-   - Receive subagent summary (≤500 words). Record each commit via `tools.state.record_commit(path, sha=<sha>, phase="execute", subject=<subject>)` — the helper stamps `logged_at`, schema-validates the entry, and writes through the hook-protected path. **Do NOT** add a `slice` key (or any other extra) — the helper passes the payload through the schema, which enforces `additionalProperties: false` on `commits[]` items. Record slice membership in `slice-<N>.summary` instead. Direct `Write`/`Edit`/`MultiEdit` on `state.json` is refused by the PreToolUse hook.
+   - Receive subagent summary (≤500 words). Record each commit via the forge-state Bash CLI (do NOT translate to a Python heredoc):
+
+     ```bash
+     forge-state record-commit --feature <id> --sha <sha> \
+       --phase execute --subject "<commit subject>"
+     ```
+
+     The CLI stamps `logged_at`, schema-validates the entry, and writes through the hook-protected path. **Do NOT** add a `slice` key (or any other extra) — the schema enforces `additionalProperties: false` on `commits[]` items. Record slice membership in `slice-<N>.summary` instead. Direct `Write`/`Edit`/`MultiEdit` on `state.json` is refused by the PreToolUse hook.
 3e. After each slice completes:
    - Write `.forge/features/<id>/slice-<N>.summary` with the aggregated wave outputs.
    - Self-review gate per slice: every acceptance criterion mapped to this slice has ≥1 commit; no Negative Requirement violated by the diff.
@@ -151,7 +177,19 @@ text verbatim into the dispatch prompt.
    - Run `python -m tools.validate --target deviations .forge/features/<id>` to confirm every `state.json` deviation has a matching `decisions.md` entry. Any finding with severity `BLOCK` or `HIGH` blocks phase exit. `MEDIUM`, `LOW`, and `INFO` are advisory; surface to the user.
    - Run `python -m tools.validate --target tdd_evidence .forge/features/<id>` to confirm every acceptance criterion has a paired test commit. Findings of severity `BLOCK` block phase exit; `LOW` and `INFO` are advisory.
    - All tests in scope pass on the working tree.
-5. **Transition state.** Call `tools.state.complete_phase(path, "execute")`. Standard / full → leave further state changes to `/forge:review --target code`, which resumes the open review phase (carrying the `targets_done=["plan"]` audit through `start_phase`'s preservation, so the per-target gate is satisfied once the code pass closes). Focused → `tools.state.start_phase(path, "verify")`.
+5. **Transition state.** Run the forge-state Bash CLI (do NOT translate to a Python heredoc):
+
+   ```bash
+   forge-state complete-phase --feature <id> --phase execute
+   ```
+
+   Standard / full → leave further state changes to `/forge:review --target code`, which resumes the open review phase (carrying the `targets_done=["plan"]` audit through `start_phase`'s preservation, so the per-target gate is satisfied once the code pass closes). Focused → also run:
+
+   ```bash
+   forge-state start-phase --feature <id> --phase verify
+   ```
+
+   Module fallback for both invocations: `PYTHONPATH=$CLAUDE_PLUGIN_ROOT python3 -m tools.state_cli ...`.
 6. **Surface to user:** slice summaries written, commit count, criteria-with-commit map, next phase.
 
 ## Done

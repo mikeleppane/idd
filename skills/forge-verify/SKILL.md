@@ -76,7 +76,13 @@ For every UNVERIFIABLE criterion from Layer 1 (and any criterion the user reques
 ## Steps
 
 1. **Validate state.** `phases.execute.status == "done"`. For standard / full, also `phases.review.status == "done"` AND `.forge/features/<id>/REVIEW.code.md` exists with frontmatter `target: code`, `status: resolved`. Otherwise abort.
-2. **Transition state.** `tools.state.start_phase(path, "verify")` (idempotent).
+2. **Transition state.** Run the forge-state Bash CLI (do NOT translate to a Python heredoc):
+
+   ```bash
+   forge-state start-phase --feature <id> --phase verify
+   ```
+
+   Idempotent. Module fallback: `PYTHONPATH=$CLAUDE_PLUGIN_ROOT python3 -m tools.state_cli ...`.
 2a. **Constitution preflight.** Call `tools.constitution.load_and_filter(repo_root, idea_text=<spec_intent>, files_in_scope=<plan_files>)`. Pass `articles[]` to the verify subagent so UAT questions can call out CRITICAL surfaces (e.g., "verify the vault path is the only secret source per [constitution:A1]").
 3. **Run Layer 1.** Dispatch the audit subagent. Receive `{criterion, status, evidence}` list (acceptance + negative-requirement rows).
 4. **Run Layer 2** per the rules above. Capture command + exit code into VERIFICATION § Coverage rows.
@@ -86,9 +92,23 @@ For every UNVERIFIABLE criterion from Layer 1 (and any criterion the user reques
    - Every acceptance criterion AND every negative requirement has Method + Status + Evidence.
    - No criterion left at PENDING after Layer 3 (unless user explicitly accepts).
    - Skipped-phase warnings present when applicable.
-8. **Transition state.** If all rows are EVIDENCED or PASS:
-   - For tier == "focused": call `tools.state.complete_phase(path, "verify")`, then `tools.state.finish_feature(path)`.
-   - For tier in ("standard", "full"): call `tools.state.complete_phase(path, "verify")`, then `tools.state.start_phase(path, "ship")`.
+8. **Transition state.** If all rows are EVIDENCED or PASS, run the forge-state Bash CLI (do NOT translate to a Python heredoc):
+
+   - For tier == "focused":
+
+     ```bash
+     forge-state complete-phase --feature <id> --phase verify
+     forge-state finish         --feature <id>
+     ```
+
+   - For tier in ("standard", "full"):
+
+     ```bash
+     forge-state complete-phase --feature <id> --phase verify
+     forge-state start-phase    --feature <id> --phase ship
+     ```
+
+   Module fallback: `PYTHONPATH=$CLAUDE_PLUGIN_ROOT python3 -m tools.state_cli ...`.
 9. **Surface to user:** path to VERIFICATION.md, total verified count, list of FAILs (if any), skipped-phase warnings, next step (`done` for focused, `/forge:ship` for standard / full).
 
 ## Done

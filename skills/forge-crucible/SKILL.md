@@ -39,7 +39,15 @@ Active feature has SPEC.md and PLAN.md. `current_phase == "crucible"`.
    - Every Q+A has a Resolution.
    - Every failure mode has a Mitigation.
    - Spec/plan edits made during the ritual are logged to `decisions.md` with timestamps.
-8. **Transition state.** Call `tools.state.complete_phase(path, "crucible")`, then `tools.state.start_phase(path, "review")`.
+8. **Transition state.** Run the forge-state Bash CLI (do NOT translate to a Python heredoc — agents consistently mis-call the keyword-only signatures):
+
+   ```bash
+   forge-state complete-phase --feature <id> --phase crucible
+   forge-state start-phase    --feature <id> --phase review
+   ```
+
+   When `forge-state` is not on PATH, fall back to the module form:
+   `PYTHONPATH=$CLAUDE_PLUGIN_ROOT python3 -m tools.state_cli <subcommand> ...`
 9. **Surface to user:** UNDERSTANDING.md path, counts (assumptions confirmed, Q&A pairs, failure modes), decisions logged, next phase = `review`.
 
 ## Done

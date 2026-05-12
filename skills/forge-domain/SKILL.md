@@ -119,17 +119,29 @@ tiers fill `# Domain` at spec time and never enter this phase.
    - No compound term (e.g., `delta proposal validator`) is left undefined
      when its constituents alone are insufficient.
    - On unresolvable terms in **auto mode**: append a `decisions.md` entry
-     **and** call
-     `tools.state.append_deviation(path, phase="domain", cause="unresolved terms", resolution="proceeding with best-effort glossary")`.
-     The helper writes the schema-validated entry (`{phase, cause,
-     resolution, logged_at}`) through the hook-protected path; direct
-     `Write`/`Edit`/`MultiEdit` on `state.json.deviations` is refused by
-     the PreToolUse hook. Then advance.
+     **and** run the forge-state Bash CLI (do NOT translate to a Python
+     heredoc — `phase` / `cause` / `resolution` are keyword-only and
+     agents consistently mis-call them positionally):
+
+     ```bash
+     forge-state deviation --feature <id> --phase domain \
+       --cause "unresolved terms" \
+       --resolution "proceeding with best-effort glossary"
+     ```
+
+     The CLI writes the schema-validated entry through the hook-protected
+     path; direct `Write`/`Edit`/`MultiEdit` on `state.json.deviations`
+     is refused by the PreToolUse hook. Then advance.
    - On unresolvable terms in **interactive mode**: halt and ask the user
      to disambiguate.
-10. **Phase transition.** Call `tools.state.complete_phase(path, "domain")`
-    then `tools.state.start_phase(path, "scenarios")`. Print
-    `Next: /forge:scenarios`.
+10. **Phase transition.** Run the forge-state Bash CLI:
+
+    ```bash
+    forge-state complete-phase --feature <id> --phase domain
+    forge-state start-phase    --feature <id> --phase scenarios
+    ```
+
+    Print `Next: /forge:scenarios`. Module fallback: `PYTHONPATH=$CLAUDE_PLUGIN_ROOT python3 -m tools.state_cli ...`.
 
 ## Failure modes
 

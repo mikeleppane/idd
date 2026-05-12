@@ -152,7 +152,14 @@ up a guard described below.
      1. Surface every unresolved finding with its `file:line` pointer and the validator rule that flagged it. `MEDIUM`/`LOW` items stay advisory but still surface so the user sees the full picture.
      2. Print, verbatim: `Re-run /forge:spec --feature <id> after addressing the findings above to finalize and advance to <next_phase>.` Resolve `<next_phase>` from `state.json.tier` using the same mapping as step 8 (`focused → execute`, `standard → scenarios`, `full → domain`). Do NOT print the downstream phase command — the downstream commands all refuse when `phases.spec.status != "done"`.
      3. Do NOT call `complete_phase("spec")` or `start_phase(<next>)`. Leave `phases.spec.status == "in_progress"` so the user can re-enter the skill against the same partial draft.
-8. **Update `state.json`:** call `tools.state.complete_phase(path, "spec")`, then `tools.state.start_phase(path, next_phase)`.
+8. **Update `state.json`:** run the forge-state Bash CLI (do NOT translate to a Python heredoc):
+
+   ```bash
+   forge-state complete-phase --feature <id> --phase spec
+   forge-state start-phase    --feature <id> --phase <next_phase>
+   ```
+
+   Module fallback: `PYTHONPATH=$CLAUDE_PLUGIN_ROOT python3 -m tools.state_cli ...`.
 
    **Pre-seed `start_phase` guard (locked).** When the pre-seed branch fired (predicate held on entry — `routing` block present AND `current_phase == "spec"` AND `phases.spec.status == "in_progress"`), do **NOT** call `start_phase("spec")` at any point during this skill's execution. `/forge:do` already wrote `phases.spec.status: "in_progress"` (and the seed `started_at` timestamp) via `tools.archive.create_feature_folder`'s seed body, and re-calling `start_phase("spec")` here would clobber that seed `started_at`. Only the trailing `complete_phase("spec")` + `start_phase(<next per tier>)` runs at exit. (Historically `forge-spec` never called `start_phase("spec")` — it created the folder fresh — so the direct-invocation fallback path is unaffected.)
 

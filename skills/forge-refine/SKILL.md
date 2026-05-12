@@ -156,12 +156,13 @@ under "Inputs" above.
       is rejected on read/write too.
    c. Synthesize a candidate refined-idea paragraph and ask the user to
       confirm or continue.
-7. **Persist refined idea.** On user confirm OR round-cap reached, call
-   `tools.state.record_refined_idea(path, refined=...)` to write
-   `state.json.refined_idea`. The refined idea must be ≤4000 chars; the
-   helper raises `StateError` on overflow rather than truncating silently —
-   trim before calling `record_refined_idea`. The schema mirrors the cap
-   via `refined_idea.maxLength = 4000`.
+7. **Persist refined idea.** On user confirm OR round-cap reached, run the forge-state Bash CLI (do NOT translate to a Python heredoc — `refined` is keyword-only and agents consistently mis-call it positionally):
+
+   ```bash
+   forge-state refine --feature <id> --refined "<paragraph>"
+   ```
+
+   The refined idea must be ≤4000 chars; the CLI surfaces the helper's `StateError` on overflow rather than truncating silently — trim before invoking. The schema mirrors the cap via `refined_idea.maxLength = 4000`. Module fallback: `PYTHONPATH=$CLAUDE_PLUGIN_ROOT python3 -m tools.state_cli refine ...`.
 8. **Round-cap deviation.** When 5 rounds exhausted without convergence:
    - **Interactive mode:** halt; prompt the user to re-state the idea.
    - **Auto mode:** append a `decisions.md` entry **and** append a structured
@@ -175,8 +176,14 @@ under "Inputs" above.
    - Measurable outcome implied.
    - No multi-feature spillover. If the user cannot collapse to one feature,
      suggest re-running `/forge:do --full` and abort.
-10. **Phase transition.** Call `tools.state.complete_phase(path, "refine")` then
-    `tools.state.start_phase(path, "spec")`. Print `Next: /forge:spec`.
+10. **Phase transition.** Run the forge-state Bash CLI:
+
+    ```bash
+    forge-state complete-phase --feature <id> --phase refine
+    forge-state start-phase    --feature <id> --phase spec
+    ```
+
+    Print `Next: /forge:spec`. Module fallback: `PYTHONPATH=$CLAUDE_PLUGIN_ROOT python3 -m tools.state_cli ...`.
 
 ## Failure modes
 

@@ -48,7 +48,14 @@ Active feature `state.json` has `tier in ("standard", "full")`, `phases.scenario
    - Run: `python -m tools.validate --target verified-deps .forge/features/<id>/PLAN.md` (covers Verified Dependencies table shape; pass `--check-registries` for a live registry probe).
    - Any finding with severity `BLOCK` or `HIGH` blocks phase exit. `MEDIUM`/`LOW` are advisory; surface to the user.
    - Inline check (not migrated): slice count ≤ 4 in standard tier.
-7. **Transition state.** Call `tools.state.complete_phase(path, "plan")`, then `tools.state.start_phase(path, "crucible")`.
+7. **Transition state.** Run the forge-state Bash CLI (do NOT translate to a Python heredoc):
+
+   ```bash
+   forge-state complete-phase --feature <id> --phase plan
+   forge-state start-phase    --feature <id> --phase crucible
+   ```
+
+   Module fallback: `PYTHONPATH=$CLAUDE_PLUGIN_ROOT python3 -m tools.state_cli ...`
 8. **Surface to user:** slice count, files-in-scope summary, deps decision, next phase = `crucible`.
 
 ## Done

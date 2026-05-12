@@ -38,7 +38,14 @@ Active feature `state.json` has `tier in ("standard", "full")` and `phases.spec.
    - Run: `python -m tools.validate --target scenarios .forge/features/<id>/SPEC.md`
    - Any finding with severity `BLOCK` or `HIGH` blocks phase exit. `MEDIUM`/`LOW` are advisory; surface to the user.
    - Inline check (not migrated): the escalation decision is logged to `decisions.md` when detection ran.
-6. **Transition state.** Call `tools.state.complete_phase(path, "scenarios")`, then `tools.state.start_phase(path, "plan")`.
+6. **Transition state.** Run the forge-state Bash CLI (do NOT translate to a Python heredoc):
+
+   ```bash
+   forge-state complete-phase --feature <id> --phase scenarios
+   forge-state start-phase    --feature <id> --phase plan
+   ```
+
+   Module fallback: `PYTHONPATH=$CLAUDE_PLUGIN_ROOT python3 -m tools.state_cli ...`
 7. **Surface to user:** scenarios count, escalation decision, path to `.feature` file (if emitted), next phase = `plan`.
 
 ## Done

@@ -185,13 +185,16 @@ Two entry paths:
       The skill is auxiliary to ship in this mode. Return verdict +
       confidence to the caller (`forge-ship`); the caller decides whether
       to gate the PR.
-    - Post-merge mode: `tools.state.start_phase(path, "qa")` (idempotent
-      when already `in_progress`) → run sections → `complete_phase("qa")`
-      → advance `current_phase` to `done` if not already terminal → call
-      `tools.archive.archive_feature_after_qa(repo_root, feature_id)` to
-      perform the deferred folder move from `.forge/features/<id>/` to
-      `.forge/features/archive/<id>/`. The helper is idempotent and
-      version-guarded; a retry after partial failure is safe.
+    - Post-merge mode: run the forge-state Bash CLI (do NOT translate to a Python heredoc):
+
+      ```bash
+      forge-state start-phase --feature <id> --phase qa        # idempotent when in_progress
+      # ... run sections ...
+      forge-state complete-phase --feature <id> --phase qa
+      forge-state finish         --feature <id>                # if not already terminal
+      ```
+
+      Then call `tools.archive.archive_feature_after_qa(repo_root, feature_id)` to perform the deferred folder move from `.forge/features/<id>/` to `.forge/features/archive/<id>/`. The helper is idempotent and version-guarded; a retry after partial failure is safe. Module fallback: `PYTHONPATH=$CLAUDE_PLUGIN_ROOT python3 -m tools.state_cli ...`.
 12. **Surface to operator.** Print verdict, confidence, blocker count, and
     the path to `QA.md`.
 

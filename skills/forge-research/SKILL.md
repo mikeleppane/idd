@@ -203,8 +203,14 @@ exit; `MEDIUM`/`LOW` are advisory.
 
 ### 9. Transition phase.
 
-Call `tools.state.complete_phase(path, "research")` then
-`tools.state.start_phase(path, "spec")`. Print
+Run the forge-state Bash CLI (do NOT translate to a Python heredoc):
+
+```bash
+forge-state complete-phase --feature <id> --phase research
+forge-state start-phase    --feature <id> --phase spec
+```
+
+Module fallback: `PYTHONPATH=$CLAUDE_PLUGIN_ROOT python3 -m tools.state_cli ...`. Print
 `Next: /forge:spec --feature <id>`.
 
 ### 10. Surface to user.
