@@ -91,30 +91,32 @@ The plain name `.forge/features/<id>/REVIEW.md` is reserved (do not write it). D
    - If HIGH+ remaining > 0 AND cycle N < 3: surface findings to user, accept resolutions (edits to SPEC / PLAN / code or accepted-risk entries in `decisions.md`), bump `REVIEW.<target>.md` frontmatter `cycles: N+1`, repeat steps 4–6.
    - If HIGH+ remaining > 0 AND cycle N == 3: keep `REVIEW.<target>.md` frontmatter `status: open`, surface to user with full residual list, halt without transitioning state. Document blocker in `decisions.md` § Open.
    - If HIGH+ remaining == 0: set `REVIEW.<target>.md` frontmatter `status: resolved`, proceed.
-7a. **Harvest trap candidates (optional).** During the Step 7
-   drive-convergence walk, for each row that was just flipped from
-   `Status: open` to `Status: resolved`:
+7a. **Harvest trap candidates (optional).** After Step 7's
+   drive-convergence walk, call
+   `tools.ship_gate.parse_review_findings_for_harvest(<review_path>)`
+   to obtain a list of `HarvestCandidate` records — one row per
+   `Status: resolved` finding whose `Resolved by` cell carries a 40-hex
+   SHA AND whose Severity is `BLOCK` or `HIGH`. The helper filters
+   `accepted-risk:<reason>`, `spec-edit`, `plan-edit`, and empty
+   `Resolved by` cells automatically, and drops `MEDIUM` / `LOW` rows
+   per the trap-memory signal scope; the skill never reaches into
+   `REVIEW.code.md` with its own parser. This is the same code path the
+   ship gate consumes — a future REVIEW.md template column-rename
+   touches one helper instead of drifting between two parsers.
 
-   - Skip if `Resolved by` is empty, `spec-edit`, `plan-edit`, or
-     `accepted-risk:<reason>` — no fix-with-SHA means no trap-with-fix
-     pair to learn from, and the `decisions.md` rationale already
-     captures the accepted-risk path.
-   - Skip if Severity is `MEDIUM` or `LOW` — the trap-memory signal is
-     reserved for high-impact regressions. The relevance scorer in
-     `tools.intel.lessons.load_and_filter` would deprioritize them
-     anyway, and harvesting them only inflates the `MAX_LESSON_WORDS`
-     budget for downstream dispatches.
-   - Otherwise, prompt the user via **one** `AskUserQuestion`:
+   For each `HarvestCandidate`, prompt the user via **one**
+   `AskUserQuestion`:
 
-     > Trap candidate detected for F-<n> (resolved by <sha[:8]>).
-     > Capture as lesson for future subagents?
+     > Trap candidate detected for `<candidate.row_id>` (resolved by
+     > `<candidate.resolved_by[:8]>`). Capture as lesson for future
+     > subagents?
 
      Options (single-select):
 
-     - `[y]es-author-now` — draft a `tools.intel.lessons.Lesson` record
-       in this turn (see "On `[y]es-author-now`" below).
+     - `[y]es-author-now` — draft a `tools.intel.lessons.Lesson`
+       record in this turn (see "On `[y]es-author-now`" below).
      - `[N]o-skip` — no disk mutation; the row stays `resolved`; no
-       lesson harvested. Continue with the next resolved row.
+       lesson harvested. Continue with the next candidate.
      - `[e]dit-then-author` — same drafting flow as `[y]es-author-now`
        but open the rendered draft in `$EDITOR` before persisting.
 
@@ -125,25 +127,27 @@ The plain name `.forge/features/<id>/REVIEW.md` is reserved (do not write it). D
      - `id` = `lesson_id`.
      - `captured` = today's date.
      - `captured_from` = the active feature id.
-     - `resolved_by` = the full 40-hex SHA from the row's `Resolved by`
-       cell (NOT the truncated `sha[:8]` shown in the prompt — the
+     - `resolved_by` = `candidate.resolved_by` — the full 40-hex SHA
+       (NOT the truncated `sha[:8]` shown in the prompt; the lessons
        parser requires the full hash).
-     - `trap` = the row's Problem column (strip the
-       `[constitution:A<n>]` or `[lesson:L<NNN>]` prefix tag when
-       present so the trap body is clean prose).
-     - `avoidance` = the row's Fix column.
-     - `severity` = translated from the row's Severity cell. Lessons
-       use the `CRITICAL / HIGH / MEDIUM / LOW` vocabulary while review
-       rows use `BLOCK / HIGH / MEDIUM / LOW`. Mapping: `BLOCK` →
-       `CRITICAL`; `HIGH` → `HIGH`. Per the skip rule above, `MEDIUM` /
-       `LOW` rows never reach this branch.
-     - `tags` = draft from
-       `tools.intel.lessons._TAG_VOCAB` by matching the row's Problem
-       text against the vocabulary keywords. The frozen vocabulary
-       (`imports`, `fixtures`, `state-mutation`, `async`, `secrets`,
-       `validation`, `dispatch`, `review-tagging`, `ship-gate`,
-       `cross-ai`, `bdd`, `frontmatter`) is the only accepted tag
-       source — free-form tags are refused by the parser.
+     - `trap` = derived from `candidate.problem` (strip the
+       `[constitution:A<n>]` and `[lesson:L<NNN>]` prefix tags so the
+       trap body is clean prose).
+     - `avoidance` = derived from `candidate.recommended_fix`.
+     - `severity` = translated from `candidate.severity` via
+       `tools.ship_gate._REVIEW_TO_LESSON_SEVERITY`. The mapping
+       (`BLOCK` → `CRITICAL`, `HIGH` → `HIGH`, `MEDIUM` → `MEDIUM`,
+       `LOW` → `LOW`) lives in the ship-gate module so this prose
+       quotes one symbol instead of inlining the table; per the
+       parser's HIGH+ filter, only `BLOCK` / `HIGH` rows reach this
+       branch.
+     - `tags` = drafted by matching the union of `candidate.problem`
+       and `candidate.recommended_fix` text against
+       `tools.intel.lessons._TAG_VOCAB` (case-insensitive). The frozen
+       vocabulary (`imports`, `fixtures`, `state-mutation`, `async`,
+       `secrets`, `validation`, `dispatch`, `review-tagging`,
+       `ship-gate`, `cross-ai`, `bdd`, `frontmatter`) is the only
+       accepted tag source — free-form tags are refused by the parser.
      - `status` = `active`.
 
      Surface the drafted Lesson body verbatim, then present **one**
@@ -166,7 +170,7 @@ The plain name `.forge/features/<id>/REVIEW.md` is reserved (do not write it). D
 
    - **On `[N]o-skip` or `[c]ancel`.** No disk mutation. The row stays
      `resolved`; no lesson is harvested. Continue with the next
-     resolved row.
+     candidate.
 
    Each candidate is processed in its own `AskUserQuestion` turn — no
    batched "harvest all" prompt. The sequential pattern matches the

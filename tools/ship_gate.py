@@ -41,7 +41,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -76,6 +76,19 @@ _LESSON_TAG_RE = re.compile(r"\[lesson:(L\d{3})\]")
 # checks the cell against the lesson's source-of-truth Severity at routing
 # time.
 _LESSON_SEVERITY_RENAME: dict[str, str] = {"CRITICAL": "BLOCK"}
+
+# Translate REVIEW.md row severity to Lesson severity for trap-memory harvest.
+# REVIEW rows use the closed BLOCK/HIGH/MEDIUM/LOW vocabulary; Lessons use
+# CRITICAL/HIGH/MEDIUM/LOW. CRITICAL is the lesson analog of BLOCK; the other
+# three names pass through identically. Centralizing the map here lets the
+# forge-review SKILL prose reference one symbol instead of inlining the
+# translation table — a future vocabulary change touches one location.
+_REVIEW_TO_LESSON_SEVERITY: dict[str, str] = {
+    "BLOCK": "CRITICAL",
+    "HIGH": "HIGH",
+    "MEDIUM": "MEDIUM",
+    "LOW": "LOW",
+}
 
 
 def _lesson_to_ship_severity(lesson_severity: str) -> str:
@@ -114,6 +127,56 @@ _HEX_40_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 # plausible content and guards against an accidental (or hostile) huge file
 # from blowing up the splitlines + per-row regex passes.
 _MAX_REVIEW_FILE_BYTES = 1 << 20
+
+
+@dataclass(frozen=True, kw_only=True)
+class HarvestCandidate:
+    """A REVIEW.code.md row eligible for trap-memory harvest.
+
+    The forge-review harvest sub-step iterates these rows and surfaces a
+    user prompt offering to capture the row as a Lesson for future
+    subagents. Lesson construction (severity translation via
+    :data:`_REVIEW_TO_LESSON_SEVERITY`, tag drafting against
+    ``tools.intel.lessons._TAG_VOCAB``, body composition) happens
+    skill-side; this helper only emits the structured row so the SKILL
+    prose never reaches into REVIEW.code.md with its own parser.
+
+    Sharing :func:`_iter_review_rows` with :func:`parse_review_findings`
+    keeps the two public consumers locked to one parsing path — a
+    REVIEW.md template column-rename touches one helper instead of
+    silently drifting between the two parsers.
+    """
+
+    row_id: str
+    severity: str  # closed vocab: BLOCK | HIGH | MEDIUM | LOW
+    resolved_by: str  # 40-hex SHA, lowercase-normalized at parse time
+    location: str
+    problem: str  # raw Problem cell text (still carries any tag markers)
+    recommended_fix: str
+    article_tags: tuple[str, ...]
+    lesson_tags: tuple[str, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class _RowRecord:
+    """Internal: all cells from one Findings-table row plus parsed tags.
+
+    Shared by :func:`parse_review_findings` and
+    :func:`parse_review_findings_for_harvest`. Owns the cell projection,
+    closed-vocabulary validation, and tag extraction so the two public
+    parsers stay thin filters over a single row stream.
+    """
+
+    id: str
+    severity: str
+    status: str
+    resolved_by: str | None
+    location: str
+    problem: str
+    recommended_fix: str
+    source: str
+    article_tags: tuple[str, ...]
+    lesson_tags: tuple[str, ...]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -227,8 +290,132 @@ def parse_review_findings(path: Path) -> list[ShipFinding]:
         ShipGateError: When a row's Status, Severity, or Resolved by cell
             holds an unrecognized value.
     """
+    out: list[ShipFinding] = []
+    for row in _iter_review_rows(path):
+        if row.status != "open":
+            continue
+        # findall ordering: article tags first, then lesson tags. Pinned by
+        # the test suite so callers can rely on the ordering across both
+        # public parsers.
+        out.extend(
+            ShipFinding(
+                article_id=article_id,
+                severity=row.severity,
+                resolved_by=row.resolved_by,
+                location=row.location,
+                message=row.problem,
+            )
+            for article_id in row.article_tags
+        )
+        out.extend(
+            ShipFinding(
+                lesson_id=lesson_id,
+                severity=row.severity,
+                resolved_by=row.resolved_by,
+                location=row.location,
+                message=row.problem,
+            )
+            for lesson_id in row.lesson_tags
+        )
+    return out
+
+
+def parse_review_findings_for_harvest(path: Path) -> list[HarvestCandidate]:
+    """Emit harvest candidates from REVIEW.code.md for the forge-review skill.
+
+    A row qualifies as a candidate iff:
+
+        1. ``Status`` cell is ``resolved`` (case-insensitive).
+        2. ``Resolved by`` cell holds a 40-hex SHA — not ``manual``,
+           ``spec-edit``, ``plan-edit``, or ``accepted-risk:<reason>``.
+        3. ``Severity`` cell is ``BLOCK`` or ``HIGH``.
+
+    The harvest sub-step (`skills/forge-review/SKILL.md`) consumes this
+    list and prompts the user via one ``AskUserQuestion`` per candidate.
+    Filtering accepted-risk / spec-edit / plan-edit at the parser keeps
+    the SKILL prose free of vocabulary checks — a future ``Resolved by``
+    vocabulary change touches one regex in one helper.
+
+    Shared parsing path: :func:`_iter_review_rows` produces one
+    :class:`_RowRecord` per Findings-table row with cells projected and
+    closed-vocab validated. Both this function and
+    :func:`parse_review_findings` filter+project that same stream, so a
+    REVIEW.md template column-rename surfaces in one place — no silent
+    drift between the two consumers.
+
+    Missing file returns ``[]``. A REVIEW.code.md with no ``# Findings``
+    heading or no qualifying rows also returns ``[]``. Closed-vocabulary
+    typos (Status, Severity, or Resolved by) raise
+    :class:`ShipGateError` — matches the strictness contract of
+    :func:`parse_review_findings`.
+
+    Args:
+        path: Path to ``REVIEW.code.md``.
+
+    Returns:
+        List of :class:`HarvestCandidate` records, one per qualifying
+        row, in document order.
+
+    Raises:
+        ShipGateError: When any row's Status, Severity, or Resolved by
+            cell holds an unrecognized closed-vocabulary value.
+    """
+    out: list[HarvestCandidate] = []
+    for row in _iter_review_rows(path):
+        if row.status != "resolved":
+            continue
+        if row.resolved_by is None or not _HEX_40_RE.match(row.resolved_by):
+            continue
+        if row.severity not in ("BLOCK", "HIGH"):
+            continue
+        out.append(
+            HarvestCandidate(
+                row_id=row.id,
+                severity=row.severity,
+                resolved_by=row.resolved_by,
+                location=row.location,
+                problem=row.problem,
+                recommended_fix=row.recommended_fix,
+                article_tags=row.article_tags,
+                lesson_tags=row.lesson_tags,
+            )
+        )
+    return out
+
+
+def _iter_review_rows(path: Path) -> Iterator[_RowRecord]:
+    """Stream parsed rows from REVIEW.code.md as :class:`_RowRecord` records.
+
+    Shared by :func:`parse_review_findings` (filters Status: open) and
+    :func:`parse_review_findings_for_harvest` (filters Status: resolved
+    + SHA-shaped Resolved by + HIGH/BLOCK severity). Owns table-header
+    location, column-index lookup, cell projection, closed-vocab
+    validation, and tag extraction so the two public parsers stay thin
+    filters over a single row stream.
+
+    Yields rows in document order. Skips structurally malformed rows
+    (short cell counts, missing required columns) silently to match the
+    mid-edit REVIEW.code.md tolerance documented on
+    :func:`parse_review_findings`.
+
+    Tag check gates closed-vocab validation: an untagged row with an
+    unusual Status / Severity / Resolved by is treated as
+    convergence-history this parser can ignore (matches pre-refactor
+    behavior).
+
+    Args:
+        path: Path to REVIEW.code.md.
+
+    Yields:
+        One :class:`_RowRecord` per qualifying ``| F-...`` row.
+
+    Raises:
+        ShipGateError: When the file exceeds
+            :data:`_MAX_REVIEW_FILE_BYTES`, or when a tagged row carries
+            an unrecognized closed-vocabulary value.
+    """
     if not path.exists():
-        return []
+        return
 
     size = path.stat().st_size
     if size > _MAX_REVIEW_FILE_BYTES:
@@ -240,16 +427,15 @@ def parse_review_findings(path: Path) -> list[ShipFinding]:
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
 
-    # Locate the `# Findings` heading first; the table parser only considers
-    # rows AFTER this anchor so a `| ID | ... |` table in the preamble cannot
-    # disarm the parser. Without the heading, return [] to match the
-    # documented "no findings" contract.
+    # Anchor to the `# Findings` heading first so a `| ID | ... |` table
+    # in the preamble (inventory, ToC, column legend) cannot disarm the
+    # parser. Without the heading, yield nothing.
     findings_heading_idx = next(
         (i for i, line in enumerate(lines) if _FINDINGS_HEADING_RE.match(line)),
         None,
     )
     if findings_heading_idx is None:
-        return []
+        return
     search_start = findings_heading_idx + 1
 
     header_idx = next(
@@ -261,97 +447,112 @@ def parse_review_findings(path: Path) -> list[ShipFinding]:
         None,
     )
     if header_idx is None:
-        return []
+        return
     header = _parse_table_columns(lines[header_idx])
-    try:
-        status_col = header.index("Status")
-    except ValueError:
-        status_col = -1  # legacy layout; treat all rows as open
-    try:
-        resolved_by_col = header.index("Resolved by")
-    except ValueError:
-        # Legacy pre-trap-memory layout: column absent, every emitted
-        # ShipFinding carries ``resolved_by=None``.
-        resolved_by_col = -1
+    columns = _column_layout(header)
 
-    out: list[ShipFinding] = []
     for line in lines[header_idx + 1 :]:
         if not line.startswith("| F-"):
             continue
-        out.extend(
-            _findings_from_row(
-                line,
-                header=header,
-                status_col=status_col,
-                resolved_by_col=resolved_by_col,
-                source=path,
-            )
-        )
-    return out
+        record = _row_record_from_line(line, header=header, columns=columns, source=path)
+        if record is None:
+            continue
+        yield record
 
 
-def _findings_from_row(
+@dataclass(frozen=True, kw_only=True)
+class _ColumnLayout:
+    """Resolved column indices for the Findings table.
+
+    A ``-1`` value marks an absent column tolerated by the parser
+    (legacy layout). Built once per file and reused across every row so
+    a column-rename touches one helper instead of every row body.
+    """
+
+    id_col: int
+    severity_col: int
+    status_col: int
+    resolved_by_col: int
+    location_col: int
+    problem_col: int
+    recommended_fix_col: int
+    source_col: int
+
+
+def _column_layout(header: list[str]) -> _ColumnLayout:
+    """Resolve column indices from a parsed header row.
+
+    Required columns missing → corresponding row will be skipped at
+    projection time (defensive; in practice the template guarantees the
+    required set). Optional columns missing → field defaults at the
+    record layer (``resolved_by=None``, ``status="open"`` legacy).
+    """
+
+    def _idx(name: str) -> int:
+        try:
+            return header.index(name)
+        except ValueError:
+            return -1
+
+    return _ColumnLayout(
+        id_col=_idx("ID"),
+        severity_col=_idx("Severity"),
+        status_col=_idx("Status"),
+        resolved_by_col=_idx("Resolved by"),
+        location_col=_idx("Location"),
+        problem_col=_idx("Problem"),
+        recommended_fix_col=_idx("Recommended Fix"),
+        source_col=_idx("Source"),
+    )
+
+
+def _row_record_from_line(
     line: str,
     *,
     header: list[str],
-    status_col: int,
-    resolved_by_col: int,
+    columns: _ColumnLayout,
     source: Path,
-) -> list[ShipFinding]:
-    """Yield zero or more ShipFinding rows from a single `| F-...` table line.
+) -> _RowRecord | None:
+    """Project a single ``| F-...`` row into a :class:`_RowRecord`.
 
-    A row produces multiple findings when its `Problem` cell carries more than
-    one ``[constitution:A<n>]`` tag (multi-violation finding). Splitting this
-    out of ``parse_review_findings`` keeps the parent's branch count under the
-    PLR0912 ceiling and isolates per-row routing logic.
+    Returns ``None`` for structurally malformed rows (insufficient
+    cells, missing required column). Raises :class:`ShipGateError` for
+    closed-vocab typos on tagged rows. The tag check gates vocab
+    validation so an untagged convergence-history row with an unusual
+    cell value is ignored (matches pre-refactor behavior).
     """
     cells = _parse_table_columns(line)
     if len(cells) < len(header):
-        return []
-    try:
-        severity = cells[header.index("Severity")]
-        location = cells[header.index("Location")]
-        message = cells[header.index("Problem")]
-    except ValueError:
-        return []  # malformed table; skip
-    # Tag check FIRST. The closed Status / Severity vocabularies only matter
-    # for tagged rows (those are the ones that influence the gate). An
-    # untagged row with an unusual Status (e.g. "in-progress" or a typo) is
-    # reviewer convergence-history that this parser can ignore; validating
-    # its Status would raise ShipGateError on rows the gate never cared about
-    # in the first place. The Resolved by vocabulary is also gated behind
-    # the tag check for the same reason — an authoring typo on an untagged
-    # row must not break a parse the gate never cared about in the first
-    # place. Both constitution and lesson tags qualify a row.
-    tag_ids = _TAG_RE.findall(message)
-    lesson_ids = _LESSON_TAG_RE.findall(message)
-    if not tag_ids and not lesson_ids:
-        return []
-    if status_col >= 0:
-        row_status = cells[status_col].lower()
-        if row_status not in _VALID_STATUS_VALUES:
-            raise ShipGateError(f"unrecognized Status value: {cells[status_col]!r} in {source}")
-        if row_status != "open":
-            return []
-    # Severity vocabulary is a closed 4-value enum from the REVIEW.md template.
-    # Validating here (instead of in the partitioner) makes typos loud and
-    # lets `partition_by_article_level` route purely on article level.
+        return None
+    if columns.severity_col < 0 or columns.location_col < 0 or columns.problem_col < 0:
+        return None
+    severity = cells[columns.severity_col]
+    location = cells[columns.location_col]
+    problem = cells[columns.problem_col]
+    # Tag check FIRST. Closed Status / Severity / Resolved-by vocabularies
+    # only matter for tagged rows — an untagged convergence-history row with
+    # an unusual cell value must not raise.
+    article_tags = tuple(_TAG_RE.findall(problem))
+    lesson_tags = tuple(_LESSON_TAG_RE.findall(problem))
+    if not article_tags and not lesson_tags:
+        return None
+    # Status — closed vocabulary; legacy layout (column absent) treats every
+    # row as ``open``.
+    if columns.status_col >= 0:
+        raw_status = cells[columns.status_col]
+        normalized_status = raw_status.lower()
+        if normalized_status not in _VALID_STATUS_VALUES:
+            raise ShipGateError(f"unrecognized Status value: {raw_status!r} in {source}")
+        status = normalized_status
+    else:
+        status = "open"
+    # Severity — closed 4-value enum from the REVIEW.md template.
     if severity not in _VALID_SEVERITY_VALUES:
         raise ShipGateError(f"unrecognized Severity value: {severity!r} in {source}")
-    # Resolved by is optional. Column absent → resolved_by=None (legacy
-    # layout). Column present but cell empty → resolved_by=None. Column
-    # present with content → must match the 40-hex SHA / spec-edit / plan-edit
-    # / accepted-risk:<reason> vocabulary or we raise.
-    #
-    # SHA normalization: a reviewer copying a SHA from a git GUI may land
-    # mixed-case hex in the cell ("Aa1Bb2..."). Lowercase here at parse time
-    # so downstream comparisons (commit lookup, harvest-hook key match) stay
-    # deterministic regardless of which client produced the cell value. Only
-    # the SHA form normalizes; the "spec-edit" / "plan-edit" / "accepted-risk:"
-    # literals are case-sensitive by design.
+    # Resolved by — optional column; SHA values lowercase-normalized.
     resolved_by: str | None = None
-    if resolved_by_col >= 0:
-        resolved_by_raw = cells[resolved_by_col].strip()
+    if columns.resolved_by_col >= 0:
+        resolved_by_raw = cells[columns.resolved_by_col].strip()
         if resolved_by_raw:
             normalized = (
                 resolved_by_raw.lower() if _HEX_40_RE.match(resolved_by_raw) else resolved_by_raw
@@ -361,31 +562,21 @@ def _findings_from_row(
                     f"unrecognized Resolved by value: {resolved_by_raw!r} in {source}"
                 )
             resolved_by = normalized
-    # findall keeps every tag in declaration order; one ShipFinding per tag
-    # so each routes through its partitioner on its own merits. Article tags
-    # are emitted first, then lesson tags — pinned by the test suite so
-    # callers can rely on the ordering.
-    out: list[ShipFinding] = [
-        ShipFinding(
-            article_id=article_id,
-            severity=severity,
-            resolved_by=resolved_by,
-            location=location,
-            message=message,
-        )
-        for article_id in tag_ids
-    ]
-    out.extend(
-        ShipFinding(
-            lesson_id=lesson_id,
-            severity=severity,
-            resolved_by=resolved_by,
-            location=location,
-            message=message,
-        )
-        for lesson_id in lesson_ids
+    row_id = cells[columns.id_col] if columns.id_col >= 0 else ""
+    recommended_fix = cells[columns.recommended_fix_col] if columns.recommended_fix_col >= 0 else ""
+    row_source = cells[columns.source_col] if columns.source_col >= 0 else ""
+    return _RowRecord(
+        id=row_id,
+        severity=severity,
+        status=status,
+        resolved_by=resolved_by,
+        location=location,
+        problem=problem,
+        recommended_fix=recommended_fix,
+        source=row_source,
+        article_tags=article_tags,
+        lesson_tags=lesson_tags,
     )
-    return out
 
 
 class _PartitionResult(tuple[list[ShipFinding], list[ShipFinding], list[ShipFinding]]):
