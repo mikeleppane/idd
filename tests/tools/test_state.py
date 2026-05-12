@@ -692,14 +692,16 @@ def test_complete_phase_allows_spec_exit_when_anchors_resolve(
     assert result["phases"]["spec"]["completed_at"] == "2026-05-12T12:00:00Z"
 
 
-def test_complete_phase_non_spec_phases_are_not_gated_by_semantic_validators(
+def test_complete_phase_scenarios_isolation_anchor_findings_do_not_fire(
     tmp_path: Path, schemas_dir: Path
 ) -> None:
-    """The spec-semantic gate is scoped to the ``spec`` phase only.
-    Completing other phases (e.g. ``scenarios``) must not run the SPEC
-    validators — features routinely amend SPEC after the spec phase
-    closes, and a stale anchor mid-feature must not block phase exit
-    elsewhere in the lifecycle."""
+    """The anchor validator is scoped to the ``spec`` phase only. Completing
+    ``scenarios`` must not run ``validate_anchors`` — features routinely
+    amend SPEC after the spec phase closes, and a stale anchor mid-feature
+    must not block scenarios exit. The scenarios gate runs only
+    ``validate_scenarios``; this fixture's SPEC is scenarios-clean (every
+    AC has a matching scenario) but anchor-dirty (path does not resolve),
+    so the gate must let it through."""
     repo = tmp_path / "repo"
     feature = repo / ".forge" / "features" / "2026-05-12-non-spec"
     feature.mkdir(parents=True)
@@ -720,13 +722,14 @@ def test_complete_phase_non_spec_phases_are_not_gated_by_semantic_validators(
     }
     target = feature / "state.json"
     state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
-    # SPEC.md carries a guaranteed-HIGH anchor (path does not exist). The
-    # scenarios-phase exit must succeed regardless.
+    # SPEC is scenarios-clean (Scenario 1 maps to crit-1, no orphans, no
+    # weasel words) but anchor-dirty (path does not exist; would be HIGH
+    # if ``validate_anchors`` were in scope here).
     (feature / "SPEC.md").write_text(
         "# Codebase Anchors\n"
         "- `src/missing.py:bar`\n"
         "# Scenarios\n"
-        "Scenario: 1 demo\n"
+        "Scenario: 1 demo crit-1\n"
         "# Acceptance Criteria\n"
         "1. crit-1 done\n",
         encoding="utf-8",
@@ -740,6 +743,105 @@ def test_complete_phase_non_spec_phases_are_not_gated_by_semantic_validators(
     )
 
     assert result["phases"]["scenarios"]["status"] == "done"
+
+
+def _seed_feature_with_scenarios_in_progress(
+    repo_root: Path,
+    schemas_dir: Path,
+    *,
+    feature_id: str,
+    spec_body: str,
+) -> Path:
+    """Build a tmp ``.forge/features/<id>/`` carrying state.json + SPEC.md
+    with ``current_phase=scenarios`` / ``status=in_progress``."""
+    feature = repo_root / ".forge" / "features" / feature_id
+    feature.mkdir(parents=True)
+    initial = {
+        "feature_id": feature_id,
+        "tier": "standard",
+        "current_phase": "scenarios",
+        "phases": {
+            "spec": {"status": "done"},
+            "scenarios": {
+                "status": "in_progress",
+                "started_at": "2026-05-12T10:00:00Z",
+            },
+        },
+        "skipped": [],
+        "deviations": [],
+        "commits": [],
+    }
+    target = feature / "state.json"
+    state.write_state(target, initial, schema_path=schemas_dir / "state.schema.json")
+    (feature / "SPEC.md").write_text(spec_body, encoding="utf-8")
+    return target
+
+
+def test_complete_phase_refuses_scenarios_exit_with_high_scenario_findings(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    """Completing the ``scenarios`` phase must run ``validate_scenarios``
+    against SPEC.md and refuse the transition when any finding has severity
+    ``HIGH`` or ``BLOCK``. The mechanical gate replaces the prose-only
+    enforcement in the forge-scenarios skill — an orphan scenario or an
+    AC with no matching scenario must not be able to exit scenarios via
+    ``complete_phase``."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = _seed_feature_with_scenarios_in_progress(
+        repo,
+        schemas_dir,
+        feature_id="2026-05-12-scen-bad",
+        # AC 1 has no matching scenario (Scenario title carries no crit-1 /
+        # Scenario 1 token), and the scenario itself is therefore an orphan.
+        # Both produce HIGH findings.
+        spec_body=(
+            "# Scenarios\n"
+            "Scenario: demo without ac reference\n"
+            "# Acceptance Criteria\n"
+            "1. crit-1 done\n"
+        ),
+    )
+
+    on_disk_before = target.read_text(encoding="utf-8")
+
+    with pytest.raises(state.StateError, match=r"HIGH|BLOCK") as exc:
+        state.complete_phase(
+            target,
+            phase="scenarios",
+            schema_path=schemas_dir / "state.schema.json",
+        )
+
+    assert "SPEC.md" in str(exc.value)
+    assert target.read_text(encoding="utf-8") == on_disk_before, (
+        "state.json must not be mutated when the scenarios gate refuses"
+    )
+
+
+def test_complete_phase_allows_scenarios_exit_when_mapping_is_clean(
+    tmp_path: Path, schemas_dir: Path
+) -> None:
+    """When SPEC's scenarios↔acceptance mapping is clean (every AC has a
+    referencing scenario, no orphans, no weasel words),
+    ``complete_phase("scenarios")`` transitions normally."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = _seed_feature_with_scenarios_in_progress(
+        repo,
+        schemas_dir,
+        feature_id="2026-05-12-scen-ok",
+        spec_body=("# Scenarios\nScenario: 1 demo crit-1\n# Acceptance Criteria\n1. crit-1 done\n"),
+    )
+
+    result = state.complete_phase(
+        target,
+        phase="scenarios",
+        schema_path=schemas_dir / "state.schema.json",
+        now="2026-05-12T12:00:00Z",
+    )
+
+    assert result["phases"]["scenarios"]["status"] == "done"
+    assert result["phases"]["scenarios"]["completed_at"] == "2026-05-12T12:00:00Z"
 
 
 def test_finish_feature_sets_current_phase_done_without_phases_entry(

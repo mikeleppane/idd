@@ -7,6 +7,8 @@ import json
 import os
 import re
 import tempfile
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
@@ -14,7 +16,11 @@ from typing import Any, Final
 import jsonschema
 
 from tools._repo_root import discover_repo_root
+from tools.validate._finding import Finding
+from tools.validate.plan import validate_plan_tasks, validate_verified_deps
 from tools.validate.spec_semantic import validate_anchors, validate_scenarios
+from tools.validate.state_semantic import validate_deviations
+from tools.validate.tdd_evidence import validate_tdd_evidence
 
 
 class StateError(RuntimeError):
@@ -375,46 +381,231 @@ def write_state(
     path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
 
 
-def _enforce_spec_semantic_gate(state_path: Path) -> None:
-    """Refuse spec-phase exit when SPEC.md has HIGH/BLOCK semantic findings.
+# Severity sets blocked by each phase's exit gate. ``HIGH`` is included for
+# every phase whose SKILL prose advertises HIGH+BLOCK refusal; the ``execute``
+# phase's ``tdd_evidence`` check intentionally lists only ``BLOCK`` so a
+# ``LOW``/``INFO`` advisory finding from that validator does not refuse
+# phase exit (see ``skills/forge-execute/SKILL.md`` — only BLOCK blocks).
+_BLOCK_AND_HIGH: Final[tuple[str, ...]] = ("BLOCK", "HIGH")
+_BLOCK_ONLY: Final[tuple[str, ...]] = ("BLOCK",)
 
-    Runs the same anchor + scenario validators the ``forge-spec`` SKILL prose
-    recommends, so the mechanical state mutation cannot bypass the gate even
-    when an agent skipped the manual `python -m tools.validate --target
-    spec-semantic` step. SPEC.md lives next to ``state.json``; the repo root
-    needed by the anchor validator is discovered via the shared `.forge`
-    walk-up (mirroring the validator CLI's autodiscovery).
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _GateCheck:
+    """One artifact-validator pairing for a phase-exit gate.
+
+    Attributes:
+        name: Short label used in the ``StateError`` message so the
+            operator sees which validator raised. Mirrors the
+            ``Finding.target`` vocabulary of the underlying validator.
+        artifact: Filename (relative to the feature folder, i.e.
+            ``state_path.parent``) that must exist for this check to run.
+            Use the empty string ``""`` for checks that operate on the
+            feature folder itself (e.g. deviations, tdd_evidence). When a
+            non-empty artifact filename is supplied and the file is
+            absent, the check is a no-op — mirroring the spec-gate
+            "missing artifact ⇒ skip" policy so fixture-driven plumbing
+            tests remain green.
+        requires_forge_layout: When True the check is skipped unless the
+            feature folder lives under a discoverable ``.forge/features/``
+            tree. Used by execute-phase checks whose validators expect
+            the canonical FORGE layout (``validate_tdd_evidence`` resolves
+            ``repo_root + feature_id``); fixture state.json files dropped
+            in a bare ``tmp_path`` must not trip these gates because they
+            are exercising state-machine plumbing, not feature semantics.
+            ``validate_health`` is the right surface to flag a stray
+            state.json in a live repo.
+        blocking_severities: Severities that refuse phase exit when
+            present in the check's findings.
+        run: Callable that receives the feature folder and runs the
+            validator, returning its findings list. The callable is the
+            single seam responsible for binding the validator's actual
+            signature (paths vs. ``(repo_root, feature_id)`` etc.) so
+            ``_enforce_phase_gate`` can iterate uniformly.
+    """
+
+    name: str
+    artifact: str
+    blocking_severities: tuple[str, ...]
+    run: Callable[[Path], list[Finding]]
+    requires_forge_layout: bool = False
+
+
+def _under_forge_features(feature_folder: Path) -> bool:
+    """Return True when ``feature_folder`` sits under ``<repo>/.forge/features/``."""
+    parent = feature_folder.parent
+    grandparent = parent.parent
+    return (
+        parent.name == "features"
+        and grandparent.name == ".forge"
+        and discover_repo_root(feature_folder) is not None
+    )
+
+
+def _run_spec_scenarios(feature_folder: Path) -> list[Finding]:
+    """Run ``validate_scenarios`` against ``SPEC.md`` next to state.json."""
+    return validate_scenarios(feature_folder / "SPEC.md")
+
+
+def _run_spec_anchors(feature_folder: Path) -> list[Finding]:
+    """Run ``validate_anchors`` against ``SPEC.md`` next to state.json.
+
+    Repo root is discovered via the shared ``.forge`` walk-up (mirroring the
+    validator CLI's autodiscovery); the feature folder itself is the
+    fall-back when no ``.forge/`` marker is found above the state path
+    (e.g. unusual fixture trees).
+    """
+    spec_path = feature_folder / "SPEC.md"
+    repo_root = discover_repo_root(spec_path) or feature_folder
+    return validate_anchors(spec_path, repo_root=repo_root)
+
+
+def _run_plan_tasks(feature_folder: Path) -> list[Finding]:
+    """Run ``validate_plan_tasks`` with the paired SPEC.md next to PLAN.md."""
+    return validate_plan_tasks(
+        feature_folder / "PLAN.md",
+        spec_path=feature_folder / "SPEC.md",
+    )
+
+
+def _run_plan_verified_deps(feature_folder: Path) -> list[Finding]:
+    """Run ``validate_verified_deps`` offline (no live registry probe).
+
+    ``check_registries=False`` mirrors the SKILL prose default so the
+    mechanical gate does not introduce network I/O the SKILL itself
+    leaves opt-in.
+    """
+    return validate_verified_deps(feature_folder / "PLAN.md", check_registries=False)
+
+
+def _run_execute_deviations(feature_folder: Path) -> list[Finding]:
+    """Run ``validate_deviations`` against the feature folder."""
+    return validate_deviations(feature_folder)
+
+
+def _run_execute_tdd_evidence(feature_folder: Path) -> list[Finding]:
+    """Run ``validate_tdd_evidence`` resolving ``repo_root`` + ``feature_id``.
+
+    Mirrors the CLI's ``(repo_root, feature_id)`` shape: ``feature_id`` is
+    the folder name, ``repo_root`` is the ``.forge`` walk-up parent.
+    """
+    repo_root = discover_repo_root(feature_folder) or feature_folder.parent.parent.parent
+    return validate_tdd_evidence(repo_root, feature_folder.name)
+
+
+_PHASE_GATES: Final[Mapping[str, tuple[_GateCheck, ...]]] = {
+    "spec": (
+        _GateCheck(
+            name="spec-semantic:scenarios",
+            artifact="SPEC.md",
+            blocking_severities=_BLOCK_AND_HIGH,
+            run=_run_spec_scenarios,
+        ),
+        _GateCheck(
+            name="spec-semantic:anchors",
+            artifact="SPEC.md",
+            blocking_severities=_BLOCK_AND_HIGH,
+            run=_run_spec_anchors,
+        ),
+    ),
+    "scenarios": (
+        _GateCheck(
+            name="scenarios",
+            artifact="SPEC.md",
+            blocking_severities=_BLOCK_AND_HIGH,
+            run=_run_spec_scenarios,
+        ),
+    ),
+    "plan": (
+        _GateCheck(
+            name="plan-tasks",
+            artifact="PLAN.md",
+            blocking_severities=_BLOCK_AND_HIGH,
+            run=_run_plan_tasks,
+        ),
+        _GateCheck(
+            name="verified-deps",
+            artifact="PLAN.md",
+            blocking_severities=_BLOCK_AND_HIGH,
+            run=_run_plan_verified_deps,
+        ),
+    ),
+    "execute": (
+        _GateCheck(
+            name="deviations",
+            artifact="",
+            blocking_severities=_BLOCK_AND_HIGH,
+            run=_run_execute_deviations,
+        ),
+        _GateCheck(
+            name="tdd_evidence",
+            artifact="",
+            blocking_severities=_BLOCK_ONLY,
+            run=_run_execute_tdd_evidence,
+            requires_forge_layout=True,
+        ),
+    ),
+}
+
+
+def _enforce_phase_gate(state_path: Path, phase: str) -> None:
+    """Refuse phase exit when any registered validator returns blocking findings.
+
+    Iterates the gate checks registered under ``phase`` in
+    :data:`_PHASE_GATES`. For each check:
+
+    * When ``artifact`` is non-empty and the file does not exist next to
+      ``state.json``, the check is a no-op. Mirrors the original
+      spec-gate "missing artifact ⇒ skip" policy so fixture-driven
+      plumbing tests of the state machine remain green;
+      ``validate_health`` is the right surface to flag a missing
+      artifact in a live feature.
+    * Otherwise the validator runs and its findings are filtered by
+      ``blocking_severities``. Surviving findings are aggregated across
+      every check for the phase so a single ``StateError`` lists the
+      total count and every triggered check name. When two checks both
+      fire (e.g. ``execute``'s ``deviations`` and ``tdd_evidence``) the
+      error message surfaces both, not just the first.
+
+    Phases without a registered gate are a no-op.
 
     Args:
         state_path: Path to the feature's ``state.json``.
+        phase: The lifecycle phase being completed.
 
     Raises:
-        StateError: When any finding has severity ``HIGH`` or ``BLOCK``.
-            The error names the count of blocking findings and the SPEC
-            path.
-
-    Notes:
-        SPEC.md absence is a no-op rather than a refusal: callers that
-        exercise the state machine without a real spec on disk (e.g.
-        fixture-driven plumbing tests, or unusual feature configurations
-        that intentionally defer the file) must remain able to transition.
-        ``validate_health`` is the right surface to flag a missing SPEC.md
-        in a live feature, not this gate.
+        StateError: When at least one check produced a blocking finding.
+            The message names the phase, the total blocking-finding
+            count, the triggered check names, and the feature folder.
     """
-    spec_path = state_path.parent / "SPEC.md"
-    if not spec_path.is_file():
+    gates = _PHASE_GATES.get(phase)
+    if not gates:
         return
-    repo_root = discover_repo_root(state_path) or state_path.parent
-    findings = [
-        *validate_scenarios(spec_path),
-        *validate_anchors(spec_path, repo_root=repo_root),
-    ]
-    blocking = [f for f in findings if f.severity in ("BLOCK", "HIGH")]
-    if blocking:
-        raise StateError(
-            f"cannot complete phase 'spec': {len(blocking)} HIGH/BLOCK "
-            f"semantic findings against {spec_path}; resolve them and re-run"
-        )
+    feature_folder = state_path.parent
+    blocking_total: list[Finding] = []
+    triggered: list[str] = []
+    artifacts: list[str] = []
+    for check in gates:
+        artifact_label = check.artifact or feature_folder.name
+        if check.artifact and not (feature_folder / check.artifact).is_file():
+            continue
+        if check.requires_forge_layout and not _under_forge_features(feature_folder):
+            continue
+        findings = check.run(feature_folder)
+        blocking = [f for f in findings if f.severity in check.blocking_severities]
+        if blocking:
+            triggered.append(check.name)
+            blocking_total.extend(blocking)
+            if artifact_label not in artifacts:
+                artifacts.append(artifact_label)
+    if not blocking_total:
+        return
+    severities = "/".join(_BLOCK_AND_HIGH)
+    raise StateError(
+        f"cannot complete phase {phase!r}: {len(blocking_total)} "
+        f"{severities} finding(s) from {triggered} against "
+        f"{artifacts} under {feature_folder}; resolve them and re-run"
+    )
 
 
 def complete_phase(
@@ -472,8 +663,7 @@ def complete_phase(
                 f"targets_done={targets_done}, required={required}"
             )
 
-    if phase == "spec":
-        _enforce_spec_semantic_gate(path)
+    _enforce_phase_gate(path, phase)
 
     payload["phases"][phase]["status"] = "done"
     payload["phases"][phase]["completed_at"] = timestamp
