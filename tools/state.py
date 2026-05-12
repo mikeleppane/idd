@@ -1405,7 +1405,7 @@ def complete_review_target(
 
 
 def set_execute_current_slice(
-    path: Path,
+    path: Path | str,
     *,
     slice_number: int,
     schema_path: Path | None = None,
@@ -1419,7 +1419,10 @@ def set_execute_current_slice(
     hence the execute-specific guards in this helper.
 
     Args:
-        path: state.json path.
+        path: state.json path. A ``str`` is accepted at the entry boundary
+            and coerced to ``Path`` so agent callers that improvise on the
+            call shape do not trip a cryptic ``AttributeError`` deep inside
+            the lock-acquisition chain.
         slice_number: 1-based slice ordinal; schema minimum is 1.
         schema_path: Optional schema for read+write validation.
 
@@ -1438,6 +1441,7 @@ def set_execute_current_slice(
             f"slice_number must be a positive int (got {type(slice_number).__name__} "
             f"{slice_number!r})"
         )
+    path = Path(path)
     with state_lock(path):
         payload = read_state(path, schema_path=schema_path)
         current_phase = payload.get("current_phase")
