@@ -61,6 +61,24 @@ def _seed_standard(repo_root: Path, feature_id: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
+def test_cleanup_seeded_feature_coerces_string_repo_root(tmp_path: Path) -> None:
+    """Boundary coercion: a string repo_root must not trip ``TypeError``.
+
+    Mirrors the pattern locked into ``tools.bdd_detect.detect`` — agent
+    callers that pass a string for an annotated ``Path`` parameter must
+    not crash four frames deep on ``str / ".forge" / ...``; instead the
+    documented missing-folder WARN+False branch should fire.
+    """
+    feature_id = "2026-05-08-focused-seed"
+    folder = _seed_focused(tmp_path, feature_id)
+    assert folder.is_dir()
+
+    result = cleanup_seeded_feature(str(tmp_path), feature_id)
+
+    assert result is True
+    assert not folder.exists()
+
+
 def test_cleanup_seeded_feature_focused_in_progress_removes_folder(tmp_path: Path) -> None:
     feature_id = "2026-05-08-focused-seed"
     folder = _seed_focused(tmp_path, feature_id)

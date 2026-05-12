@@ -365,7 +365,7 @@ def cleanup_orphan_feature(repo_root: Path, feature_id: str) -> bool:
     return _cleanup_via_predicate(repo_root, feature_id, log_label="cleanup_orphan_feature")
 
 
-def cleanup_seeded_feature(repo_root: Path, feature_id: str) -> bool:
+def cleanup_seeded_feature(repo_root: Path | str, feature_id: str) -> bool:
     """Remove a ``/forge:do`` pre-seed feature folder that has never advanced.
 
     Distinct call-site alias for :func:`cleanup_orphan_feature`.  Same
@@ -376,7 +376,11 @@ def cleanup_seeded_feature(repo_root: Path, feature_id: str) -> bool:
     used by the focused / standard tier seed-cancel cleanup path.
 
     Args:
-        repo_root: Repository root containing the ``.forge/`` tree.
+        repo_root: Repository root containing the ``.forge/`` tree. A ``str``
+            is accepted at the entry boundary and coerced to ``Path`` so
+            agent callers that improvise on the call shape do not trip a
+            cryptic ``TypeError`` on the first ``/`` operator inside the
+            shared cleanup predicate.
         feature_id: Feature folder name in YYYY-MM-DD-slug form.
 
     Returns:
@@ -386,6 +390,7 @@ def cleanup_seeded_feature(repo_root: Path, feature_id: str) -> bool:
         ArchiveError: ``feature_id`` slug is malformed.
         Any unexpected I/O exception (``PermissionError``, disk error) propagates.
     """
+    repo_root = Path(repo_root)
     _validate_feature_id(feature_id)
     return _cleanup_via_predicate(repo_root, feature_id, log_label="cleanup_seeded_feature")
 
