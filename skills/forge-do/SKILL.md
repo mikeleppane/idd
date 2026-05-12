@@ -19,16 +19,35 @@ disable-model-invocation: true
 >
 > After you have resolved tier + rationale + idea (steps 1–7 below),
 > execute exactly this Bash invocation — substitute the bracketed
-> values, leave the rest verbatim:
+> values, leave the rest verbatim. Prefer the console-script form
+> when `forge-do` is on `PATH`; fall back to the module form when it
+> is not (typical in a fresh target repo whose venv has no
+> `forge-tools` install):
 >
 > ```bash
+> # Console-script form (preferred when `forge-do` is on PATH):
 > forge-do --idea "<idea_verbatim_from_user>" \
 >          --tier <focused|standard|full> \
 >          --rationale "<one_sentence>" \
 >          [--proposed-tier <focused|standard|full>] \
 >          [--constitution-present | --no-constitution-present] \
 >          [--research]
+>
+> # Module form (always works — resolve <plugin_install> from
+> # $CLAUDE_PLUGIN_ROOT, or `claude plugin list` for the active forge
+> # cache entry, e.g. ~/.claude/plugins/cache/forge-marketplace/forge/0.1.0):
+> PYTHONPATH=<plugin_install> python3 -m tools.do_cli \
+>     --idea "<idea_verbatim_from_user>" \
+>     --tier <focused|standard|full> \
+>     --rationale "<one_sentence>" \
+>     [--proposed-tier <focused|standard|full>] \
+>     [--constitution-present | --no-constitution-present] \
+>     [--research]
 > ```
+>
+> Resolve which form is available with `command -v forge-do >/dev/null`
+> at the top of the seed step; branch to the module form on absence.
+> Both forms emit identical stdout/stderr.
 >
 > The CLI prints `seeded: <feature_folder_path>` followed by the
 > resolved `Next: /forge:<phase> --feature <feature_id>` literal on
