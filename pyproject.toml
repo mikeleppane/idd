@@ -27,6 +27,7 @@ dev = [
 forge-check-schemas = "tools.check_schemas:main"
 forge-do = "tools.do_cli:main"
 forge-lint-frontmatter = "tools.lint_frontmatter:main"
+forge-state = "tools.state_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
