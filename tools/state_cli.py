@@ -21,6 +21,8 @@ Subcommands mirror :mod:`tools.state` one-to-one:
     forge-state set-current-slice --feature ID --slice N
     forge-state record-commit --feature ID --sha SHA --phase NAME --subject TEXT
     forge-state deviation --feature ID --phase NAME --cause TEXT --resolution TEXT
+    forge-state complete-review-target --feature ID --target {plan,code}
+    forge-state finish --feature ID
 
 All subcommands resolve ``--feature ID`` to
 ``<repo_root>/.forge/features/<ID>/state.json`` where ``<repo_root>``
@@ -47,9 +49,12 @@ from pathlib import Path
 
 from tools.state import (
     VALID_LIFECYCLE_PHASES,
+    VALID_REVIEW_TARGETS,
     StateError,
     append_deviation,
     complete_phase,
+    complete_review_target,
+    finish_feature,
     record_commit,
     record_refined_idea,
     set_execute_current_slice,
@@ -146,6 +151,26 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dev.add_argument("--cause", required=True)
     p_dev.add_argument("--resolution", required=True)
 
+    # complete-review-target
+    p_rt = sub.add_parser(
+        "complete-review-target",
+        help="Mark a review target done (complete_review_target).",
+    )
+    p_rt.add_argument("--feature", required=True)
+    p_rt.add_argument(
+        "--target",
+        required=True,
+        choices=VALID_REVIEW_TARGETS,
+        help="Review target to record as done (must equal phases.review.current_target).",
+    )
+
+    # finish
+    p_finish = sub.add_parser(
+        "finish",
+        help="Set current_phase='done' on focused-tier completion (finish_feature).",
+    )
+    p_finish.add_argument("--feature", required=True)
+
     return parser
 
 
@@ -183,6 +208,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 cause=args.cause,
                 resolution=args.resolution,
             )
+        elif args.command == "complete-review-target":
+            complete_review_target(path, review_target=args.target)
+        elif args.command == "finish":
+            finish_feature(path)
         else:  # pragma: no cover — argparse enforces subcommand membership
             parser.error(f"unknown command {args.command!r}")
     except StateError as exc:

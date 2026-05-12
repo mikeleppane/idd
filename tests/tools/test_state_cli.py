@@ -264,3 +264,56 @@ def test_missing_subcommand_returns_exit_2() -> None:
         main([])
 
     assert exc.value.code == 2
+
+
+def test_finish_subcommand(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``forge-state finish`` sets current_phase='done' for focused tier."""
+    monkeypatch.chdir(tmp_path)
+    feature_id, state_path = _seed_focused(tmp_path)
+
+    rc = main(["finish", "--feature", feature_id])
+
+    assert rc == 0
+    payload = _read_state(state_path)
+    assert payload["current_phase"] == "done"
+
+
+def test_complete_review_target_subcommand(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``forge-state complete-review-target`` records a review target as done.
+
+    Bypass `_enforce_phase_gate` because reaching review-phase from a
+    fixture seed requires crossing the spec/scenarios/plan gates.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(state_mod, "_enforce_phase_gate", lambda *_a, **_k: None)
+    feature_id, state_path = _seed_full(tmp_path)
+
+    # Manually fast-forward through gate-protected phases to land at review/in_progress
+    # with current_target='plan' so the CLI assertion is meaningful.
+    record_refined_idea(state_path, refined="refined idea")
+    for from_phase, to_phase in (
+        ("refine", "research"),
+        ("research", "spec"),
+        ("spec", "domain"),
+        ("domain", "scenarios"),
+        ("scenarios", "plan"),
+        ("plan", "crucible"),
+        ("crucible", "review"),
+    ):
+        complete_phase(state_path, from_phase)
+        start_phase(state_path, to_phase)
+    payload = _read_state(state_path)
+    payload["phases"]["review"]["current_target"] = "plan"
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    rc = main(["complete-review-target", "--feature", feature_id, "--target", "plan"])
+
+    assert rc == 0
+    payload = _read_state(state_path)
+    assert "plan" in payload["phases"]["review"]["targets_done"]
