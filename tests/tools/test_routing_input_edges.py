@@ -54,3 +54,23 @@ def test_routing_emits_clean_error_for_overlong_idea_token(tmp_path: Path) -> No
             final_tier="focused",
             today=date(2026, 5, 12),
         )
+
+
+def test_seed_routed_feature_coerces_string_repo_root(tmp_path: Path) -> None:
+    """A ``str`` ``repo_root`` must seed the same folder as the ``Path`` form.
+
+    Agent callers improvising on the call shape pass a ``str`` repo path; the
+    helper composes ``repo_root / ".forge" / ...`` downstream, which trips a
+    cryptic ``TypeError`` four frames deep when no boundary coercion sits at
+    the entry. The string form must produce a working seeded feature folder
+    identical to the ``Path`` form for the same inputs.
+    """
+    folder = seed_routed_feature(
+        str(tmp_path),
+        idea="add OAuth login flow",
+        final_tier="focused",
+        today=date(2026, 5, 12),
+    )
+    assert folder.is_dir()
+    assert folder == tmp_path / ".forge" / "features" / "2026-05-12-add-oauth-login-flow"
+    assert (folder / "state.json").is_file()

@@ -141,7 +141,7 @@ def _resolve_seed_lifecycle(
 
 
 def seed_routed_feature(
-    repo_root: Path,
+    repo_root: Path | str,
     *,
     idea: str,
     final_tier: str,
@@ -193,7 +193,10 @@ def seed_routed_feature(
          two evils).
 
     Args:
-        repo_root: Repository root containing the ``.forge/`` tree.
+        repo_root: Repository root containing the ``.forge/`` tree. A ``str``
+            is accepted at the entry boundary and coerced to ``Path`` so
+            agent callers that improvise on the call shape do not trip a
+            cryptic ``TypeError`` four frames deep inside the seed chain.
         idea: User-supplied idea text.  Persisted verbatim into
             ``state.json.routing.idea`` — the skill prints a one-line
             secrets warning before invoking this helper.
@@ -243,6 +246,13 @@ def seed_routed_feature(
             steps 6 and 7 also trigger the cleanup wrapper before
             re-raising.
     """
+    # Coerce ``repo_root`` to ``Path`` at the entry boundary so agent callers
+    # passing a ``str`` do not trip a cryptic ``TypeError`` four frames deep
+    # at the first ``/`` operator. Internal helpers keep ``Path``-only
+    # signatures; the coercion sits at the public boundary where caller
+    # inputs land.
+    repo_root = Path(repo_root)
+
     # Step 1: refuse unknown tiers BEFORE any disk mutation.  All three
     # known tiers (focused/standard/full) survive this gate.
     if final_tier not in VALID_TIERS:
