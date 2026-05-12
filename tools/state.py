@@ -1606,7 +1606,7 @@ def _fsync_directory(directory: Path) -> None:
 
 
 def migrate_to_v3(
-    repo_root: Path,
+    repo_root: Path | str,
     feature_id: str,
     schema_path: Path | None = None,
 ) -> dict[str, Any]:
@@ -1623,7 +1623,10 @@ def migrate_to_v3(
     ``os.replace`` so a crash mid-write cannot corrupt state.json.
 
     Args:
-        repo_root: Repository root containing the ``.forge/`` tree.
+        repo_root: Repository root containing the ``.forge/`` tree. A ``str``
+            is accepted at the entry boundary and coerced to ``Path`` so
+            agent callers that improvise on the call shape do not trip a
+            cryptic ``TypeError`` at the first ``/`` operator.
         feature_id: Feature folder name under ``.forge/features/``.
         schema_path: Optional schema path; defaults to the FORGE plugin
             install schema (``_STATE_SCHEMA_PATH``) so the helper works
@@ -1638,7 +1641,7 @@ def migrate_to_v3(
     """
     if schema_path is None:
         schema_path = _STATE_SCHEMA_PATH
-    state_path = repo_root / ".forge" / "features" / feature_id / "state.json"
+    state_path = Path(repo_root) / ".forge" / "features" / feature_id / "state.json"
 
     with state_lock(state_path):
         payload = read_state(state_path, schema_path=schema_path)

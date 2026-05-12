@@ -272,3 +272,24 @@ def test_migrate_to_v3_already_v3_noop(tmp_path: Path, schemas_dir: Path) -> Non
     after_mtime = state_path.stat().st_mtime_ns
     assert before == after, "no-op migration must not rewrite disk"
     assert before_mtime == after_mtime, "no-op migration must not touch mtime"
+
+
+def test_migrate_to_v3_coerces_string_repo_root(tmp_path: Path, schemas_dir: Path) -> None:
+    """A ``str`` ``repo_root`` must migrate identically to the ``Path`` form.
+
+    Agent callers improvising on the call shape pass a ``str`` repo path;
+    the helper composes ``repo_root / ".forge" / "features" / ...``
+    immediately, which trips a cryptic ``TypeError`` at the first ``/``
+    operator when no boundary coercion sits at the entry. The string form
+    must complete the same migration as the ``Path`` form for the same
+    inputs.
+    """
+    payload = _base_state()
+    feature_id = _seed_feature(tmp_path, payload)
+
+    updated = state.migrate_to_v3(
+        str(tmp_path), feature_id, schema_path=schemas_dir / "state.schema.json"
+    )
+
+    assert updated["flow_version"] == 3
+    assert updated["phases"]["qa"] == {"status": "pending"}
