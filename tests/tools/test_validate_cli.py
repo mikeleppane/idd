@@ -381,6 +381,129 @@ def test_cli_renders_fix_hint_when_present(
     assert "fix_hint" not in advisory
 
 
+def test_repo_root_autodiscovered_from_path_when_flag_omitted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """When ``--repo-root`` is omitted and a positional ``path`` is supplied,
+    the CLI walks up from ``path`` looking for a ``.forge/`` directory and
+    treats the first match as the repo root. The agent that invoked the CLI
+    may have cd'd into the FORGE plugin install dir to find ``tools/``; the
+    anchor resolver must still bind to the target repo so per-anchor paths
+    resolve correctly."""
+    repo = tmp_path / "repo"
+    feature = repo / ".forge" / "features" / "2026-05-12-anchored"
+    feature.mkdir(parents=True)
+    (repo / "src").mkdir()
+    (repo / "src" / "foo.py").write_text("def bar() -> None:\n    pass\n", encoding="utf-8")
+
+    spec = feature / "SPEC.md"
+    spec.write_text(
+        "# Codebase Anchors\n"
+        "- `src/foo.py:bar`\n"
+        "# Scenarios\n"
+        "Scenario: 1 demo\n"
+        "# Acceptance Criteria\n"
+        "1. crit-1 done\n",
+        encoding="utf-8",
+    )
+
+    elsewhere = tmp_path / "not-the-repo"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    rc = validate.main(["--target", "anchors", str(spec)])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert rc == 0, payload
+    assert payload["findings"] == [], payload
+
+
+def test_repo_root_autodiscovery_falls_back_to_cwd_with_info_finding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """When walk-up from the positional ``path`` reaches the filesystem root
+    without finding ``.forge/``, the CLI falls back to ``cwd`` (preserving
+    the legacy default) AND emits a single ``INFO``-severity finding that
+    names the fallback path so the caller can see why anchors might miss."""
+    loose = tmp_path / "loose"
+    loose.mkdir()
+    spec = loose / "SPEC.md"
+    spec.write_text(
+        "# Codebase Anchors\n"
+        "- `src/foo.py:bar`\n"
+        "# Scenarios\n"
+        "Scenario: 1 demo\n"
+        "# Acceptance Criteria\n"
+        "1. crit-1 done\n",
+        encoding="utf-8",
+    )
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    rc = validate.main(["--target", "anchors", str(spec)])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert rc in (0, 1), payload
+    infos = [f for f in payload["findings"] if f["severity"] == "INFO"]
+    assert any(
+        "repo-root" in f["message"].lower() and "cwd" in f["message"].lower() for f in infos
+    ), payload
+
+
+def test_explicit_repo_root_disables_autodiscovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """When ``--repo-root`` is supplied, the CLI must use it verbatim — no
+    walk-up. Even if the positional ``path`` lives under a tree with a
+    ``.forge/`` ancestor pointing elsewhere, the explicit override wins."""
+    discovered_repo = tmp_path / "discovered"
+    feature = discovered_repo / ".forge" / "features" / "2026-05-12-override"
+    feature.mkdir(parents=True)
+    # Anchor target exists under the discovered repo; if walk-up wins, the
+    # validator would resolve cleanly. We force the explicit override to point
+    # at a different repo with no matching file so the override is observable.
+    (discovered_repo / "src").mkdir()
+    (discovered_repo / "src" / "foo.py").write_text("def bar() -> None: ...\n", encoding="utf-8")
+
+    spec = feature / "SPEC.md"
+    spec.write_text(
+        "# Codebase Anchors\n"
+        "- `src/foo.py:bar`\n"
+        "# Scenarios\n"
+        "Scenario: 1 demo\n"
+        "# Acceptance Criteria\n"
+        "1. crit-1 done\n",
+        encoding="utf-8",
+    )
+
+    explicit_repo = tmp_path / "explicit"
+    explicit_repo.mkdir()  # empty — has no src/foo.py
+
+    monkeypatch.chdir(tmp_path)
+
+    rc = validate.main(["--target", "anchors", "--repo-root", str(explicit_repo), str(spec)])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    # Explicit override points at empty dir → anchor resolves to a path that
+    # does not exist → HIGH finding. If autodiscovery had run, walk-up would
+    # have landed on ``discovered_repo`` and the anchor would resolve clean.
+    assert rc == 1, payload
+    assert any(
+        f["severity"] == "HIGH" and "not found" in f["message"] for f in payload["findings"]
+    ), payload
+
+
 def test_cli_target_all_surfaces_malformed_lessons_file(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

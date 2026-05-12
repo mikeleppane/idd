@@ -16,6 +16,7 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from .._repo_root import discover_repo_root
 from ._config_shape import validate_config
 from ._feature_layout import PLAN_FILENAME, SPEC_FILENAME
 from ._finding import EXIT_NONZERO_SEVERITIES, Finding, _finding_to_dict
@@ -560,8 +561,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--repo-root",
         type=Path,
-        default=Path.cwd(),
-        help="Repository root for repo-wide checks (default: cwd).",
+        default=None,
+        help=(
+            "Repository root for repo-wide checks. When omitted and a "
+            "positional path is supplied, the CLI walks up from that path "
+            "looking for a `.forge/` directory and uses the first match. "
+            "Falls back to cwd (with an INFO finding) when nothing matches."
+        ),
     )
     parser.add_argument(
         "--check-registries",
@@ -608,7 +614,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         return exc.code if isinstance(exc.code, int) else 2
 
     target: str = args.target
+    autodiscovery_finding: Finding | None = None
+    if args.repo_root is None:
+        # No explicit --repo-root: try to walk up from the positional path
+        # before falling back to cwd. The agent that invoked the validator
+        # may have cd'd into the plugin install dir (to give Python access
+        # to `tools/`) and cwd would otherwise bind anchors against the
+        # wrong tree.
+        discovered = discover_repo_root(args.path) if args.path is not None else None
+        if discovered is not None:
+            args.repo_root = discovered
+        else:
+            args.repo_root = Path.cwd()
+            if args.path is not None:
+                autodiscovery_finding = Finding(
+                    "INFO",
+                    target,
+                    args.path,
+                    f"repo-root autodiscovery found no `.forge/` ancestor; "
+                    f"falling back to cwd: {args.repo_root}",
+                )
+
     findings: list[Finding] = _gate_and_dispatch(target, args)
+    if autodiscovery_finding is not None:
+        findings.insert(0, autodiscovery_finding)
 
     payload = {
         "target": target,
