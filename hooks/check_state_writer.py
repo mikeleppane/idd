@@ -61,12 +61,28 @@ from typing import Any
 _WRITE_TOOL_NAMES = frozenset({"Write", "Edit", "MultiEdit"})
 
 _DENY_REASON = (
-    "state.json is mechanically owned by the tools.state.* and "
-    "tools.routing.* helpers — call "
-    "tools.routing.seed_routed_feature for the initial seed, or "
-    "complete_phase / start_phase / record_routing_decision / "
-    "record_refined_idea via the python tooling. Direct "
-    "Write/Edit/MultiEdit to state.json is refused."
+    "state.json is mechanically owned by FORGE. Direct "
+    "Write/Edit/MultiEdit is refused.\n"
+    "\n"
+    "To seed a NEW feature, run this Bash command (do NOT translate it "
+    "into a Python heredoc):\n"
+    '  forge-do --idea "<idea>" --tier <focused|standard|full> '
+    '--rationale "<one_sentence>"\n'
+    "\n"
+    "When forge-do is not on PATH (typical in a fresh target repo), "
+    "use the module form:\n"
+    "  PYTHONPATH=<plugin_install> python3 -m tools.do_cli "
+    '--idea "<idea>" --tier <focused|standard|full> '
+    '--rationale "<one_sentence>"\n'
+    "\n"
+    "Resolve <plugin_install> from $CLAUDE_PLUGIN_ROOT or "
+    "`claude plugin list` (typically "
+    "~/.claude/plugins/cache/forge-marketplace/forge/<version>).\n"
+    "\n"
+    "For POST-SEED mutations, call the tools.state.* helpers via Bash "
+    "(complete_phase / start_phase / record_routing_decision / "
+    "record_refined_idea / record_commit / append_deviation / "
+    "set_execute_current_slice)."
 )
 
 
