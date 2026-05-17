@@ -1,5 +1,5 @@
 # FORGE internal development docs (not tracked or shipped)
-docs/
+/docs/
 
 # Python
 __pycache__/
