@@ -48,6 +48,14 @@ jobs:
           test -f hooks/hooks.json
           test -f hooks/check_budget.py
 
+      - name: Validate Claude plugin manifest (best-effort)
+        run: |
+          if command -v claude >/dev/null 2>&1; then
+            claude plugin validate .
+          else
+            echo "claude CLI not installed on runner; relying on path-validate fallback"
+          fi
+
       - name: Run full quality gate
         run: make check
 
