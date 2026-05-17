@@ -103,3 +103,7 @@ The `hooks/` directory ships two `PreToolUse` hooks. **Claude Code 2.1+ auto-loa
 - **Codex CLI:** use `--system` to load a chosen skill, then prompt with the command body.
 
 Full per-tool portability validation lands in M5.
+
+## Portability matrix
+
+_Placeholder. A dedicated cross-tool portability matrix — listing exactly which FORGE surfaces (commands, skills, hooks, validators) run end-to-end in Claude Code, Cursor, Aider, Codex CLI, and GitHub Copilot Chat against a reference feature lifecycle — will replace this stub once full validation is complete._
