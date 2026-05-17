@@ -16,7 +16,15 @@
 > *"The hardest single part of building a software system is deciding precisely what to build. No other part of the work so cripples the resulting system if done wrong. No other part is more difficult to rectify later."*
 > — **Fred Brooks**, *No Silver Bullet* (1986)
 
-**⚠️ Alpha.** Expect breaking changes. APIs, schemas, and command surfaces are not yet stable. Not for production-critical workflows. Pin your `.forge/` artifacts via git.
+**⚠️ Alpha.** Expect breaking changes. APIs, schemas, and command surfaces are not yet stable. Pin your `.forge/` artifacts via git.
+
+"Production-ready" for FORGE means:
+
+- **Schema + CLI stability** — `schemas/*.schema.json`, `state.json` shape, and `/forge:*` flags are versioned and deprecation-gated.
+- **Full portability matrix** — Cursor, Aider, Codex, GitHub Copilot all exercised against a reference feature lifecycle.
+- **Hook + validator contracts frozen** — `hooks/check_*.py` and `python -m tools.validate` outputs stable across minor versions.
+
+Until then, treat FORGE as a methodology you can read, fork, and run — not a turnkey dependency.
 
 FORGE is a Claude Code plugin that encodes a disciplined Spec-Driven Development lifecycle for working with AI coding agents on real repositories. It sits alongside TDD / BDD / DDD / SDD — a methodology, not a tool.
 
@@ -124,7 +132,7 @@ A formal `claude plugins install …` path is on the roadmap.
 
 ## What it is
 
-A small set of slash commands, skills, hooks, and JSON-schema-validated artifacts (see [`schemas/`](schemas/)) that walk an AI coding agent through a phased lifecycle — focused tier runs three phases (`spec → execute → verify`), standard runs eight (adds scenarios, plan, crucible, two reviews, ship), full runs eleven (adds refine + research + domain). State is persisted on disk per feature, so any session can be paused, resumed, or handed off without losing context. (A post-ship `qa` phase is on the roadmap; it will activate via `flow_version: 3` once `/forge:do` seeds it.)
+A small set of slash commands, skills, hooks, and JSON-schema-validated artifacts (see [`schemas/`](schemas/)) that walk an AI coding agent through a phased lifecycle — focused tier runs three phases (`spec → execute → verify`), standard runs ten (adds scenarios, plan, crucible, two reviews, ship, qa), full runs twelve (adds refine + research + domain). State is persisted on disk per feature, so any session can be paused, resumed, or handed off without losing context.
 
 ## Why use it
 
@@ -468,6 +476,8 @@ Per-feature state lives in `.forge/features/<id>/state.json` (created by `/forge
 - `cross_ai.*` — cross-AI review provider, mode (`manual` / `auto` / `disabled`), `allowed_clis`, `timeout_seconds`, `max_prompt_tokens`, `cost_warn_threshold_usd`, redaction lists. Schema: `schemas/cross-ai-config.schema.json`.
 - `research.*` — research grounding fallbacks: `websearch_fallback`, `websearch_max_queries_per_run`, `byod_stale_days`, `ecosystems` pin, `ecosystem_overrides`. Schema: `schemas/research-config.schema.json`.
 - `git_conventions.*` — commit subject + scope + trailer rules consumed by `python -m tools.validate --target git-conventions`.
+
+Run `/forge:validate --target <name>` (or the equivalent `python -m tools.validate --target <name>`) to invoke the validator from inside Claude Code.
 
 Default-tier and context-budget overrides remain on the roadmap.
 
