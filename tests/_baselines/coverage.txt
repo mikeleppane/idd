@@ -1,0 +1,7 @@
+# Per-file coverage baseline. Captured to anchor the CI coverage gate.
+# Format: <path>: <percent>%
+# Regenerate with: pytest --cov=tools --cov=hooks --cov-report=term-missing
+tools/state.py: 95%
+tools/ship_gate.py: 97%
+hooks/check_budget.py: 82%
+hooks/check_state_writer.py: 60%
