@@ -43,7 +43,11 @@ Focused + `--research` is rejected at parse time; the operator must
 re-invoke with `--standard --research`. The `review` phase fires twice
 on standard / full (target=plan, then target=code) but appears only once
 in `routing.phase_list` per the schema's `uniqueItems: true` rule —
-target rotation is encoded in `phases.review.targets_done`.
+target rotation is encoded in `phases.review.targets_done`. The
+post-merge `qa` phase pumps terminally on standard and full (`ship →
+/forge:qa --against merged`) but is not listed in `routing.phase_list`
+at the default seed (`flow_version` < 3); migrating a feature to
+`flow_version: 3` adds `qa` as the trailing entry of full's phase list.
 
 ## Behavior
 
