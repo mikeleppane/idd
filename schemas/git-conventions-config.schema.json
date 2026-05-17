@@ -4,6 +4,7 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "schema_version": {"type": "integer", "minimum": 1, "default": 1},
     "subject": {
       "type": "object",
       "additionalProperties": false,

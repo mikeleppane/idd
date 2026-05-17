@@ -15,6 +15,11 @@
       "severity"
     ],
     "properties": {
+      "schema_version": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 1
+      },
       "id": {
         "type": "string",
         "pattern": "^[a-z][a-z0-9_-]{2,63}$"
