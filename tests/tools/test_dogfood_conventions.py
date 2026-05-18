@@ -291,10 +291,13 @@ def test_git_conventions_trailer_ban_silent_on_clean_message() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_conventions_json_is_a_list_of_objects() -> None:
+def test_conventions_json_is_wrapped_with_schema_version() -> None:
     payload = json.loads(CONVENTIONS_PATH.read_text(encoding="utf-8"))
-    assert isinstance(payload, list)
-    assert all(isinstance(entry, dict) for entry in payload)
+    assert isinstance(payload, dict)
+    assert payload["schema_version"] == 1
+    rules = payload["rules"]
+    assert isinstance(rules, list)
+    assert all(isinstance(entry, dict) for entry in rules)
 
 
 def test_config_json_is_an_object_with_git_conventions_block() -> None:

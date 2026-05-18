@@ -7,11 +7,18 @@ import datetime as _dt
 import json
 import re
 import sys
+import warnings
 from pathlib import Path
 from typing import Any
 
 import jsonschema
 import yaml
+
+from tools.migrations.registry import (
+    file_kind_from_schema_filename,
+    schema_version_error,
+    schema_version_missing_is_fatal,
+)
 
 
 class FrontmatterError(RuntimeError):
@@ -121,6 +128,18 @@ def _description_quality_errors(path: Path, description: str) -> list[str]:
     return errors
 
 
+def _schema_version_error(path: Path, payload: dict[str, Any], file_kind: str | None) -> str | None:
+    """Surface schema_version issues; warn on missing unless strict env is set."""
+    issue = schema_version_error(path, payload, file_kind)
+    if issue is None:
+        return None
+    severity, message = issue
+    if severity == "missing" and not schema_version_missing_is_fatal():
+        warnings.warn(message, category=DeprecationWarning, stacklevel=3)
+        return None
+    return message
+
+
 def validate_file(path: Path, schema_path: Path) -> list[str]:
     """Validate a single markdown file's frontmatter against schema + quality bar.
 
@@ -138,6 +157,10 @@ def validate_file(path: Path, schema_path: Path) -> list[str]:
 
     if fm is None:
         return [f"{path}: missing frontmatter block"]
+
+    sv_error = _schema_version_error(path, fm, file_kind_from_schema_filename(schema_path.name))
+    if sv_error is not None:
+        return [sv_error]
 
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     validator = jsonschema.Draft202012Validator(

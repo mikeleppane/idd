@@ -1499,14 +1499,15 @@ def append_conventions_entries(
     if collisions:
         raise AmendError(f"id collision with existing entries: {collisions}")
 
-    merged = [_serialize_convention(rule) for rule in existing_rules]
-    merged.extend(_serialize_convention(entry) for entry in entries)
+    merged_rules = [_serialize_convention(rule) for rule in existing_rules]
+    merged_rules.extend(_serialize_convention(entry) for entry in entries)
     # Preserve the schema's declared field order documented in
     # ``_serialize_convention`` — ``sort_keys=True`` would alphabetize and
     # produce large spurious diffs on the first append against any
     # pre-existing conventions.json. Python dict insertion order is stable
     # since 3.7, so the in-memory ordering is the on-disk ordering.
-    serialized = json.dumps(merged, indent=2) + "\n"
+    merged_document = {"schema_version": 1, "rules": merged_rules}
+    serialized = json.dumps(merged_document, indent=2) + "\n"
 
     # Write merged body, then re-validate via the strict ``load_conventions``
     # to catch corner cases (bad regex, mis-scoped filename_glob_forbidden,

@@ -1,4 +1,5 @@
 ---
+schema_version: 1
 spec: 0000-00-00-template-placeholder
 target: plan
 status: open

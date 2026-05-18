@@ -11,6 +11,7 @@ from ._frontmatter import (
     _load_schema,
     _parse_frontmatter_or_finding,
     _read_text,
+    _schema_version_findings,
 )
 
 _DELTA_OP_MARKER = re.compile(r"^[+\-~] (ADD|REMOVE|MODIFY):", re.MULTILINE)
@@ -48,6 +49,13 @@ def validate_delta(path: Path) -> list[Finding]:
         findings.append(parsed)
         return findings
     fm, body = parsed
+
+    sv_findings = _schema_version_findings(
+        path, fm, "delta-proposal-frontmatter.schema.json", "delta"
+    )
+    if sv_findings:
+        findings.extend(sv_findings)
+        return findings
 
     schema = _load_schema("delta-proposal-frontmatter.schema.json")
     for err in sorted(_build_validator(schema).iter_errors(fm), key=lambda e: list(e.path)):

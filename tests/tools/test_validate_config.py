@@ -14,6 +14,19 @@ def test_missing_config_returns_no_findings(tmp_path: Path) -> None:
     assert findings == []
 
 
+def test_forward_schema_version_in_subblock_blocks(tmp_path: Path) -> None:
+    """A subblock declaring schema_version > registry baseline BLOCKS."""
+    config = tmp_path / "config.json"
+    payload = {"cross_ai": {"schema_version": 9, "mode": "manual"}}
+    config.write_text(json.dumps(payload), encoding="utf-8")
+
+    findings = validate_config(config)
+
+    assert any(
+        f.severity == "BLOCK" and "schema_version 9 is newer" in f.message for f in findings
+    ), findings
+
+
 def test_happy_cross_ai_and_research_blocks(tmp_path: Path) -> None:
     config = tmp_path / "config.json"
     payload = {

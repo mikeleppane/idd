@@ -1,4 +1,5 @@
 ---
+schema_version: 1
 capability: template-placeholder
 status: shipped
 created: "2026-01-01"

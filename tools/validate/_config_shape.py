@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ._finding import Finding
-from ._frontmatter import _build_validator, _load_schema
+from ._frontmatter import _build_validator, _load_schema, _schema_version_findings
 
 _TARGET = "config"
 
@@ -40,6 +40,17 @@ def _validate_subblock(
                 f"{block_name!r} must be a JSON object, got {type(block).__name__}",
             ),
         ]
+
+    sv_findings = _schema_version_findings(config_path, block, schema_filename, _TARGET)
+    if sv_findings:
+        # Prefix the BLOCK message with the subblock name so the operator can
+        # tell which subblock (cross_ai vs research vs git_conventions) is
+        # forward-versioned. Reuses the registry-formatted body verbatim.
+        return [
+            Finding("BLOCK", _TARGET, config_path, f"{block_name}: {f.message}")
+            for f in sv_findings
+        ]
+
     schema = _load_schema(schema_filename)
     return [
         Finding(

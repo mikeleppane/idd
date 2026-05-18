@@ -15,15 +15,27 @@ import argparse
 import json
 import re
 import sys
+import warnings
 from pathlib import Path
 from typing import Any
 
 import jsonschema
 import yaml
 
+from tools.migrations.registry import (
+    file_kind_from_schema_filename,
+    schema_version_error,
+    schema_version_missing_is_fatal,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS_DIR = REPO_ROOT / "schemas"
 TEMPLATES_DIR = REPO_ROOT / "templates"
+
+
+class _SchemaVersionError(RuntimeError):
+    """Raised when a template declares an unsupported schema version."""
+
 
 # Each entry: (template path relative to TEMPLATES_DIR, schema filename).
 # Templates ship with bogus-but-valid placeholder values that pass their schema
@@ -51,6 +63,18 @@ def _check_schema(path: Path, *, quiet: bool = False) -> None:
     schema = json.loads(path.read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator.check_schema(schema)
     _emit(f"OK schema {path.name}", quiet=quiet)
+
+
+def _check_schema_version(path: Path, payload: dict[str, Any], file_kind: str | None) -> None:
+    """Validate schema_version on a template; warn unless strict env demands an error."""
+    issue = schema_version_error(path, payload, file_kind)
+    if issue is None:
+        return
+    severity, message = issue
+    if severity == "missing" and not schema_version_missing_is_fatal():
+        warnings.warn(message, category=DeprecationWarning, stacklevel=3)
+        return
+    raise _SchemaVersionError(message)
 
 
 def _check_state_template(*, quiet: bool = False) -> None:
@@ -85,6 +109,7 @@ def _check_template_frontmatter(
     template_path = TEMPLATES_DIR / template_rel
     schema = json.loads((SCHEMAS_DIR / schema_filename).read_text(encoding="utf-8"))
     fm = _extract_frontmatter(template_path)
+    _check_schema_version(template_path, fm, file_kind_from_schema_filename(schema_filename))
 
     # SPEC.md template still uses placeholder strings for non-frontmatter-schema
     # fields the validator checks (id/tier/created/capability) — fill them so
@@ -127,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns:
         Exit code: 0 when every schema and template is valid, 1 on the first
-        ``SchemaError`` or ``ValidationError``.
+        schema-version, ``SchemaError``, or ``ValidationError`` failure.
     """
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -139,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
         _check_state_template(quiet=quiet)
         for template_rel, schema_filename in _TEMPLATE_FRONTMATTER_BINDINGS:
             _check_template_frontmatter(template_rel, schema_filename, quiet=quiet)
-    except (jsonschema.SchemaError, jsonschema.ValidationError) as exc:
+    except (_SchemaVersionError, jsonschema.SchemaError, jsonschema.ValidationError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
     return 0

@@ -1,4 +1,5 @@
 ---
+schema_version: 1
 spec: 0000-00-00-template-placeholder
 ritual: assumptions → adversarial → pre-mortem
 generated: "2026-01-01"

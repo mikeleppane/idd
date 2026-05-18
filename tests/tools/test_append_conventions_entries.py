@@ -53,9 +53,10 @@ def test_append_conventions_entries_happy_path_creates_file(tmp_path: Path) -> N
 
     assert result == repo / ".forge" / "conventions.json"
     payload = json.loads(result.read_text(encoding="utf-8"))
-    assert isinstance(payload, list)
-    assert len(payload) == 1
-    assert payload[0]["id"] == "cite-constitution"
+    assert payload["schema_version"] == 1
+    rules = payload["rules"]
+    assert len(rules) == 1
+    assert rules[0]["id"] == "cite-constitution"
 
     adr = decisions.read_text(encoding="utf-8")
     assert "Conventions resync" in adr
@@ -86,7 +87,8 @@ def test_append_conventions_entries_merges_with_existing_in_order(tmp_path: Path
     )
 
     payload = json.loads((repo / ".forge" / "conventions.json").read_text(encoding="utf-8"))
-    ids = [entry["id"] for entry in payload]
+    assert payload["schema_version"] == 1
+    ids = [entry["id"] for entry in payload["rules"]]
     assert ids == ["first-rule", "second-rule", "third-rule"]
 
     adr = decisions.read_text(encoding="utf-8")

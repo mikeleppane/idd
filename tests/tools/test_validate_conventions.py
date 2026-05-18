@@ -39,7 +39,7 @@ def _write_conventions(repo_root: Path, entries: list[dict[str, Any]] | str) -> 
     if isinstance(entries, str):
         target.write_text(entries, encoding="utf-8")
     else:
-        target.write_text(json.dumps(entries), encoding="utf-8")
+        target.write_text(json.dumps({"schema_version": 1, "rules": entries}), encoding="utf-8")
 
 
 # --- Schema validation -------------------------------------------------------

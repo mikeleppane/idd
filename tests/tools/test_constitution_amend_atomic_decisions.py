@@ -429,7 +429,8 @@ def test_append_conventions_entries_round_trip_after_seed(tmp_path: Path) -> Non
     assert body.count("rule-two") >= 1
     assert body.index("rule-one") < body.index("rule-two")
 
-    payload: list[dict[str, Any]] = json.loads(
+    payload: dict[str, Any] = json.loads(
         (repo / ".forge" / "conventions.json").read_text(encoding="utf-8")
     )
-    assert [rule["id"] for rule in payload] == ["rule-one", "rule-two"]
+    assert payload["schema_version"] == 1
+    assert [rule["id"] for rule in payload["rules"]] == ["rule-one", "rule-two"]

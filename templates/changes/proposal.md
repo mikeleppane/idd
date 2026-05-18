@@ -1,4 +1,5 @@
 ---
+schema_version: 1
 id: 0000-00-00-template-placeholder
 affects_capability: template-placeholder
 status: draft

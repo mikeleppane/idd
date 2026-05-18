@@ -1,4 +1,5 @@
 ---
+schema_version: 1
 spec: <YYYY-MM-DD-slug>
 status: in_progress
 tier: <focused|standard|full>

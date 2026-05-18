@@ -11,6 +11,7 @@ from ._frontmatter import (
     _load_schema,
     _parse_frontmatter_or_finding,
     _read_text,
+    _schema_version_findings,
     _strip_code,
 )
 
@@ -94,6 +95,13 @@ def validate_constitution(path: Path) -> list[Finding]:
         findings.append(parsed)
         return findings
     fm, body = parsed
+
+    sv_findings = _schema_version_findings(
+        path, fm, "constitution-frontmatter.schema.json", "constitution"
+    )
+    if sv_findings:
+        findings.extend(sv_findings)
+        return findings
 
     schema = _load_schema("constitution-frontmatter.schema.json")
     for err in sorted(_build_validator(schema).iter_errors(fm), key=lambda e: list(e.path)):

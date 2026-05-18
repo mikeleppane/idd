@@ -6,6 +6,11 @@
   "additionalProperties": false,
   "required": ["capability", "status", "created", "last_updated", "evidence"],
   "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    },
     "capability": {
       "type": "string",
       "pattern": "^[a-z0-9-]+$"

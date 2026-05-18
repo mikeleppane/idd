@@ -91,6 +91,14 @@ def test_main_quiet_short_form_suppresses_ok_lines(
     assert "OK template " not in captured.out
 
 
+def test_main_passes_when_schema_version_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shipped templates carry schema_version, so the strict gate passes."""
+    monkeypatch.setenv("FORGE_SCHEMA_VERSION_REQUIRED", "1")
+    assert main(["-q"]) == 0
+
+
 def test_main_failure_returns_one(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

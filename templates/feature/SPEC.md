@@ -1,4 +1,5 @@
 ---
+schema_version: 1
 id: <YYYY-MM-DD-slug>
 status: draft
 tier: <focused|standard|full>

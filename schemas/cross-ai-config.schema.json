@@ -5,6 +5,7 @@
   "required": ["mode"],
   "additionalProperties": false,
   "properties": {
+    "schema_version": {"type": "integer", "minimum": 1, "default": 1},
     "mode": {"type": "string", "enum": ["manual", "auto", "disabled"], "default": "manual"},
     "allowed_clis": {
       "type": "array",

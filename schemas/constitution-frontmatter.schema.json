@@ -6,6 +6,7 @@
   "additionalProperties": false,
   "required": ["version", "created"],
   "properties": {
+    "schema_version": { "type": "integer", "minimum": 1, "default": 1 },
     "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
     "created": { "type": "string", "format": "date" },
     "updated": { "type": "string", "format": "date" }

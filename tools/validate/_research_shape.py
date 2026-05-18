@@ -21,6 +21,7 @@ from ._frontmatter import (
     _load_schema,
     _parse_frontmatter_or_finding,
     _read_text,
+    _schema_version_findings,
 )
 
 _TARGET = "research"
@@ -80,7 +81,7 @@ def _byod_covered_libraries(research_path: Path) -> tuple[str, ...]:
         return ()
 
 
-def validate_research(research_path: Path) -> list[Finding]:
+def validate_research(research_path: Path) -> list[Finding]:  # noqa: PLR0911
     """Validate a single RESEARCH.md file.
 
     Checks:
@@ -115,6 +116,13 @@ def validate_research(research_path: Path) -> list[Finding]:
         findings.append(parsed)
         return findings
     fm, body = parsed
+
+    sv_findings = _schema_version_findings(
+        research_path, fm, "research-frontmatter.schema.json", _TARGET
+    )
+    if sv_findings:
+        findings.extend(sv_findings)
+        return findings
 
     schema = _load_schema("research-frontmatter.schema.json")
     schema_errors = list(_build_validator(schema).iter_errors(fm))
