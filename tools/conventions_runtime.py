@@ -16,7 +16,9 @@ stdlib-only consumer (e.g. a pre-commit hook).
 
 from __future__ import annotations
 
+import difflib
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -30,6 +32,7 @@ Scope = Literal["commit_body", "diff", "dispatch_brief"]
 Severity = Literal["BLOCK", "HIGH", "MEDIUM", "LOW", "WARN", "INFO"]
 
 _CONVENTIONS_FILENAME: Final[str] = "conventions.json"
+_MATCH_DETAIL_MAX: Final[int] = 200
 
 # Cap on text length passed to a regex engine. The diff scope can legitimately
 # carry multi-MB content; backtracking regex engines can pin a core on chosen
@@ -80,6 +83,29 @@ class Convention:
     severity: Severity
 
 
+@dataclass(frozen=True, kw_only=True)
+class ConventionMatch:
+    """One convention rule that fired during single-file evaluation."""
+
+    id: str
+    source_file: str
+    source_line: int
+    pattern_kind: PatternKind
+    pattern: str
+    scope: Scope
+    severity: Severity
+    file_path: str
+    matched_line: str = ""
+
+
+@dataclass(frozen=True, kw_only=True)
+class EvaluationResult:
+    """Result of evaluating one proposed post-write file state."""
+
+    matches: tuple[ConventionMatch, ...] = ()
+    load_error: str | None = None
+
+
 _REQUIRED_KEYS: Final[frozenset[str]] = frozenset(
     {"id", "source_file", "source_line", "pattern_kind", "pattern", "scope", "severity"},
 )
@@ -87,6 +113,100 @@ _REQUIRED_KEYS: Final[frozenset[str]] = frozenset(
 
 def _conventions_path(repo_root: Path) -> Path:
     return repo_root / ".forge" / _CONVENTIONS_FILENAME
+
+
+def _env_repo_root() -> Path | None:
+    raw = os.environ.get("FORGE_REPO_ROOT")
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        candidate = Path(raw).resolve()
+    except OSError:
+        return None
+    if (candidate / ".forge").is_dir():
+        return candidate
+    return None
+
+
+def _walk_repo_root(start: Path) -> Path | None:
+    try:
+        current = start.resolve()
+    except OSError:
+        return None
+    for _ in range(12):
+        if (current / ".forge").is_dir():
+            return current
+        parent = current.parent
+        if parent == current:
+            return None
+        current = parent
+    return None
+
+
+def _repo_root_for(file_path: Path) -> Path | None:
+    override = _env_repo_root()
+    if override is not None:
+        return override
+    candidate = file_path if file_path.is_absolute() else Path.cwd() / file_path
+    return _walk_repo_root(candidate.parent) or _walk_repo_root(Path.cwd())
+
+
+def _repo_relative_path(repo_root: Path, file_path: Path) -> str:
+    candidate = file_path if file_path.is_absolute() else repo_root / file_path
+    try:
+        return candidate.resolve().relative_to(repo_root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return file_path.as_posix()
+
+
+def _read_existing_text(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _synthetic_diff(repo_root: Path, file_path: Path, relative_path: str, content: str) -> str:
+    candidate = file_path if file_path.is_absolute() else repo_root / file_path
+    existing = _read_existing_text(candidate)
+    return "".join(
+        difflib.unified_diff(
+            existing.splitlines(keepends=True),
+            content.splitlines(keepends=True),
+            fromfile=f"a/{relative_path}",
+            tofile=f"b/{relative_path}",
+        ),
+    )
+
+
+def _truncate_match_detail(text: str) -> str:
+    if len(text) <= _MATCH_DETAIL_MAX:
+        return text
+    return text[:_MATCH_DETAIL_MAX]
+
+
+def _forbidden_match_detail(pattern: str, text: str) -> str:
+    compiled = _compile_or_none(pattern)
+    if compiled is None:
+        return ""
+    bounded = _bound_text(text)
+    for line in bounded.splitlines():
+        if compiled.search(line) is not None:
+            return _truncate_match_detail(line)
+    match = compiled.search(bounded)
+    if match is None:
+        return ""
+    return _truncate_match_detail(match.group(0))
+
+
+def _match_detail(rule: Convention, *, text: str, relative_path: str) -> str:
+    if rule.pattern_kind == "filename_glob_forbidden":
+        return relative_path
+    if rule.pattern_kind == "required_text":
+        return "<required_text missing>"
+    return _forbidden_match_detail(rule.pattern, text)
 
 
 def _build_one(idx: int, entry: dict[str, object]) -> Convention:
@@ -277,3 +397,71 @@ def match_convention(rule: Convention, *, text: str, scope: Scope) -> bool:
         return found
     # required_text: violation iff NOT found.
     return not found
+
+
+def evaluate(scope: str, file_path: str, content: str) -> EvaluationResult:
+    """Evaluate conventions against one proposed post-write file state.
+
+    The proposed ``content`` is treated as the full file body after a write.
+    For ``diff`` scope, text rules match a synthetic unified diff from the
+    on-disk file to that proposed body; missing files are treated as full-file
+    additions. Filename-glob rules always match the repo-relative file path.
+    This function intentionally reuses the permissive loader and
+    :func:`match_convention` so review-time validation behavior remains owned
+    by :mod:`tools.validate.conventions`.
+
+    Args:
+        scope: Convention scope to evaluate.
+        file_path: Proposed file path, absolute or relative to the repo root.
+        content: Proposed full file contents.
+
+    Returns:
+        :class:`EvaluationResult` with fired matches, or ``load_error`` set
+        when ``.forge/conventions.json`` is present but cannot be loaded.
+        Missing conventions return an empty result.
+    """
+    if scope not in ("commit_body", "diff", "dispatch_brief"):
+        return EvaluationResult(load_error=f"unsupported convention scope: {scope!r}")
+
+    checked_scope = cast("Scope", scope)
+    proposed_path = Path(file_path)
+    repo_root = _repo_root_for(proposed_path)
+    if repo_root is None:
+        return EvaluationResult()
+
+    try:
+        rules = load_conventions_permissive(repo_root)
+    except (ValueError, OSError) as exc:
+        return EvaluationResult(load_error=str(exc))
+    if not rules:
+        return EvaluationResult()
+
+    relative_path = _repo_relative_path(repo_root, proposed_path)
+    text = (
+        _synthetic_diff(repo_root, proposed_path, relative_path, content)
+        if checked_scope == "diff"
+        else content
+    )
+    matches: list[ConventionMatch] = []
+    for rule in sorted(rules, key=lambda item: item.id):
+        candidate_text = relative_path if rule.pattern_kind == "filename_glob_forbidden" else text
+        if not match_convention(rule, text=candidate_text, scope=checked_scope):
+            continue
+        matches.append(
+            ConventionMatch(
+                id=rule.id,
+                source_file=rule.source_file,
+                source_line=rule.source_line,
+                pattern_kind=rule.pattern_kind,
+                pattern=rule.pattern,
+                scope=checked_scope,
+                severity=rule.severity,
+                file_path=relative_path,
+                matched_line=_match_detail(
+                    rule,
+                    text=candidate_text,
+                    relative_path=relative_path,
+                ),
+            ),
+        )
+    return EvaluationResult(matches=tuple(matches))
