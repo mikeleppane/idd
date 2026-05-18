@@ -163,16 +163,22 @@ def load_conventions_permissive(repo_root: Path) -> list[Convention]:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"failed to parse conventions.json: {exc}") from exc
-    if not isinstance(payload, list):
+    if not isinstance(payload, dict):
         raise ValueError(
-            f"conventions root must be a JSON array, got {type(payload).__name__}",
+            f"conventions root must be a JSON object {{schema_version, rules: [...]}}, "
+            f"got {type(payload).__name__}",
+        )
+    rules_raw = payload.get("rules", [])
+    if not isinstance(rules_raw, list):
+        raise ValueError(
+            f"conventions.rules must be a JSON array, got {type(rules_raw).__name__}",
         )
     rules: list[Convention] = []
     seen_ids: set[str] = set()
     duplicates: list[str] = []
-    for idx, entry in enumerate(payload):
+    for idx, entry in enumerate(rules_raw):
         if not isinstance(entry, dict):
-            raise ValueError(f"entry[{idx}] must be a JSON object")
+            raise ValueError(f"rules[{idx}] must be a JSON object")
         rule = _build_one(idx, entry)
         if rule.id in seen_ids and rule.id not in duplicates:
             duplicates.append(rule.id)

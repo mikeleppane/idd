@@ -256,7 +256,9 @@ def _trailer_ban_conventions() -> list[dict[str, Any]]:
 def _write_conventions(repo_root: Path, rules: list[dict[str, Any]]) -> None:
     forge = repo_root / ".forge"
     forge.mkdir(exist_ok=True)
-    (forge / "conventions.json").write_text(json.dumps(rules), encoding="utf-8")
+    (forge / "conventions.json").write_text(
+        json.dumps({"schema_version": 1, "rules": rules}), encoding="utf-8"
+    )
 
 
 def test_hook_allows_dispatch_when_forbidden_text_lives_only_in_traps_block(

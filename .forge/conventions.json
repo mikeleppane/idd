@@ -1,38 +1,41 @@
-[
-  {
-    "id": "agents-md-cite-test-driven-development",
-    "source_file": "AGENTS.md",
-    "source_line": 82,
-    "pattern_kind": "required_text",
-    "pattern": "test-driven-development",
-    "scope": ["dispatch_brief"],
-    "severity": "HIGH"
-  },
-  {
-    "id": "agents-md-cite-coding-guidance-python",
-    "source_file": "AGENTS.md",
-    "source_line": 82,
-    "pattern_kind": "required_text",
-    "pattern": "coding-guidance-python",
-    "scope": ["dispatch_brief"],
-    "severity": "HIGH"
-  },
-  {
-    "id": "agents-md-cite-git-conventions",
-    "source_file": "AGENTS.md",
-    "source_line": 82,
-    "pattern_kind": "required_text",
-    "pattern": "git-conventions",
-    "scope": ["dispatch_brief"],
-    "severity": "HIGH"
-  },
-  {
-    "id": "agents-md-cite-code-review-and-quality",
-    "source_file": "AGENTS.md",
-    "source_line": 82,
-    "pattern_kind": "required_text",
-    "pattern": "code-review-and-quality",
-    "scope": ["dispatch_brief"],
-    "severity": "HIGH"
-  }
-]
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "id": "agents-md-cite-test-driven-development",
+      "source_file": "AGENTS.md",
+      "source_line": 82,
+      "pattern_kind": "required_text",
+      "pattern": "test-driven-development",
+      "scope": ["dispatch_brief"],
+      "severity": "HIGH"
+    },
+    {
+      "id": "agents-md-cite-coding-guidance-python",
+      "source_file": "AGENTS.md",
+      "source_line": 82,
+      "pattern_kind": "required_text",
+      "pattern": "coding-guidance-python",
+      "scope": ["dispatch_brief"],
+      "severity": "HIGH"
+    },
+    {
+      "id": "agents-md-cite-git-conventions",
+      "source_file": "AGENTS.md",
+      "source_line": 82,
+      "pattern_kind": "required_text",
+      "pattern": "git-conventions",
+      "scope": ["dispatch_brief"],
+      "severity": "HIGH"
+    },
+    {
+      "id": "agents-md-cite-code-review-and-quality",
+      "source_file": "AGENTS.md",
+      "source_line": 82,
+      "pattern_kind": "required_text",
+      "pattern": "code-review-and-quality",
+      "scope": ["dispatch_brief"],
+      "severity": "HIGH"
+    }
+  ]
+}

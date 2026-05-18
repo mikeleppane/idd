@@ -1,80 +1,88 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://forge.dev/schemas/conventions.schema.json",
-  "type": "array",
-  "items": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "id",
-      "source_file",
-      "source_line",
-      "pattern_kind",
-      "pattern",
-      "scope",
-      "severity"
-    ],
-    "properties": {
-      "schema_version": {
-        "type": "integer",
-        "minimum": 1,
-        "default": 1
-      },
-      "id": {
-        "type": "string",
-        "pattern": "^[a-z][a-z0-9_-]{2,63}$"
-      },
-      "source_file": {
-        "type": "string",
-        "minLength": 1,
-        "description": "Repo-relative path of the authoring document. No leading slash; no parent-directory segments — the field is display-only today but is constrained here so a future consumer that reads the file cannot be tricked into traversing outside the repo.",
-        "pattern": "^(?!/)(?!.*\\.\\.(?:/|$))[^\\x00]+$"
-      },
-      "source_line": {
-        "type": "integer",
-        "minimum": 1
-      },
-      "pattern_kind": {
-        "type": "string",
-        "enum": ["forbidden_text", "required_text", "filename_glob_forbidden"]
-      },
-      "pattern": {
-        "type": "string",
-        "minLength": 1,
-        "description": "Match-engine input. For 'forbidden_text' / 'required_text' the value is a Python regex (re.search). For 'filename_glob_forbidden' the value is a globstar pattern: '**' crosses path separators, '*' matches within one segment, '?' matches one non-slash character. A pattern with no '/' is treated as unanchored — '*.env' fires on 'configs/.env' as well as on a root-level '.env'. Patterns containing at least one '/' are interpreted strictly so authors keep an escape hatch when they need path-anchored matching."
-      },
-      "scope": {
-        "type": "array",
-        "minItems": 1,
-        "uniqueItems": true,
-        "items": {
-          "type": "string",
-          "enum": ["commit_body", "diff", "dispatch_brief"]
-        }
-      },
-      "severity": {
-        "type": "string",
-        "enum": ["BLOCK", "HIGH", "MEDIUM", "LOW", "WARN"]
-      }
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["rules"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "File-format version. Independent of any per-rule version; lives on the file, not the rule."
     },
-    "allOf": [
-      {
-        "$comment": "filename_glob_forbidden makes sense only against the diff scope. Encode the runtime constraint here so a schema-valid file cannot trip a runtime BLOCK.",
-        "if": {
-          "properties": {"pattern_kind": {"const": "filename_glob_forbidden"}},
-          "required": ["pattern_kind"]
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "source_file",
+          "source_line",
+          "pattern_kind",
+          "pattern",
+          "scope",
+          "severity"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{2,63}$"
+          },
+          "source_file": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Repo-relative path of the authoring document. No leading slash; no parent-directory segments — the field is display-only today but is constrained here so a future consumer that reads the file cannot be tricked into traversing outside the repo.",
+            "pattern": "^(?!/)(?!.*\\.\\.(?:/|$))[^\\x00]+$"
+          },
+          "source_line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "pattern_kind": {
+            "type": "string",
+            "enum": ["forbidden_text", "required_text", "filename_glob_forbidden"]
+          },
+          "pattern": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Match-engine input. For 'forbidden_text' / 'required_text' the value is a Python regex (re.search). For 'filename_glob_forbidden' the value is a globstar pattern: '**' crosses path separators, '*' matches within one segment, '?' matches one non-slash character. A pattern with no '/' is treated as unanchored — '*.env' fires on 'configs/.env' as well as on a root-level '.env'. Patterns containing at least one '/' are interpreted strictly so authors keep an escape hatch when they need path-anchored matching."
+          },
+          "scope": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": ["commit_body", "diff", "dispatch_brief"]
+            }
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["BLOCK", "HIGH", "MEDIUM", "LOW", "WARN"]
+          }
         },
-        "then": {
-          "properties": {
-            "scope": {
-              "type": "array",
-              "minItems": 1,
-              "maxItems": 1,
-              "items": {"const": "diff"}
+        "allOf": [
+          {
+            "$comment": "filename_glob_forbidden makes sense only against the diff scope. Encode the runtime constraint here so a schema-valid file cannot trip a runtime BLOCK.",
+            "if": {
+              "properties": {"pattern_kind": {"const": "filename_glob_forbidden"}},
+              "required": ["pattern_kind"]
+            },
+            "then": {
+              "properties": {
+                "scope": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 1,
+                  "items": {"const": "diff"}
+                }
+              }
             }
           }
-        }
+        ]
       }
-    ]
+    }
   }
 }

@@ -67,7 +67,7 @@ def _write_conventions(repo_root: Path, rules: list[dict[str, Any]] | str) -> No
     if isinstance(rules, str):
         path.write_text(rules, encoding="utf-8")
     else:
-        path.write_text(json.dumps(rules), encoding="utf-8")
+        path.write_text(json.dumps({"schema_version": 1, "rules": rules}), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

@@ -95,23 +95,30 @@ def _cached_load_conventions(repo_root: Path) -> list[Convention]:
     return rules
 
 
-def _parse_payload(path: Path) -> list[Any] | Finding:
+def _parse_payload(path: Path) -> dict[str, Any] | Finding:
     try:
         raw = path.read_text(encoding="utf-8")
         payload = json.loads(raw)
     except (OSError, json.JSONDecodeError) as exc:
         return Finding("BLOCK", _TARGET, path, f"failed to parse JSON: {exc}")
-    if not isinstance(payload, list):
+    if not isinstance(payload, dict):
         return Finding(
             "BLOCK",
             _TARGET,
             path,
-            f"conventions root must be a JSON array, got {type(payload).__name__}",
+            f"conventions root must be a JSON object {{schema_version, rules: [...]}}, "
+            f"got {type(payload).__name__}",
         )
     return payload
 
 
-def _schema_findings(payload: list[Any], path: Path) -> list[Finding]:
+def _rules_from_payload(payload: dict[str, Any]) -> list[Any]:
+    """Return the ``rules`` array from a parsed payload (empty list if absent)."""
+    rules = payload.get("rules", [])
+    return rules if isinstance(rules, list) else []
+
+
+def _schema_findings(payload: dict[str, Any], path: Path) -> list[Finding]:
     schema = _load_schema(_SCHEMA_FILENAME)
     validator = _build_validator(schema)
     findings: list[Finding] = []
@@ -247,7 +254,7 @@ def load_conventions(repo_root: Path) -> list[Convention]:
     # silently drops dead-letter ``dispatch_brief`` rules (fail-permissive
     # for the hook), but the strict path needs to see every rule so it can
     # raise on them explicitly via :func:`_dispatch_brief_severity_findings`.
-    rules = _build_rules_from_payload(parsed)
+    rules = _build_rules_from_payload(_rules_from_payload(parsed))
     # Permissive loader runs the same shape checks before returning. Call it
     # for its dup-id + structural rejections so the strict path keeps parity.
     load_conventions_permissive(repo_root)
@@ -482,11 +489,12 @@ def _run_shape_phase(path: Path) -> tuple[list[Finding], list[Convention] | None
     if schema_errors:
         return schema_errors, None
 
-    dup_errors = _duplicate_id_findings(parsed, path)
+    rules_array = _rules_from_payload(parsed)
+    dup_errors = _duplicate_id_findings(rules_array, path)
     if dup_errors:
         return dup_errors, None
 
-    rules = sorted(_build_rules_from_payload(parsed), key=lambda r: r.id)
+    rules = sorted(_build_rules_from_payload(rules_array), key=lambda r: r.id)
 
     findings: list[Finding] = []
     findings.extend(_filename_scope_findings(rules, path))

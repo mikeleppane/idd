@@ -1,29 +1,32 @@
-[
-  {
-    "id": "ban-claude-coauthor",
-    "source_file": "AGENTS.md",
-    "source_line": 42,
-    "pattern_kind": "forbidden_text",
-    "pattern": "Co-Authored-By: Claude",
-    "scope": ["commit_body"],
-    "severity": "BLOCK"
-  },
-  {
-    "id": "require-conventional-subject",
-    "source_file": "AGENTS.md",
-    "source_line": 88,
-    "pattern_kind": "required_text",
-    "pattern": "^(feat|fix|refactor|perf|docs|test|build|ci|chore|style)\\(",
-    "scope": ["commit_body"],
-    "severity": "HIGH"
-  },
-  {
-    "id": "ban-env-files",
-    "source_file": "AGENTS.md",
-    "source_line": 121,
-    "pattern_kind": "filename_glob_forbidden",
-    "pattern": "**/*.env*",
-    "scope": ["diff"],
-    "severity": "BLOCK"
-  }
-]
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "id": "ban-claude-coauthor",
+      "source_file": "AGENTS.md",
+      "source_line": 42,
+      "pattern_kind": "forbidden_text",
+      "pattern": "Co-Authored-By: Claude",
+      "scope": ["commit_body"],
+      "severity": "BLOCK"
+    },
+    {
+      "id": "require-conventional-subject",
+      "source_file": "AGENTS.md",
+      "source_line": 88,
+      "pattern_kind": "required_text",
+      "pattern": "^(feat|fix|refactor|perf|docs|test|build|ci|chore|style)\\(",
+      "scope": ["commit_body"],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ban-env-files",
+      "source_file": "AGENTS.md",
+      "source_line": 121,
+      "pattern_kind": "filename_glob_forbidden",
+      "pattern": "**/*.env*",
+      "scope": ["diff"],
+      "severity": "BLOCK"
+    }
+  ]
+}

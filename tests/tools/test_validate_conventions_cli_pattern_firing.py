@@ -38,7 +38,9 @@ def _well_formed(**overrides: Any) -> dict[str, Any]:
 def _write_conventions(repo_root: Path, entries: list[dict[str, Any]]) -> None:
     forge = repo_root / ".forge"
     forge.mkdir(exist_ok=True)
-    (forge / "conventions.json").write_text(json.dumps(entries), encoding="utf-8")
+    (forge / "conventions.json").write_text(
+        json.dumps({"schema_version": 1, "rules": entries}), encoding="utf-8"
+    )
 
 
 def _init_git_repo(repo_root: Path) -> None:
