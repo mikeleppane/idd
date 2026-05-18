@@ -86,7 +86,9 @@ Subagent dispatches that touch Python code MUST cite all four in the dispatch br
 
 ## Hooks
 
-The `hooks/` directory ships two `PreToolUse` hooks. **Claude Code 2.1+ auto-loads `hooks/hooks.json` by path convention** — `.claude-plugin/plugin.json` must NOT redeclare it, or the install fails with "Duplicate hooks file detected" and the plugin silently disables. In other tools, invoke each hook manually before the matching tool call.
+The `hooks/` directory ships three `PreToolUse` hooks. **Claude Code 2.1+ auto-loads `hooks/hooks.json` by path convention** — `.claude-plugin/plugin.json` must NOT redeclare it, or the install fails with "Duplicate hooks file detected" and the plugin silently disables. In other tools, invoke each hook manually before the matching tool call.
+
+PreToolUse hooks must run in this order when more than one applies: `hooks/check_state_writer.py` first, then `hooks/check_conventions.py`, then the redaction hook when that hook lands.
 
 - `hooks/check_budget.py` — enforces the FORGE subagent context-budget contract on `Agent` dispatches. The hook is permissive on the optional `articles[]` field carrying filtered Constitution articles and the optional `traps[]` field carrying filtered cross-feature lessons. After the budget block validates, the hook consults `.forge/conventions.json`: rules scoped to `dispatch_brief` with severity `BLOCK` or `HIGH` deny the dispatch with the firing rule id in the deny reason.
   - **Conventions presence vs validity:** the hook decides the dispatch on three distinct states of `.forge/conventions.json`:
@@ -94,6 +96,7 @@ The `hooks/` directory ships two `PreToolUse` hooks. **Claude Code 2.1+ auto-loa
     - `.forge/` present but `conventions.json` absent — the dispatch is **allowed** (no rules configured).
     - `conventions.json` present but malformed (invalid JSON, schema-invalid, or unparseable) — the dispatch is **denied** with a reason that quotes the parse error and points the operator at `python -m tools.validate --target conventions`. The hook fail-CLOSES on structural breakage rather than silently disabling the gate, so a stray comma cannot quietly disable every convention rule.
 - `hooks/check_state_writer.py` — refuses direct `Write` / `Edit` / `MultiEdit` against `.forge/features/<id>/state.json`. State.json mutations must go through the `tools.state.*` helpers (`complete_phase`, `start_phase`, `record_routing_decision`, `record_refined_idea`, `record_commit`, `append_deviation`, `set_execute_current_slice`); direct file edits bypass schema validation and produce broken seeds.
+- `hooks/check_conventions.py` — refuses `Write` / `Edit` / `MultiEdit` when the proposed file content violates diff-scoped `BLOCK` conventions. Diff-scoped `HIGH` convention violations emit `WARN` output and allow the tool call. If `.forge/conventions.json` is malformed, the hook fail-opens with `WARN` output so the operator can repair the conventions file.
 
 ## Tool Mapping
 
