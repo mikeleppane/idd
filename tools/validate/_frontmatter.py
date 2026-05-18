@@ -11,6 +11,12 @@ from typing import Any
 import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 
+from tools.migrations.registry import (
+    file_kind_from_schema_filename,
+    schema_version_error,
+    schema_version_missing_is_fatal,
+)
+
 from ._finding import Finding
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -111,6 +117,29 @@ def _build_validator(schema: dict[str, Any]) -> Draft202012Validator:
 def _load_schema(filename: str) -> dict[str, Any]:
     result: dict[str, Any] = json.loads((_SCHEMAS_DIR / filename).read_text(encoding="utf-8"))
     return result
+
+
+def _schema_version_findings(
+    path: Path,
+    payload: dict[str, Any],
+    schema_filename: str,
+    target: str,
+) -> list[Finding]:
+    """Return BLOCK findings for an out-of-range or forward schema_version.
+
+    Missing values stay non-fatal unless FORGE_SCHEMA_VERSION_REQUIRED=1; that
+    matches the lint/check_schemas behavior so the three validation entry
+    points (forge-lint-frontmatter, forge-check-schemas, forge-validate) agree
+    on what's a hard block today and what's a deprecation today.
+    """
+    file_kind = file_kind_from_schema_filename(schema_filename)
+    issue = schema_version_error(path, payload, file_kind)
+    if issue is None:
+        return []
+    severity, message = issue
+    if severity == "missing" and not schema_version_missing_is_fatal():
+        return []
+    return [Finding("BLOCK", target, path, message)]
 
 
 def _strip_code(text: str) -> str:

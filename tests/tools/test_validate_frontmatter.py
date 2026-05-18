@@ -52,6 +52,22 @@ def test_missing_file_returns_block_finding(tmp_path: Path) -> None:
     assert any(f.severity == "BLOCK" and "not found" in f.message.lower() for f in findings)
 
 
+def test_forward_schema_version_blocks(tmp_path: Path) -> None:
+    """A spec declaring schema_version > the registry baseline BLOCKS."""
+    spec = tmp_path / "SPEC.md"
+    _write(
+        spec,
+        "---\nschema_version: 9\nid: 2026-05-04-demo\nstatus: draft\n"
+        "tier: focused\ncreated: 2026-05-04\ncapability: demo\n---\n# Intent\n",
+    )
+
+    findings = validate.validate_frontmatter(spec, kind="spec")
+
+    assert any(
+        f.severity == "BLOCK" and "schema_version 9 is newer" in f.message for f in findings
+    ), findings
+
+
 def test_invalid_yaml_returns_block_not_traceback() -> None:
     """Malformed YAML in a SPEC.md must surface as BLOCK, not crash the CLI."""
     fixtures = Path(__file__).resolve().parent.parent / "fixtures" / "_validate"

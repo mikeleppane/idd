@@ -13,6 +13,7 @@ from ._frontmatter import (
     _parse_frontmatter,
     _parse_frontmatter_or_finding,
     _read_text,
+    _schema_version_findings,
     _strip_code,
 )
 
@@ -305,6 +306,14 @@ def validate_frontmatter(path: Path, *, kind: str) -> list[Finding]:
         findings.append(parsed)
         return findings
     fm, _body = parsed
+
+    sv_findings = _schema_version_findings(path, fm, schema_filename, kind)
+    if sv_findings:
+        # Forward-version or bad-typed schema_version BLOCKS before structural
+        # checks run, so the operator sees the actionable migration message
+        # instead of a cascade of downstream validation errors.
+        findings.extend(sv_findings)
+        return findings
 
     schema = _load_schema(schema_filename)
     for err in sorted(_build_validator(schema).iter_errors(fm), key=lambda e: list(e.path)):
